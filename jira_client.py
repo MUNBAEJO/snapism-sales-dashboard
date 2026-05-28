@@ -29,6 +29,7 @@ def _headers(cfg):
 
 
 def _search(cfg, jql, fields, max_results=100):
+    """단일 페이지 검색 (내부 호환용)"""
     body = json.dumps({"jql": jql, "maxResults": max_results, "fields": fields}).encode()
     req = urllib.request.Request(
         f"{cfg['url']}/rest/api/3/search/jql",
@@ -38,8 +39,32 @@ def _search(cfg, jql, fields, max_results=100):
         return json.loads(r.read())
 
 
+def _search_all(cfg, jql, fields, page_size=100):
+    """nextPageToken 페이지네이션으로 전체 결과 수집"""
+    all_issues = []
+    next_token = None
+    url = f"{cfg['url']}/rest/api/3/search/jql"
+    headers = _headers(cfg)
+
+    while True:
+        payload = {"jql": jql, "maxResults": page_size, "fields": fields}
+        if next_token:
+            payload["nextPageToken"] = next_token
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            res = json.loads(r.read())
+        batch = res.get("issues", [])
+        all_issues.extend(batch)
+        next_token = res.get("nextPageToken")
+        if not next_token or not batch:
+            break
+
+    return all_issues
+
+
 def _extract_text(doc):
-    """Atlassian Document Format → 평문 추출"""
+    """Atlassian Document Format → 평문 추출 (전체 텍스트 병합)"""
     if doc is None:
         return ""
     if isinstance(doc, str):
@@ -54,6 +79,35 @@ def _extract_text(doc):
         for item in doc:
             texts.append(_extract_text(item))
     return " ".join(t for t in texts if t).strip()
+
+
+def _extract_wbs_text(doc) -> str:
+    """WBS 필드 전용 추출 — ADF 첫 번째 단락 텍스트만 반환.
+    단락이 여러 개일 때 중복 이어붙임(예: 'ONEWE ONEWE') 방지.
+    """
+    if doc is None:
+        return ""
+    if isinstance(doc, str):
+        return doc.strip()
+
+    def _inline_text(node) -> str:
+        """단락 안의 인라인 텍스트 노드들을 이어붙임"""
+        if isinstance(node, dict):
+            if node.get("type") == "text":
+                return node.get("text", "")
+            return " ".join(_inline_text(c) for c in node.get("content", []))
+        if isinstance(node, list):
+            return " ".join(_inline_text(i) for i in node)
+        return ""
+
+    # ADF doc 최상위 처리
+    if isinstance(doc, dict):
+        content = doc.get("content", [])
+        for child in content:
+            text = _inline_text(child).strip()
+            if text:
+                return text   # 첫 번째 비어있지 않은 단락만 반환
+    return ""
 
 
 # WBS 앞 날짜/태그 제거 패턴: [KR]260601, [GLO]260601, 렌탈 260602, [Global]260608 등
@@ -92,12 +146,26 @@ def _clean_title(summary: str) -> str:
     return s.strip()
 
 
+BRAND_FIELD = "customfield_10390"
+
+# 스내피즘 활성 상태 목록
+_SNAPISM_STATUSES = [
+    "할 일", "진행 중", "송출 중", "완료",
+    "TEST 맵핑", "검수 완료", "배포 완료", "In Review", "리소스 업로드 완료",
+]
+_STATUS_JQL = ", ".join(f'"{s}"' for s in _SNAPISM_STATUSES)
+
+
 def fetch_rs_data(force_refresh: bool = False) -> dict:
     """
-    CANDIP 프로젝트에서 RS 율이 있는 작업 티켓을 가져와
-    IP명 → {rs_agency, rs_mgmt, ticket_key, title, wbs} 매핑 반환.
+    CANDIP 프로젝트에서 Snapism 브랜드 '프로그램 및 검수' Sub-task를 가져와
+    IP명 → {rs_agency, rs_mgmt, ticket_key, title, wbs, status} 매핑 반환.
 
-    캐시(data/jira_rs_cache.json)가 있으면 재사용 (force_refresh=True면 강제 갱신).
+    - 브랜드 필드(customfield_10390) = Snapism 또는 사용X(구Sticker)
+    - issuetype = Sub-task, summary ~ "프로그램 및 검수"
+    - 날짜 제한 없음 (전체 기간)
+    - IP명은 부모 태스크 제목에서 추출
+    - 캐시(data/jira_rs_cache.json) 1시간 재사용
     """
     # 캐시 확인
     if not force_refresh and CACHE_FILE.exists():
@@ -107,54 +175,67 @@ def fetch_rs_data(force_refresh: bool = False) -> dict:
             cached_at = cache.get("cached_at", "")
             if cached_at:
                 age_hours = (datetime.now() - datetime.fromisoformat(cached_at)).total_seconds() / 3600
-                if age_hours < 1:   # 1시간 이내면 캐시 사용
+                if age_hours < 1:
                     return cache.get("data", {})
         except Exception:
             pass
 
     cfg = _load_cfg()
-    wbs_f = cfg["wbs_field"]
+    wbs_f  = cfg["wbs_field"]
     rs_a_f = cfg["rs_agency_field"]
     rs_m_f = cfg["rs_mgmt_field"]
     proj   = cfg["project_key"]
 
-    # 작업(Task) 타입이면서 RS 있는 티켓 (최대 200건)
+    # Snapism 브랜드 + 프로그램 및 검수 Sub-task + 전체 기간
     jql = (
-        f'project = {proj} AND issuetype = Task '
-        f'AND (cf[11058] is not EMPTY OR cf[11059] is not EMPTY) '
+        f'project = {proj} AND issuetype = Sub-task '
+        f'AND summary ~ "프로그램 및 검수" '
+        f'AND "브랜드[select list (multiple choices)]" IN (Snapism, "사용 X (구 \'Sticker\')") '
+        f'AND status IN ({_STATUS_JQL}) '
         f'ORDER BY created DESC'
     )
     try:
-        res = _search(cfg, jql, fields=[wbs_f, rs_a_f, rs_m_f, "summary"], max_results=200)
+        issues = _search_all(
+            cfg, jql,
+            fields=[wbs_f, rs_a_f, rs_m_f, "summary", "parent", BRAND_FIELD, "status"],
+        )
     except Exception as e:
         raise RuntimeError(f"Jira 조회 실패: {e}")
 
     mapping = {}   # ip_name → entry
-    for issue in res.get("issues", []):
+    for issue in issues:
         f = issue["fields"]
-        rs_a = f.get(rs_a_f)
-        rs_m = f.get(rs_m_f)
-        wbs_raw = _extract_text(f.get(wbs_f))
-        summary = f.get("summary", "")
 
-        # IP 이름: WBS 우선, 없으면 제목에서 추출
+        # IP 이름: WBS 우선 → 없으면 부모 태스크 제목 파싱 → 없으면 서브태스크 제목 파싱
+        parent         = f.get("parent") or {}
+        parent_fields  = parent.get("fields") or {}
+        parent_summary = parent_fields.get("summary", "")
+        wbs_raw        = _extract_wbs_text(f.get(wbs_f))
+
         if wbs_raw:
             ip_name = _clean_wbs(wbs_raw)
+        elif parent_summary:
+            ip_name = _clean_title(parent_summary)
         else:
-            ip_name = _clean_title(summary)
+            ip_name = _clean_title(f.get("summary", ""))
 
         if not ip_name:
             continue
 
-        # 같은 IP에 여러 티켓이 있을 경우 가장 최신 것 (이미 DESC 정렬)을 사용
+        rs_a   = f.get(rs_a_f)
+        rs_m   = f.get(rs_m_f)
+        status = (f.get("status") or {}).get("name", "")
+
+        # 같은 IP에 여러 티켓이 있을 경우 가장 최신 것 (DESC 정렬) 사용
         if ip_name not in mapping:
             mapping[ip_name] = {
                 "ip_name":    ip_name,
                 "rs_agency":  float(rs_a) if rs_a is not None else None,
                 "rs_mgmt":    float(rs_m) if rs_m is not None else None,
                 "ticket_key": issue["key"],
-                "title":      summary,
+                "title":      parent_summary or f.get("summary", ""),
                 "wbs":        wbs_raw,
+                "status":     status,
             }
 
     # 캐시 저장
@@ -171,4 +252,7 @@ if __name__ == "__main__":
     data = fetch_rs_data(force_refresh=True)
     print(f"IP 수: {len(data)}\n")
     for ip, entry in sorted(data.items()):
-        print(f"  {ip!r:30} | 소속사RS={entry['rs_agency']} | 대행사RS={entry['rs_mgmt']} | {entry['ticket_key']}")
+        print(
+            f"  {ip!r:30} | 소속사RS={entry['rs_agency']} | 대행사RS={entry['rs_mgmt']}"
+            f" | {entry['ticket_key']} | 상태={entry['status']}"
+        )
