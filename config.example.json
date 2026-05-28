@@ -1,0 +1,36 @@
+{
+  "kr": {
+    "url": "https://admin.snapism.co.kr",
+    "username": "여기에_아이디_입력",
+    "password": "여기에_비밀번호_입력"
+  },
+  "cn": {
+    "url": "https://snapism-prod-admin.photoism.cn",
+    "username": "여기에_아이디_입력",
+    "password": "여기에_비밀번호_입력"
+  },
+  "schedule": {
+    "hour": 9,
+    "minute": 0
+  },
+  "exchange_rates": {
+    "KRW": 1,
+    "CNY": 221.0,
+    "JPY": 9.41,
+    "IDR": 0.08,
+    "TWD": 47.69,
+    "THB": 45.96,
+    "HKD": 191.27,
+    "MYR": 377.75
+  },
+  "rates_updated": "",
+  "jira": {
+    "url": "https://seobukcorp.atlassian.net",
+    "email": "여기에_이메일_입력",
+    "api_token": "여기에_API_토큰_입력",
+    "project_key": "CANDIP",
+    "wbs_field": "customfield_11168",
+    "rs_agency_field": "customfield_11058",
+    "rs_mgmt_field": "customfield_11059"
+  }
+}

@@ -1,0 +1,21 @@
+# 민감 정보
+config.json
+
+# 데이터 파일 (용량 큼)
+data/
+raw/
+logs/
+
+# 임시 스크립트
+_upload_*.py
+inspect_page.py
+페이지분석.bat
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+
+# 기타
+*.png
+hub_current.txt
