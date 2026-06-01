@@ -8,6 +8,7 @@
 import json
 import sys
 import subprocess
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -206,8 +207,18 @@ def main():
     results = {}
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        results["kr"] = crawl_site(browser, "kr", config, start_str, end_str)
-        results["cn"] = crawl_site(browser, "cn", config, start_str, end_str)
+        for site_key in ["kr", "cn"]:
+            for attempt in range(1, 4):  # 최대 3회 시도
+                ok = crawl_site(browser, site_key, config, start_str, end_str)
+                if ok:
+                    results[site_key] = True
+                    break
+                if attempt < 3:
+                    log(f"[{site_key.upper()}] 실패 - {attempt}/3 재시도 (30초 후...)")
+                    time.sleep(30)
+            else:
+                results[site_key] = False
+                log(f"[{site_key.upper()}] 3회 시도 후 최종 실패")
         browser.close()
 
     # 결과 요약
@@ -226,6 +237,10 @@ def main():
         )
     else:
         log("[주의] 다운로드된 파일이 없습니다. logs/ 폴더를 확인하세요.")
+
+    # 일부 실패 시 exit code 1 → scheduler가 1시간 후 재시도 예약
+    if not all(results.values()):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -6,10 +6,21 @@ data/
 raw/
 logs/
 
-# 임시 스크립트
-_upload_*.py
+# 임시/디버그 스크립트
+_*.py
 inspect_page.py
 페이지분석.bat
+debug_*.txt
+
+# 로그
+*.log
+logs/
+
+# 원본 크롤 데이터
+raw_photoism/
+
+# Claude 내부
+.claude/
 
 # Python 캐시
 __pycache__/

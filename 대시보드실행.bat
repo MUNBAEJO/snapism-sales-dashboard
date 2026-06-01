@@ -11,7 +11,7 @@ echo.
 echo  대시보드를 종료하려면 이 창을 닫으세요.
 echo.
 cd /d "%~dp0"
-python -m streamlit run dashboard.py ^
+python -m streamlit run 스내피즘.py ^
   --server.port 8503 ^
   --browser.gatherUsageStats false ^
   --server.headless false

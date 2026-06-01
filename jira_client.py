@@ -197,7 +197,7 @@ def fetch_rs_data(force_refresh: bool = False) -> dict:
     try:
         issues = _search_all(
             cfg, jql,
-            fields=[wbs_f, rs_a_f, rs_m_f, "summary", "parent", BRAND_FIELD, "status"],
+            fields=[wbs_f, rs_a_f, rs_m_f, "summary", "parent", BRAND_FIELD, "status", "duedate"],
         )
     except Exception as e:
         raise RuntimeError(f"Jira 조회 실패: {e}")
@@ -236,6 +236,7 @@ def fetch_rs_data(force_refresh: bool = False) -> dict:
                 "title":      parent_summary or f.get("summary", ""),
                 "wbs":        wbs_raw,
                 "status":     status,
+                "duedate":    f.get("duedate"),   # YYYY-MM-DD or None
             }
 
     # 캐시 저장

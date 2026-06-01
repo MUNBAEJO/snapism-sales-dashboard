@@ -9,6 +9,7 @@ from datetime import date, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from jira_client import fetch_rs_data
+from update_rates import get_rates_for_date, get_effective_date
 
 st.set_page_config(page_title="IP 정산 현황", page_icon="💰", layout="wide")
 
@@ -178,7 +179,7 @@ if not matched_jira:
     st.warning("어드민 데이터와 매칭되는 Snapism Jira IP가 없습니다.")
     st.stop()
 
-# IP 선택 (어드민 매칭된 것만)
+# IP 선택 (숨김 — 고급 설정으로 접어둠)
 ip_options = sorted(matched_jira.keys())
 
 def ip_label(k):
@@ -188,27 +189,51 @@ def ip_label(k):
     rs_m   = fmt_pct(e["rs_mgmt"])
     src    = " 💾" if matched_jira[k]["source"] == "saved" else ""
     title  = e.get("title", "")
-    # 제목에서 날짜 앞부분 제거 (예: "26.05 원위 스내피즘..." → "원위 스내피즘...")
     title  = re.sub(r"^(?:20)?\d{2}\.\d{2}\s+", "", title).strip()
-    # 너무 길면 자르기
     title_short = title[:30] + "…" if len(title) > 30 else title
     return f"{icon}{src} {k}  —  {title_short}  [{rs_a}]"
 
-selected_ip = st.sidebar.selectbox("IP 선택", options=ip_options, format_func=ip_label)
+with st.sidebar.expander("⚙️ Jira IP 연결", expanded=False):
+    selected_ip = st.selectbox("IP 선택", options=ip_options, format_func=ip_label)
 
 sel         = matched_jira[selected_ip]
 entry       = sel["entry"]
 default_frames = sel["frames"]
 
+# ── RS율 입력 (Jira 값 기본값, 수동 수정 가능) ────────────────────
 st.sidebar.divider()
-ticket_url = f"https://seobukcorp.atlassian.net/browse/{entry['ticket_key']}"
-st.sidebar.markdown(f"**티켓**: [{entry['ticket_key']}]({ticket_url})")
-st.sidebar.markdown(f"**제목**: {entry['title']}")
-st.sidebar.markdown(f"**상태**: {STATUS_COLORS.get(entry.get('status',''), '⚪')} {entry.get('status', '-')}")
-st.sidebar.markdown(f"**소속사 RS**: {fmt_pct(entry['rs_agency'])}")
-st.sidebar.markdown(f"**대행사 RS**: {fmt_pct(entry['rs_mgmt'])}")
-if entry.get("wbs"):
-    st.sidebar.markdown(f"**배포일**: {entry['wbs']}")
+st.sidebar.markdown("**📊 R/S율 설정**")
+_jira_rs_a = (entry.get("rs_agency") or 0) * 100
+_jira_rs_m = (entry.get("rs_mgmt")   or 0) * 100
+_rs_a_pct = st.sidebar.number_input(
+    "소속사 RS (%)", min_value=0.0, max_value=100.0,
+    value=float(round(_jira_rs_a, 2)), step=0.1, format="%.2f",
+    help="Jira에서 자동으로 불러온 값. 직접 수정 가능합니다.",
+)
+_rs_m_pct = st.sidebar.number_input(
+    "대행사 RS (%)", min_value=0.0, max_value=100.0,
+    value=float(round(_jira_rs_m, 2)), step=0.1, format="%.2f",
+    help="Jira에서 자동으로 불러온 값. 직접 수정 가능합니다.",
+)
+if _jira_rs_a > 0 or _jira_rs_m > 0:
+    st.sidebar.caption(f"Jira 원본: 소속사 {_jira_rs_a:.2f}% / 대행사 {_jira_rs_m:.2f}%")
+
+# ── duedate 기준 환율 결정 ────────────────────────────────────────
+_today_str = date.today().isoformat()
+_duedate   = entry.get("duedate")   # YYYY-MM-DD or None
+
+if _duedate and _duedate <= _today_str:
+    # 종료일이 오늘 이전 → 종료일 기준 환율
+    _rate_base = "duedate"
+    _rate_ref  = _duedate
+else:
+    # 미래 or duedate 없음 → 오늘 기준 환율
+    _rate_base = "today"
+    _rate_ref  = _today_str
+
+_eff_date  = get_effective_date(_rate_ref)
+_ip_rates  = get_rates_for_date(_eff_date)
+
 
 # ── 프레임 매핑 섹션 ──────────────────────────────────────────
 st.markdown("""
@@ -221,10 +246,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# IP가 바뀌면 이전 프레임 선택값 강제 초기화
+# IP가 바뀌면 프레임 선택값 초기화 (key 직접 관리)
 if st.session_state.get("_last_ip") != selected_ip:
     st.session_state["_last_ip"] = selected_ip
-    st.session_state["_selected_frames"] = default_frames
+    st.session_state["frames_multiselect"] = default_frames
 
 col_map1, col_map2, col_map3 = st.columns([1, 3, 1])
 with col_map1:
@@ -236,11 +261,9 @@ with col_map2:
     selected_frames = st.multiselect(
         "어드민 프레임 선택 (매출 데이터 출처)",
         options=all_frames,
-        default=st.session_state.get("_selected_frames", default_frames),
         key="frames_multiselect",
         help="여러 프레임을 선택하면 합산 정산됩니다. '매핑 저장'을 누르면 다음번에 자동 적용됩니다.",
     )
-st.session_state["_selected_frames"] = selected_frames
 
 with col_map3:
     st.write("")
@@ -261,14 +284,19 @@ df = df_all.copy()
 if len(date_range) == 2:
     df = df[(df["날짜"] >= date_range[0]) & (df["날짜"] <= date_range[1])]
 
-df_ip = df[df["프레임 이름"].isin(selected_frames)]
+df_ip = df[df["프레임 이름"].isin(selected_frames)].copy()
+
+# duedate 기준 환율로 KRW환산 재계산
+df_ip["환율"] = df_ip["결제 단위"].map(_ip_rates).fillna(1)
+df_ip["KRW환산"] = (df_ip["최종 결제 금액"] * df_ip["환율"]).round(0).astype(int)
+df_ip["쿠폰KRW"]  = (df_ip["쿠폰 할인 금액"]  * df_ip["환율"]).round(0).astype(int)
 
 paid       = df_ip[~df_ip["취소 여부"] & (df_ip["최종 결제 금액"] > 0)]
 coupons    = df_ip[~df_ip["취소 여부"] & (df_ip["최종 결제 금액"] == 0) & (df_ip["쿠폰 할인 금액"] > 0)]
 all_coupon = pd.concat([coupons, paid[paid["쿠폰 할인 금액"] > 0]])
 
-rs_agency = entry.get("rs_agency")
-rs_mgmt   = entry.get("rs_mgmt")
+rs_agency = _rs_a_pct / 100 if _rs_a_pct > 0 else None
+rs_mgmt   = _rs_m_pct / 100 if _rs_m_pct > 0 else None
 
 total_sales_krw   = paid["KRW환산"].sum()
 total_coupon_krw  = all_coupon["쿠폰KRW"].sum()
@@ -283,6 +311,16 @@ c2.metric("쿠폰 할인 (KRW)", fmt_krw(total_coupon_krw), f"{len(all_coupon):,
 c3.metric("정산 기준액", fmt_krw(settlement_base), "매출+쿠폰")
 c4.metric(f"소속사 정산 ({fmt_pct(rs_agency)})", fmt_krw(agency_settlement))
 c5.metric(f"대행사 정산 ({fmt_pct(rs_mgmt)})", fmt_krw(mgmt_settlement))
+
+# 환율 기준 안내
+_rate_icon = "📅" if _rate_base == "duedate" else "📆"
+_rate_label = f"종료일 기준 ({_duedate} → 적용일 {_eff_date})" if _rate_base == "duedate" else f"오늘 기준 ({_eff_date})"
+_rate_detail = "  |  ".join(
+    f"1 {cur} = {rate:,.2f} KRW"
+    for cur, rate in _ip_rates.items()
+    if cur != "KRW"
+)
+st.caption(f"{_rate_icon} 환율 기준: **{_rate_label}**   {_rate_detail if _rate_detail else ''}")
 
 st.divider()
 

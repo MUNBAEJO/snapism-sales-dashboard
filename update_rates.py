@@ -9,14 +9,22 @@
 import json
 import sys
 import urllib.request
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
-BASE_DIR = Path(__file__).parent
-CONFIG_FILE = BASE_DIR / "config.json"
-LOG_DIR = BASE_DIR / "logs"
+BASE_DIR        = Path(__file__).parent
+CONFIG_FILE     = BASE_DIR / "config.json"
+LOG_DIR         = BASE_DIR / "logs"
+RATE_CACHE_FILE = BASE_DIR / "data" / "rates_date_cache.json"
 
-CURRENCIES = ["CNY", "JPY", "IDR", "TWD", "THB", "HKD", "MYR"]
+# 스내피즘 + 포토이즘 30개국 전체 통화
+CURRENCIES = [
+    # 스내피즘
+    "CNY", "JPY", "IDR", "TWD", "THB", "HKD", "MYR",
+    # 포토이즘 추가
+    "PHP", "VND", "CAD", "USD", "AED", "CLP", "EUR",
+    "AUD", "SGD", "GBP", "PEN", "LAK", "MXN", "BND", "MNT", "MOP",
+]
 
 # 무료 환율 API (동일 데이터, 두 엔드포인트 미러)
 RATE_URLS = [
@@ -81,6 +89,100 @@ def update_exchange_rates():
             log(f"  1 {cur} = {rate:,.2f} KRW")
 
     return True
+
+
+def get_effective_date(date_str: str) -> str:
+    """YYYY-MM-DD → 주말/공휴일 보정 후 가장 가까운 이전 영업일 반환.
+    미래 날짜는 오늘로 처리.
+    """
+    today = date.today()
+
+    try:
+        d = date.fromisoformat(date_str)
+    except Exception:
+        return today.isoformat()
+
+    # 미래 날짜 → 오늘
+    if d > today:
+        d = today
+
+    # 한국 공휴일 (holidays 패키지 없으면 주말만 처리)
+    kr_holidays: set = set()
+    try:
+        import holidays as _hol
+        kr = _hol.KR(years=range(max(d.year - 1, 2020), d.year + 2))
+        kr_holidays = set(kr.keys())
+    except ImportError:
+        pass
+
+    # 주말/공휴일이면 하루씩 앞으로
+    while d.weekday() >= 5 or d in kr_holidays:
+        d -= timedelta(days=1)
+
+    return d.isoformat()
+
+
+def get_rates_for_date(date_str: str) -> dict:
+    """특정 날짜(또는 미래→오늘) 환율을 반환. 로컬 캐시 우선.
+
+    반환 형식: {"KRW": 1, "JPY": 9.47, "CNY": 222.5, ...}
+    조회 실패 시 config.json 기본 환율 반환.
+    """
+    eff = get_effective_date(date_str)
+
+    # 캐시 로드
+    cache: dict = {}
+    if RATE_CACHE_FILE.exists():
+        try:
+            with open(RATE_CACHE_FILE, encoding="utf-8") as f:
+                cache = json.load(f)
+        except Exception:
+            pass
+
+    if eff in cache:
+        return cache[eff]
+
+    # API 호출 (날짜 고정 → latest 순으로 fallback)
+    urls = [
+        f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{eff}/v1/currencies/krw.json",
+        f"https://latest.currency-api.pages.dev/v1/currencies/krw.json",
+    ]
+    krw_rates = None
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            krw_rates = data.get("krw", {})
+            if krw_rates:
+                break
+        except Exception as e:
+            log(f"[날짜환율 조회 실패] {url}: {e}")
+
+    if not krw_rates:
+        # API 완전 실패 → config.json 기본값
+        try:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
+                return json.load(f).get("exchange_rates", {"KRW": 1})
+        except Exception:
+            return {"KRW": 1}
+
+    rates: dict = {"KRW": 1}
+    for cur in CURRENCIES:
+        rate = krw_rates.get(cur.lower())
+        if rate and rate > 0:
+            rates[cur] = round(1 / rate, 2)
+
+    # 캐시 저장
+    cache[eff] = rates
+    RATE_CACHE_FILE.parent.mkdir(exist_ok=True)
+    try:
+        with open(RATE_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"[캐시 저장 실패] {e}")
+
+    return rates
 
 
 if __name__ == "__main__":

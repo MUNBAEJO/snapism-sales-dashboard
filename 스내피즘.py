@@ -441,6 +441,99 @@ with col_b:
         frame_show.columns = ["프레임 이름", "매출", "건수"]
         st.dataframe(frame_show, use_container_width=True, height=400)
 
+# ── 카테고리 내 상품 이름 순위 ───────────────────────────────────
+st.markdown('<div class="section-title">카테고리별 상품 순위</div>', unsafe_allow_html=True)
+
+avail_cats = sorted(all_txns["상품 카테고리"].dropna().unique().tolist())
+default_cat = "미니스티커" if "미니스티커" in avail_cats else (avail_cats[0] if avail_cats else None)
+
+col_pcat, _ = st.columns([2, 8])
+with col_pcat:
+    pick_cat = st.selectbox(
+        "카테고리 선택",
+        avail_cats,
+        index=avail_cats.index(default_cat) if default_cat in avail_cats else 0,
+        key="prod_rank_cat",
+    )
+
+prod_rank_df = (
+    all_txns[all_txns["상품 카테고리"] == pick_cat]
+    .groupby("상품 이름")
+    .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+    .reset_index()
+    .sort_values("매출", ascending=False)
+)
+
+if prod_rank_df.empty:
+    st.info("해당 카테고리의 데이터가 없습니다.")
+else:
+    col_pr_chart, col_pr_tbl = st.columns([7, 3])
+    with col_pr_chart:
+        top_prod = prod_rank_df.head(15).sort_values("매출")
+        fig_pr = px.bar(
+            top_prod, x="매출", y="상품 이름", orientation="h",
+            color="매출", color_continuous_scale="Oranges", custom_data=["건수"],
+        )
+        fig_pr.update_traces(hovertemplate="%{y}<br>%{x:,}원  (%{customdata[0]}건)<extra></extra>")
+        fig_pr.update_layout(
+            height=max(300, len(top_prod) * 38 + 60),
+            coloraxis_showscale=False,
+            xaxis_tickformat=",", yaxis_title="",
+            margin=dict(t=10, b=20, l=10, r=10),
+        )
+        st.plotly_chart(fig_pr, use_container_width=True)
+    with col_pr_tbl:
+        pr_tbl = prod_rank_df.head(15).reset_index(drop=True)
+        pr_tbl.index = pr_tbl.index + 1
+        total_pr = pd.DataFrame([{"상품 이름": "합계", "매출": prod_rank_df["매출"].sum(), "건수": prod_rank_df["건수"].sum()}])
+        pr_tbl = pd.concat([pr_tbl, total_pr], ignore_index=True)
+        pr_tbl.index = list(range(1, min(len(prod_rank_df), 15) + 1)) + ["∑"]
+        pr_tbl["비중"] = (pr_tbl["매출"] / prod_rank_df["매출"].sum() * 100).round(1).astype(str) + "%"
+        pr_tbl.loc["∑", "비중"] = "100%"
+        pr_tbl["매출"] = pr_tbl["매출"].apply(lambda x: f"₩{int(x):,}")
+        st.dataframe(pr_tbl, use_container_width=True, height=max(300, len(top_prod) * 38 + 80))
+
+    if len(prod_rank_df) > 15:
+        with st.expander(f"📋 전체 보기 ({len(prod_rank_df)}개)"):
+            full_tbl = prod_rank_df.reset_index(drop=True)
+            full_tbl.index = full_tbl.index + 1
+            full_tbl["비중"] = (full_tbl["매출"] / full_tbl["매출"].sum() * 100).round(1).astype(str) + "%"
+            full_tbl["매출"] = full_tbl["매출"].apply(lambda x: f"₩{int(x):,}")
+            st.dataframe(full_tbl, use_container_width=True, height=400)
+
+# ── 상품 카테고리별 매출 (전체 너비) ─────────────────────────────
+st.markdown('<div class="section-title">상품 카테고리별 매출</div>', unsafe_allow_html=True)
+cat_bar_df = (
+    all_txns.groupby("상품 카테고리")
+    .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+    .reset_index()
+    .sort_values("매출")
+)
+col_cat_chart, col_cat_tbl = st.columns([7, 3])
+with col_cat_chart:
+    fig_cat = px.bar(
+        cat_bar_df, x="매출", y="상품 카테고리", orientation="h",
+        color="매출", color_continuous_scale="Greens", custom_data=["건수"],
+    )
+    fig_cat.update_traces(hovertemplate="%{y}<br>%{x:,}원  (%{customdata[0]}건)<extra></extra>")
+    fig_cat.update_layout(
+        height=max(260, len(cat_bar_df) * 48 + 80),
+        coloraxis_showscale=False,
+        xaxis_tickformat=",", yaxis_title="",
+        margin=dict(t=10, b=0),
+    )
+    st.plotly_chart(fig_cat, use_container_width=True)
+with col_cat_tbl:
+    tbl = cat_bar_df.sort_values("매출", ascending=False).reset_index(drop=True)
+    tbl.index = tbl.index + 1
+    total = pd.DataFrame([{"상품 카테고리": "합계", "매출": tbl["매출"].sum(), "건수": tbl["건수"].sum()}])
+    tbl = pd.concat([tbl, total], ignore_index=True)
+    tbl.index = list(range(1, len(cat_bar_df) + 1)) + ["∑"]
+    tbl["비중"] = (tbl["매출"] / tbl["매출"].iloc[:-1].sum() * 100).round(1).astype(str) + "%"
+    tbl.loc["∑", "비중"] = "100%"
+    tbl["매출"] = tbl["매출"].apply(lambda x: f"₩{int(x):,}")
+    st.dataframe(tbl, use_container_width=True, height=max(260, len(cat_bar_df) * 48 + 80))
+
 # ── IP별 상품 카테고리 상세 ────────────────────────────────────
 with st.expander("🔍 IP별 상품 카테고리 상세", expanded=(selected_frame != "전체")):
     frame_src = all_txns[all_txns["프레임 이름"].notna() & (all_txns["프레임 이름"] != "nan")]
