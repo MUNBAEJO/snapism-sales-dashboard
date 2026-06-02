@@ -179,55 +179,82 @@ if not matched_jira:
     st.warning("어드민 데이터와 매칭되는 Snapism Jira IP가 없습니다.")
     st.stop()
 
-# IP 선택 (숨김 — 고급 설정으로 접어둠)
+# ── 선택된 프레임 → Jira IP 자동 탐지 ───────────────────────────
 ip_options = sorted(matched_jira.keys())
 
 def ip_label(k):
     e      = matched_jira[k]["entry"]
     icon   = STATUS_COLORS.get(e.get("status", ""), "⚪")
     rs_a   = fmt_pct(e["rs_agency"])
-    rs_m   = fmt_pct(e["rs_mgmt"])
     src    = " 💾" if matched_jira[k]["source"] == "saved" else ""
     title  = e.get("title", "")
     title  = re.sub(r"^(?:20)?\d{2}\.\d{2}\s+", "", title).strip()
     title_short = title[:30] + "…" if len(title) > 30 else title
     return f"{icon}{src} {k}  —  {title_short}  [{rs_a}]"
 
-with st.sidebar.expander("⚙️ Jira IP 연결", expanded=False):
-    selected_ip = st.selectbox("IP 선택", options=ip_options, format_func=ip_label)
+# 현재 선택된 프레임으로 가장 잘 매칭되는 Jira IP 탐색
+_cur_frames = st.session_state.get("frames_multiselect", [])
+_auto_ip = ip_options[0]
+if _cur_frames:
+    _best = 0
+    for _ip in ip_options:
+        _cnt = sum(1 for f in _cur_frames if f in matched_jira[_ip]["frames"])
+        if _cnt > _best:
+            _best = _cnt
+            _auto_ip = _ip
+    # 매칭 IP가 바뀌면 expander 선택값도 동기화
+    if _best > 0 and st.session_state.get("_auto_detected_ip") != _auto_ip:
+        st.session_state["_auto_detected_ip"] = _auto_ip
+        st.session_state["jira_ip_select"] = _auto_ip
 
-sel         = matched_jira[selected_ip]
-entry       = sel["entry"]
+with st.sidebar.expander("⚙️ Jira IP 연결", expanded=False):
+    selected_ip = st.selectbox(
+        "IP 선택", options=ip_options, format_func=ip_label,
+        key="jira_ip_select",
+    )
+
+sel            = matched_jira[selected_ip]
+entry          = sel["entry"]
 default_frames = sel["frames"]
 
-# ── RS율 입력 (Jira 값 기본값, 수동 수정 가능) ────────────────────
+# ── RS율 입력 (IP 바뀔 때만 Jira 값으로 리셋, 수동 수정 유지) ────
 st.sidebar.divider()
 st.sidebar.markdown("**📊 R/S율 설정**")
 _jira_rs_a = (entry.get("rs_agency") or 0) * 100
 _jira_rs_m = (entry.get("rs_mgmt")   or 0) * 100
+
+# IP가 달라질 때만 RS 입력값 초기화
+if st.session_state.get("_rs_ip_ref") != selected_ip:
+    st.session_state["_rs_ip_ref"]   = selected_ip
+    st.session_state["_rs_a_input"]  = float(round(_jira_rs_a, 2))
+    st.session_state["_rs_m_input"]  = float(round(_jira_rs_m, 2))
+
+# 세션 스테이트 잔존값이 범위 초과할 수 있으므로 클램핑
+for _k in ["_rs_a_input", "_rs_m_input"]:
+    if _k in st.session_state:
+        st.session_state[_k] = float(min(100.0, max(0.0, st.session_state[_k])))
+
 _rs_a_pct = st.sidebar.number_input(
     "소속사 RS (%)", min_value=0.0, max_value=100.0,
-    value=float(round(_jira_rs_a, 2)), step=0.1, format="%.2f",
-    help="Jira에서 자동으로 불러온 값. 직접 수정 가능합니다.",
+    step=0.1, format="%.2f", key="_rs_a_input",
+    help="선택된 프레임의 Jira IP 값이 자동으로 채워집니다. 직접 수정 가능합니다.",
 )
 _rs_m_pct = st.sidebar.number_input(
     "대행사 RS (%)", min_value=0.0, max_value=100.0,
-    value=float(round(_jira_rs_m, 2)), step=0.1, format="%.2f",
-    help="Jira에서 자동으로 불러온 값. 직접 수정 가능합니다.",
+    step=0.1, format="%.2f", key="_rs_m_input",
+    help="선택된 프레임의 Jira IP 값이 자동으로 채워집니다. 직접 수정 가능합니다.",
 )
 if _jira_rs_a > 0 or _jira_rs_m > 0:
     st.sidebar.caption(f"Jira 원본: 소속사 {_jira_rs_a:.2f}% / 대행사 {_jira_rs_m:.2f}%")
 
-# ── duedate 기준 환율 결정 ────────────────────────────────────────
+# ── duedate 기준 환율 결정 (자동 탐지된 IP 기준) ─────────────────
 _today_str = date.today().isoformat()
 _duedate   = entry.get("duedate")   # YYYY-MM-DD or None
 
 if _duedate and _duedate <= _today_str:
-    # 종료일이 오늘 이전 → 종료일 기준 환율
     _rate_base = "duedate"
     _rate_ref  = _duedate
 else:
-    # 미래 or duedate 없음 → 오늘 기준 환율
     _rate_base = "today"
     _rate_ref  = _today_str
 
@@ -240,22 +267,19 @@ st.markdown("""
 <div style="background:#f0f4ff;border-left:4px solid #4361ee;padding:10px 16px;border-radius:6px;margin-bottom:12px">
 <b>🔗 정산 연결 설정</b><br>
 <span style="font-size:0.88rem;color:#555">
-왼쪽 <b>IP 선택</b>은 Jira 티켓에서 RS율(정산 비율)을 가져옵니다.<br>
-아래 <b>어드민 프레임</b>은 실제 매출 데이터를 어떤 프레임명으로 조회할지 선택합니다. 자동 매핑되지만 수동으로 수정 가능합니다.
+아래에서 <b>어드민 프레임</b>을 선택하면 해당 IP의 Jira 정보(RS율·종료일)가 자동으로 반영됩니다.
+자동 매핑되지만 수동으로 수정 가능합니다.
 </span>
 </div>
 """, unsafe_allow_html=True)
-
-# IP가 바뀌면 프레임 선택값 초기화 (key 직접 관리)
-if st.session_state.get("_last_ip") != selected_ip:
-    st.session_state["_last_ip"] = selected_ip
-    st.session_state["frames_multiselect"] = default_frames
 
 col_map1, col_map2, col_map3 = st.columns([1, 3, 1])
 with col_map1:
     src_badge = "💾 저장된 매핑" if sel["source"] == "saved" else "🔍 자동 매핑"
     st.caption(src_badge)
-    st.caption(f"Jira RS: **{fmt_pct(entry['rs_agency'])}** (소속사) / **{fmt_pct(entry['rs_mgmt'])}** (대행사)")
+    _dd_disp = entry.get("duedate") or "-"
+    st.caption(f"📅 종료일: **{_dd_disp}**")
+    st.caption(f"Jira RS: **{fmt_pct(entry['rs_agency'])}** / **{fmt_pct(entry['rs_mgmt'])}**")
 
 with col_map2:
     selected_frames = st.multiselect(
