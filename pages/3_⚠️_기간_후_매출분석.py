@@ -32,10 +32,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-BASE_DIR     = Path(__file__).parent.parent
-SNAP_MASTER  = BASE_DIR / "data" / "master.csv"
-PHOTO_MASTER = BASE_DIR / "data" / "master_photoism.csv"
-_DATE_RE     = re.compile(r"^\s*\d{6,8}\s*")
+BASE_DIR      = Path(__file__).parent.parent
+SNAP_MASTER   = BASE_DIR / "data" / "master.csv"
+PHOTO_MASTER  = BASE_DIR / "data" / "master_photoism.csv"          # 1,970 MB (최종 fallback)
+PHOTO_PARQUET = BASE_DIR / "data" / "master_photoism.parquet"      # 116 MB (중간 fallback)
+PHOTO_AGG     = BASE_DIR / "data" / "master_photoism_agg.parquet"  # 7.3 MB (우선 사용)
+_DATE_RE      = re.compile(r"^\s*\d{6,8}\s*")
 
 
 # ── 데이터 로더 ────────────────────────────────────────────────
@@ -58,17 +60,38 @@ def load_snap():
             df[col] = 0
     df["정산금액"]   = df["KRW환산금액"] + df["쿠폰KRW"]
     df["브랜드소스"] = "스내피즘"
+    df["건수"]       = 1   # 개별 거래 행 → 1건
     df["타이틀명_비교"] = df["프레임 이름"].fillna("").astype(str) if "프레임 이름" in df.columns else ""
     return df[~df["취소 여부"]]
 
 
 @st.cache_data(ttl=60)
 def load_photo():
-    if not PHOTO_MASTER.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(PHOTO_MASTER, encoding="utf-8-sig", low_memory=False)
-    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
-    df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true","1","yes"])
+    """포토이즘 매출. 집계 parquet(7.3 MB, 일·타이틀 단위) 우선 → 전체 parquet → CSV fallback.
+    기간후 분석은 '타이틀별·날짜별 매출 합계'면 충분하므로 집계본 사용 (1.2초/219MB).
+    집계 행은 다수 거래의 묶음이므로 '건수' 컬럼으로 실거래 수를 보존한다."""
+    import pyarrow.parquet as pq
+    need = ["날짜", "취소 여부", "결제 단위", "최종 결제 금액", "쿠폰 할인 금액",
+            "타이틀명", "국가", "매장 이름", "건수", "결제 수단"]
+    df = pd.DataFrame()
+    for src in (PHOTO_AGG, PHOTO_PARQUET):
+        if src.exists():
+            try:
+                avail = pq.read_schema(str(src)).names
+                cols  = [c for c in need if c in avail]
+                df = pq.read_table(str(src), columns=cols).to_pandas(strings_to_categorical=True)
+                break
+            except Exception:
+                df = pd.DataFrame()
+    if df.empty and PHOTO_MASTER.exists():
+        df = pd.read_csv(PHOTO_MASTER, encoding="utf-8-sig", low_memory=False)
+    if df.empty:
+        return df
+
+    # 날짜/취소 정리 후 취소 건 먼저 제거 (이후 연산 메모리 절감)
+    df["날짜"] = pd.to_datetime(df["날짜"].astype("object"), errors="coerce").dt.date
+    df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
+    df = df[~df["취소 여부"]].copy()
 
     try:
         with open(BASE_DIR / "config.json", encoding="utf-8") as f:
@@ -86,18 +109,32 @@ def load_photo():
 
     if "결제 단위" not in df.columns:
         df["결제 단위"] = "KRW"
-    df["결제 단위"] = df["결제 단위"].fillna("KRW").astype(str)
-    df["환율"] = df["결제 단위"].map(ex).fillna(1)
-    for col in ["최종 결제 금액", "쿠폰 할인 금액"]:
-        if col not in df.columns:
-            df[col] = 0
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-    df["KRW환산금액"] = (df["최종 결제 금액"] * df["환율"]).round(0).astype(int)
-    df["쿠폰KRW"]    = (df["쿠폰 할인 금액"] * df["환율"]).round(0).astype(int)
+    df["결제 단위"] = df["결제 단위"].astype("object").fillna("KRW").astype(str)
+    rate = df["결제 단위"].map(ex).fillna(1)
+    fin  = pd.to_numeric(df.get("최종 결제 금액", 0), errors="coerce").fillna(0)
+    cou  = pd.to_numeric(df.get("쿠폰 할인 금액", 0), errors="coerce").fillna(0)
+    df["KRW환산금액"] = (fin * rate).round(0).astype("int64")
+    df["쿠폰KRW"]    = (cou * rate).round(0).astype("int64")
     df["정산금액"]   = df["KRW환산금액"] + df["쿠폰KRW"]
     df["브랜드소스"] = "포토이즘"
-    df["타이틀명_비교"] = df["타이틀명"].fillna("").astype(str) if "타이틀명" in df.columns else ""
-    return df[~df["취소 여부"]]
+    # 건수: 집계본엔 존재, 전체/CSV fallback이면 1건씩
+    if "건수" in df.columns:
+        df["건수"] = pd.to_numeric(df["건수"], errors="coerce").fillna(1).astype("int64")
+    else:
+        df["건수"] = 1
+
+    # 타이틀명_비교: categorical 유지 (메모리 절감), fillna 안전 처리
+    if "타이틀명" in df.columns:
+        s = df["타이틀명"]
+        if str(s.dtype) == "category":
+            if "" not in s.cat.categories:
+                s = s.cat.add_categories([""])
+            df["타이틀명_비교"] = s.fillna("")
+        else:
+            df["타이틀명_비교"] = s.fillna("").astype(str)
+    else:
+        df["타이틀명_비교"] = ""
+    return df
 
 
 # ── 헤더 ──────────────────────────────────────────────────────
@@ -136,49 +173,58 @@ if not frames:
 
 all_sales = pd.concat(frames, ignore_index=True)
 
-# ── 기한 초과 분석 ────────────────────────────────────────────
-rows = []
-unique_titles = all_sales["타이틀명_비교"].dropna().unique()
-unique_titles = [t for t in unique_titles if t and t not in ("nan", "")]
+# ── 기한 초과 분석 (벡터화) ────────────────────────────────────
+unique_titles = [t for t in all_sales["타이틀명_비교"].dropna().unique()
+                 if t and t not in ("nan", "")]
 
-prog = st.progress(0, text="분석 중...")
-for i, title in enumerate(unique_titles):
-    prog.progress((i + 1) / len(unique_titles), text=f"분석 중... ({i+1}/{len(unique_titles)})")
-
+# Jira 종료일이 유효한 타이틀만 매핑 (무기한/미설정 제외)
+due_map = {}
+for title in unique_titles:
     entry = jira_map.get(title)
-    if entry is None:
+    if not entry:
         continue
-
-    duedate = entry.get("duedate")
-    if not duedate:
+    dd = entry.get("duedate")
+    if not dd:
         continue
-    if exclude_far and duedate >= "2099-01-01":
+    if exclude_far and dd >= "2099-01-01":
         continue
+    due_map[title] = dd
 
-    due = date.fromisoformat(duedate)
-    t_sales = all_sales[all_sales["타이틀명_비교"] == title]
-    after   = t_sales[t_sales["날짜"] > due]
-    if after.empty:
-        continue
+rows = []
+with st.spinner("기한 초과 분석 중..."):
+    if due_map:
+        due_date_map = {t: date.fromisoformat(d) for t, d in due_map.items()}
+        # 종료일 있는 타이틀 행만 추출 → 행별 종료일 비교 (벡터화)
+        sub = all_sales[all_sales["타이틀명_비교"].isin(due_map)].copy()
+        sub["타이틀명_비교"] = sub["타이틀명_비교"].astype("object")
+        due_d = sub["타이틀명_비교"].map(due_date_map)
+        after = sub[sub["날짜"] > due_d]
 
-    amt = int(after["정산금액"].sum())
-    if amt < min_amount:
-        continue
-
-    rows.append({
-        "타이틀명":      title,
-        "종료일":        duedate,
-        "브랜드":        entry.get("brand", ""),
-        "소스":          after["브랜드소스"].iloc[0],
-        "기한후 건수":   len(after),
-        "기한후 금액":   amt,
-        "최초 초과일":   str(after["날짜"].min()),
-        "최근 초과일":   str(after["날짜"].max()),
-        "Jira 티켓":    entry.get("ticket_key", ""),
-        "Jira 상태":    entry.get("status", ""),
-    })
-
-prog.empty()
+        if not after.empty:
+            grp = after.groupby("타이틀명_비교", observed=True).agg(
+                기한후_금액=("정산금액", "sum"),
+                기한후_건수=("건수",     "sum"),
+                최초=("날짜", "min"),
+                최근=("날짜", "max"),
+                소스=("브랜드소스", "first"),
+            )
+            for title, g in grp.iterrows():
+                amt = int(g["기한후_금액"])
+                if amt < min_amount:
+                    continue
+                entry = jira_map.get(title, {})
+                rows.append({
+                    "타이틀명":      title,
+                    "종료일":        due_map[title],
+                    "브랜드":        entry.get("brand", ""),
+                    "소스":          g["소스"],
+                    "기한후 건수":   int(g["기한후_건수"]),
+                    "기한후 금액":   amt,
+                    "최초 초과일":   str(g["최초"]),
+                    "최근 초과일":   str(g["최근"]),
+                    "Jira 티켓":    entry.get("ticket_key", ""),
+                    "Jira 상태":    entry.get("status", ""),
+                })
 
 st.divider()
 
@@ -239,6 +285,7 @@ st.dataframe(
 # ── 상세 거래 내역 ─────────────────────────────────────────────
 st.divider()
 st.markdown('<div class="section-title">🔍 상세 거래 내역</div>', unsafe_allow_html=True)
+st.caption("포토이즘은 일·타이틀·매장 단위 집계 행, 스내피즘은 개별 거래 행으로 표시됩니다. (건수 = 실거래 수)")
 
 sel = st.selectbox(
     "타이틀 선택",
@@ -262,14 +309,16 @@ else:
     due = date.fromisoformat(e["종료일"]) if e.get("종료일") else None
     t_s = all_sales[all_sales["타이틀명_비교"] == sel]
     detail = t_s[t_s["날짜"] > due] if due else t_s
+    _cnt = int(detail["건수"].sum()) if "건수" in detail.columns else len(detail)
     st.info(
         f"**{sel}**  종료일: `{e.get('종료일')}` | "
-        f"{len(detail)}건 · ₩{detail['정산금액'].sum():,}  "
+        f"{_cnt:,}건 · ₩{detail['정산금액'].sum():,}  "
         f"([Jira ↗](https://seobukcorp.atlassian.net/browse/{e.get('Jira 티켓', '')}))"
     )
 
 if not detail.empty:
-    show_cols = ["날짜", "브랜드소스", "국가", "매장 이름", "타이틀명_비교", "정산금액", "결제 수단"]
+    show_cols = ["날짜", "브랜드소스", "국가", "매장 이름", "타이틀명_비교",
+                 "건수", "정산금액", "결제 수단"]
     avail = [c for c in show_cols if c in detail.columns]
     st.dataframe(
         detail[avail].sort_values("날짜", ascending=False).reset_index(drop=True),
