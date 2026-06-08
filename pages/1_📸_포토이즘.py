@@ -34,6 +34,10 @@ PARQUET_FILE = BASE_DIR / "data" / "master_photoism.parquet"
 MASTER_FILE  = BASE_DIR / "data" / "master_photoism.csv"
 CONFIG_FILE  = BASE_DIR / "config.json"
 
+# 국가별 매출액 가산 규칙 (쿠폰/서비스코인 포함 국가)
+_COUPON_CC = {"la", "gb", "de", "th", "lv", "mx"}
+_COIN_CC   = {"cl", "la", "pe", "gb", "de", "lv", "mx"}
+
 
 def load_config():
     try:
@@ -115,6 +119,94 @@ def load_hourly():
         return df
     except Exception:
         return pd.DataFrame()
+
+
+# 세부 항목 분류 기준 화이트리스트 (UI 라벨 → 실제 컬럼)
+DETAIL_DIMS = {
+    "프레임 이름": "프레임 이름",
+    "테마 (구좌: BASIC/WITH/EVENT)": "구좌",
+    "타이틀 (IP)": "타이틀명",
+    "상품 카테고리 (브랜드)": "브랜드",
+    "채널 (중분류)": "중분류",
+    "사업형태 (소분류)": "소분류",
+}
+
+
+@st.cache_data(ttl=60)
+def load_sales_detail(group_col, start_date, end_date,
+                      ip_list=None, country="전체", store="전체",
+                      brand="전체", daebun="전체"):
+    """전체 parquet에서 세부 판매 항목(프레임/테마 등) DuckDB on-demand 집계.
+    집계 parquet에 없는 컬럼(프레임 이름/구좌/중분류/소분류)까지 빠르게 드릴다운."""
+    import duckdb
+    if group_col not in DETAIL_DIMS.values() or not PARQUET_FILE.exists():
+        return pd.DataFrame()
+    parq = str(PARQUET_FILE).replace("\\", "/")
+
+    def esc(v):
+        return str(v).replace("'", "''")
+
+    where = [
+        f"TRY_CAST(\"날짜\" AS DATE) BETWEEN DATE '{start_date}' AND DATE '{end_date}'",
+        "LOWER(CAST(\"취소 여부\" AS VARCHAR)) NOT IN ('true','1','yes')",
+        "TRY_CAST(\"최종 결제 금액\" AS DOUBLE) >= 0",
+    ]
+    if ip_list:
+        ins = ",".join(f"'{esc(x)}'" for x in ip_list)
+        where.append(f"CAST(\"타이틀명\" AS VARCHAR) IN ({ins})")
+    if country and country != "전체":
+        where.append(f"CAST(\"국가\" AS VARCHAR) = '{esc(country)}'")
+    if store and store != "전체":
+        where.append(f"CAST(\"매장 이름\" AS VARCHAR) = '{esc(store)}'")
+    if brand and brand != "전체":
+        where.append(f"CAST(\"브랜드\" AS VARCHAR) = '{esc(brand)}'")
+    if daebun and daebun != "전체":
+        where.append(f"CAST(\"대분류\" AS VARCHAR) = '{esc(daebun)}'")
+    where_sql = " AND ".join(where)
+
+    con = duckdb.connect()
+    try:
+        df = con.execute(f"""
+            SELECT
+                COALESCE(CAST("{group_col}" AS VARCHAR), '') AS "항목",
+                COALESCE(CAST("결제 단위" AS VARCHAR), 'KRW') AS "결제 단위",
+                LOWER(COALESCE(CAST("국가코드" AS VARCHAR), '')) AS "국가코드",
+                SUM(TRY_CAST("최종 결제 금액" AS DOUBLE)) AS "최종 결제 금액",
+                SUM(TRY_CAST("쿠폰 할인 금액" AS DOUBLE)) AS "쿠폰 할인 금액",
+                SUM(TRY_CAST("서비스코인" AS DOUBLE))     AS "서비스코인",
+                COUNT(*) AS "건수"
+            FROM read_parquet('{parq}')
+            WHERE {where_sql}
+            GROUP BY 1, 2, 3
+        """).df()
+    finally:
+        con.close()
+
+    if df.empty:
+        return df
+
+    ex = load_exchange_rates()
+    df["결제 단위"] = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW")
+    df["환율"] = df["결제 단위"].map(ex).fillna(1)
+    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인", "건수"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    df["KRW_순수"] = (df["최종 결제 금액"] * df["환율"]).round(0)
+    df["KRW_쿠폰"] = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
+    df["KRW_코인"] = (df["서비스코인"]     * df["환율"]).round(0)
+    cc = df["국가코드"].astype(str).str.lower().str.strip()
+    df["매출액"] = (
+        df["KRW_순수"]
+        + df["KRW_쿠폰"] * cc.isin(_COUPON_CC).astype(int)
+        + df["KRW_코인"] * cc.isin(_COIN_CC).astype(int)
+    )
+    out = (
+        df.groupby("항목", as_index=False)
+        .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
+    )
+    out = out[out["항목"].astype(str).str.strip() != ""]
+    out["매출"] = out["매출"].astype("int64")
+    out["건수"] = out["건수"].astype("int64")
+    return out.sort_values("매출", ascending=False).reset_index(drop=True)
 
 
 def paid_sales(df):
@@ -594,6 +686,85 @@ else:
     st.plotly_chart(fig8, use_container_width=True)
     if selected_country != "전체" or selected_store != "전체" or selected_brand != "전체":
         st.caption("ℹ️ 시간대 차트는 날짜 필터만 적용됩니다 (국가/매장 필터 미적용)")
+
+# ── 세부 판매 항목 검색 (프레임 / 테마) ──────────────────────
+st.divider()
+st.markdown('<div class="section-title">🔎 세부 판매 항목 검색 (프레임 / 테마)</div>',
+            unsafe_allow_html=True)
+st.caption("전체 거래 데이터에서 프레임·테마 등 세부 항목을 분류별로 집계합니다. "
+           "현재 사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용됩니다.")
+
+dcol1, dcol2 = st.columns([1, 2])
+with dcol1:
+    sel_dim_label = st.selectbox("분류 기준", list(DETAIL_DIMS.keys()), key="detail_dim")
+with dcol2:
+    search_kw = st.text_input(
+        "🔍 검색어 (항목명 일부)", key="detail_search",
+        placeholder="예: 메인, 화이트, ENHYPEN, EVENT …",
+    )
+
+if len(date_range) == 2:
+    detail_df = load_sales_detail(
+        DETAIL_DIMS[sel_dim_label],
+        date_range[0], date_range[1],
+        ip_list=selected_ips or None,
+        country=selected_country,
+        store=selected_store,
+        brand=selected_brand,
+        daebun=selected_대분류,
+    )
+else:
+    detail_df = pd.DataFrame()
+
+if detail_df.empty:
+    st.info("해당 조건의 세부 항목 데이터가 없습니다.")
+else:
+    if search_kw.strip():
+        detail_df = detail_df[
+            detail_df["항목"].astype(str).str.contains(search_kw.strip(), case=False, na=False)
+        ]
+
+    if detail_df.empty:
+        st.warning(f"'{search_kw}' 검색 결과가 없습니다.")
+    else:
+        d_rev = int(detail_df["매출"].sum())
+        d_cnt = int(detail_df["건수"].sum())
+        dm1, dm2, dm3 = st.columns(3)
+        dm1.metric("검색 항목 수", f"{len(detail_df):,}개")
+        dm2.metric("합계 매출", fmt_krw(d_rev))
+        dm3.metric("합계 건수", f"{d_cnt:,}건")
+
+        top_n = detail_df.nlargest(20, "매출").sort_values("매출")
+        fig_d = px.bar(
+            top_n, x="매출", y="항목", orientation="h",
+            color="매출", color_continuous_scale="Tealgrn", custom_data=["건수"],
+        )
+        fig_d.update_traces(hovertemplate="%{y}<br>%{x:,}원  (%{customdata[0]}건)<extra></extra>")
+        fig_d.update_layout(
+            height=max(320, len(top_n) * 26 + 60), coloraxis_showscale=False,
+            xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0),
+        )
+        st.plotly_chart(fig_d, use_container_width=True)
+        if len(detail_df) > 20:
+            st.caption(f"※ 차트는 매출 TOP 20만 표시 (전체 {len(detail_df):,}개는 아래 표·CSV 참고)")
+
+        tbl = detail_df.copy()
+        tbl.insert(0, "순위", range(1, len(tbl) + 1))
+        tbl["평균단가"] = (tbl["매출"] / tbl["건수"].replace(0, 1)).round(0).astype("int64")
+        tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
+        tbl["매출"]     = tbl["매출"].apply(fmt_krw)
+        tbl["평균단가"] = tbl["평균단가"].apply(fmt_krw)
+        tbl = tbl.rename(columns={"항목": sel_dim_label})
+        st.dataframe(tbl, use_container_width=True, height=480, hide_index=True)
+
+        csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
+            index=False, encoding="utf-8-sig"
+        ).encode("utf-8-sig")
+        st.download_button(
+            "세부 항목 CSV 다운로드", csv_d,
+            f"photoism_detail_{DETAIL_DIMS[sel_dim_label]}.csv", "text/csv",
+            key="detail_csv",
+        )
 
 # ── 집계 데이터 보기 ──────────────────────────────────────────
 with st.expander("🗃 집계 데이터 보기"):
