@@ -28,6 +28,7 @@ st.markdown("""
 }
 .section-title { font-size:1.05rem; font-weight:600; margin-bottom:4px; }
 [data-testid="stDeployButton"] { display:none !important; }
+[data-testid="stSidebarNav"] ul li:first-child a::before { content: "📊 "; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,8 +70,11 @@ def load_photo():
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true","1","yes"])
 
-    with open(BASE_DIR / "config.json", encoding="utf-8") as f:
-        ex = json.load(f).get("exchange_rates", {"KRW": 1})
+    try:
+        with open(BASE_DIR / "config.json", encoding="utf-8") as f:
+            ex = json.load(f).get("exchange_rates", {"KRW": 1})
+    except (FileNotFoundError, KeyError, json.JSONDecodeError):
+        ex = {"KRW": 1}
     defaults = {
         "PHP": 24.0,  "VND": 0.054, "CAD": 1050.0,"USD": 1380.0,
         "AED": 375.0, "CLP": 1.5,   "EUR": 1500.0, "AUD": 890.0,
@@ -80,16 +84,19 @@ def load_photo():
     for k, v in defaults.items():
         ex.setdefault(k, v)
 
-    df["결제 단위"] = df.get("결제 단위", "KRW").fillna("KRW").astype(str)
-    df["환율"]      = df["결제 단위"].map(ex).fillna(1)
-    df["최종 결제 금액"] = pd.to_numeric(df.get("최종 결제 금액", 0), errors="coerce").fillna(0).astype(int)
-    df["쿠폰 할인 금액"] = pd.to_numeric(df.get("쿠폰 할인 금액", 0), errors="coerce").fillna(0).astype(int)
+    if "결제 단위" not in df.columns:
+        df["결제 단위"] = "KRW"
+    df["결제 단위"] = df["결제 단위"].fillna("KRW").astype(str)
+    df["환율"] = df["결제 단위"].map(ex).fillna(1)
+    for col in ["최종 결제 금액", "쿠폰 할인 금액"]:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
     df["KRW환산금액"] = (df["최종 결제 금액"] * df["환율"]).round(0).astype(int)
     df["쿠폰KRW"]    = (df["쿠폰 할인 금액"] * df["환율"]).round(0).astype(int)
     df["정산금액"]   = df["KRW환산금액"] + df["쿠폰KRW"]
     df["브랜드소스"] = "포토이즘"
-    # 타이틀명을 WBS와 비교할 키: 그대로 사용 (날짜+IP명)
-    df["타이틀명_비교"] = df.get("타이틀명", "").fillna("").astype(str)
+    df["타이틀명_비교"] = df["타이틀명"].fillna("").astype(str) if "타이틀명" in df.columns else ""
     return df[~df["취소 여부"]]
 
 

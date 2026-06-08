@@ -25,6 +25,8 @@ st.markdown("""
 [data-testid="stMetricDelta"] { font-size: 0.85rem; }
 .section-title { font-size: 1.05rem; font-weight: 600; margin-bottom: 2px; }
 [data-testid="stDeployButton"] { display: none !important; }
+/* 메인 페이지 사이드바 아이콘 */
+[data-testid="stSidebarNav"] ul li:first-child a::before { content: "📊 "; }
 </style>
 """, unsafe_allow_html=True)
 

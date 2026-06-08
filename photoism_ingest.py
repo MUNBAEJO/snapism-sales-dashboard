@@ -127,20 +127,32 @@ def main():
 
     combined = pd.concat(frames, ignore_index=True)
 
-    # 중복 제거 (결제일시 + 매장 이름 + 프레임 이름 + 최종 결제 금액 기준)
-    # 주의: 결제일시를 문자열로 통일해야 datetime/str 타입 불일치로 인한 중복 누락 방지
+    # 중복 제거 (국가코드 + 결제일시 + 매장 이름 + 프레임 이름 + 최종 결제 금액 기준)
+    # 국가코드 포함: 다른 국가에서 동일 금액/시각 거래가 있어도 중복으로 처리되지 않도록
     combined["결제일시_str"] = combined["결제일시"].astype(str)
+    dedup_cols = ["결제일시_str", "매장 이름", "프레임 이름", "최종 결제 금액"]
+    if "국가코드" in combined.columns:
+        dedup_cols = ["국가코드"] + dedup_cols
     before = len(combined)
-    combined = combined.drop_duplicates(
-        subset=["결제일시_str", "매장 이름", "프레임 이름", "최종 결제 금액"],
-        keep="last"
-    )
+    combined = combined.drop_duplicates(subset=dedup_cols, keep="last")
     combined = combined.drop(columns=["결제일시_str"])
     log(f"  중복 제거: {before:,} → {len(combined):,}건")
 
     # 저장
     combined.to_csv(MASTER_FILE, index=False, encoding="utf-8-sig")
     log(f"[완료] 누적 {len(combined):,}건 저장 → {MASTER_FILE.name}")
+
+    # parquet 변환 + 집계 파일 갱신
+    try:
+        from convert_photoism_parquet import main as convert_parquet
+        from build_photoism_agg import main as build_agg
+        log("parquet 변환 중...")
+        convert_parquet()
+        log("집계 파일 갱신 중...")
+        build_agg()
+        log("집계 완료")
+    except Exception as e:
+        log(f"[경고] 집계 파일 갱신 실패 (수동 실행 필요): {e}")
 
 
 if __name__ == "__main__":

@@ -185,7 +185,7 @@ def download_excel_api(cmsapi_url: str, token: str, country_code: str,
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=300) as r:
         return r.read()
 
 
@@ -227,6 +227,8 @@ def crawl_country(browser, country_code, country_info, username, password, date_
         excel_data = download_excel_api(cmsapi_url, token, api_cc, start_utc, end_utc, region=region)
 
         dest = RAW_DIR / f"photoism_{country_code}_{date_str.replace('-', '')}.xlsx"
+        if len(excel_data) < 512:
+            raise ValueError(f"응답 크기가 너무 작음 ({len(excel_data)} bytes) — 서버 오류 응답일 수 있음")
         dest.write_bytes(excel_data)
         log(f"다운로드 완료: {dest.name} ({len(excel_data):,} bytes)")
         success = True

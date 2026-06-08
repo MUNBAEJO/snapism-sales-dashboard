@@ -1,10 +1,15 @@
 @echo off
-cd /d "C:\Users\Administrator\Desktop\ìŠ¤ë‚´í”¼ì¦˜ ë§¤ì¶œë°ì´í„°"
+cd /d "%~dp0"
 
-start "ngrok-tunnel" /MIN cmd /k "ngrok http --url=snapism-dashboard.ngrok.app 8503"
+echo Stopping existing ngrok/streamlit...
+taskkill /f /im ngrok.exe >nul 2>&1
+taskkill /f /im streamlit.exe >nul 2>&1
+timeout /t 2 /nobreak > nul
 
+echo Starting ngrok...
+start "ngrok-tunnel" /MIN cmd /k "C:\Program Files\nodejs\ngrok.exe http --url=snapism-dashboard.ngrok.app 8503"
 timeout /t 3 /nobreak > nul
 
-python -m streamlit run ìŠ¤ë‚´í”¼ì¦˜.py --server.port 8503 --browser.gatherUsageStats false --server.headless true
-
+echo Starting Streamlit on port 8503...
+"C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe" -m streamlit run ½º³»ÇÇÁò.py --server.port 8503 --browser.gatherUsageStats false --server.headless true
 pause

@@ -43,6 +43,7 @@ st.markdown("""
 }
 .section-title { font-size:1.05rem; font-weight:600; margin-bottom:4px; }
 [data-testid="stDeployButton"] { display:none !important; }
+[data-testid="stSidebarNav"] ul li:first-child a::before { content: "📊 "; }
 </style>
 """, unsafe_allow_html=True)
 
