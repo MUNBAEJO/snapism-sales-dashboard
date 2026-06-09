@@ -24,6 +24,33 @@ st.markdown(f"""
 }}
 [data-testid="stDeployButton"] {{ display: none !important; }}
 [data-testid="stSidebar"] {{ background: #fbfcfe; border-right: 1px solid #eceff5; }}
+
+/* ── 전역 섹션 헤더 (모든 대시보드 공통, 구분 강화) ── */
+.section-title {{
+    font-size: 1.08rem !important; font-weight: 800 !important; color: {INK} !important;
+    background: linear-gradient(135deg, #f4f7ff 0%, #eef2fb 100%) !important;
+    border: 1px solid #e3e9f7 !important;
+    border-left: 5px solid #4361ee !important;
+    border-radius: 10px !important;
+    padding: 11px 16px !important;
+    margin: 28px 0 14px !important;
+    box-shadow: 0 1px 5px rgba(67,97,238,0.07) !important;
+    line-height: 1.35 !important;
+}}
+.section-title.purple {{ border-left-color: #7209b7 !important;
+    background: linear-gradient(135deg, #faf5ff 0%, #f3ecfb 100%) !important; }}
+.section-title.pink {{ border-left-color: #f72585 !important;
+    background: linear-gradient(135deg, #fff5fa 0%, #fdecf4 100%) !important; }}
+/* 첫 섹션은 위 여백 줄임 */
+[data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-child .section-title {{ margin-top: 6px !important; }}
+/* 하위 라벨도 구분감 부여 */
+.sub-label {{
+    font-weight: 700 !important; color: #45456a !important;
+    margin: 16px 0 6px !important; padding-left: 10px !important;
+    border-left: 3px solid #c7d0ee !important;
+}}
+/* 탭 패널 안쪽 여백 */
+[data-testid="stTabs"] [data-baseweb="tab-panel"] {{ padding-top: 6px !important; }}
 </style>
 """, unsafe_allow_html=True)
 
