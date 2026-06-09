@@ -1,5 +1,7 @@
 # 민감 정보
 config.json
+.streamlit/secrets.toml
+allowed-users.json
 
 # 데이터 파일 (용량 큼)
 data/

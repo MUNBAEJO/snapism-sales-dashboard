@@ -7,9 +7,9 @@ taskkill /f /im streamlit.exe >nul 2>&1
 timeout /t 2 /nobreak > nul
 
 echo Starting ngrok...
-start "ngrok-tunnel" /MIN cmd /k "C:\Program Files\nodejs\ngrok.exe http --url=snapism-dashboard.ngrok.app 8503"
+start "ngrok-tunnel" /MIN cmd /k "C:\Program Files\nodejs\ngrok.exe http --url=cni-division.ngrok.app 8503"
 timeout /t 3 /nobreak > nul
 
 echo Starting Streamlit on port 8503...
-"C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe" -m streamlit run ½º³»ÇÇÁò.py --server.port 8503 --browser.gatherUsageStats false --server.headless true
+"C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe" -m streamlit run ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.py --server.port 8503 --browser.gatherUsageStats false --server.headless true
 pause

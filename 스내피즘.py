@@ -13,6 +13,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── Google 로그인 + 승인제 접근 통제 ──
+# 통과하지 못하면 로그인/승인대기 화면을 그리고 여기서 멈춘다.
+import auth
+auth.require_login()
+
 INK = "#1a1a2e"
 st.markdown(f"""
 <style>
@@ -128,5 +133,15 @@ pages = [
     st.Page("views/4_📋_주간리포트.py",            title="주간리포트",          icon="📋", url_path="weekly"),
 ]
 
+# 소유자에게만 '접속·계정 관리' 페이지를 메뉴에 노출 (접속 로그는 소유자 전용)
+if auth.is_owner(st.user.email if getattr(st, "user", None) else None):
+    pages.append(
+        st.Page("views/5_🔐_접속관리.py", title="접속·계정 관리", icon="🔐", url_path="admin")
+    )
+
 pg = st.navigation(pages)
+
+# 우측 상단 고정: 계정 표시 + 로그아웃
+auth.render_account_bar()
+
 pg.run()
