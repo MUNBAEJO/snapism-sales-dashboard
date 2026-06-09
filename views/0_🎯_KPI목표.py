@@ -19,12 +19,10 @@ import plotly.express as px
 from pathlib import Path
 from datetime import date
 
-st.set_page_config(
-    page_title="KPI 목표 달성률",
-    page_icon="🎯",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# set_page_config 는 라우터(스내피즘.py)에서 처리
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from guide_content import render_guide
 
 st.markdown("""
 <style>
@@ -40,7 +38,7 @@ st.markdown("""
 [data-testid="stDeployButton"] { display: none !important; }
 /* 탭 글씨 크게 */
 button[data-baseweb="tab"] p { font-size: 1.0rem !important; font-weight: 600 !important; }
-[data-testid="stSidebarNav"] ul li:first-child a::before { content: "📊 "; }
+/* 사이드바 헤더/아이콘은 라우터(스내피즘.py) + st.navigation 에서 처리 */
 </style>
 """, unsafe_allow_html=True)
 
@@ -769,6 +767,7 @@ st.sidebar.download_button(
 # 메인 대시보드
 # ══════════════════════════════════════════════════════════════
 st.title("🎯 KPI 목표 달성률")
+render_guide("kpi")
 
 _seg  = SEG_MAP[seg_choice]
 today = date.today()

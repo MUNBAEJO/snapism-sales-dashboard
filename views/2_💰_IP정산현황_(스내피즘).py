@@ -11,7 +11,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from jira_client import fetch_rs_data
 from update_rates import get_rates_for_date, get_effective_date
 
-st.set_page_config(page_title="IP 정산 현황", page_icon="💰", layout="wide")
+# set_page_config 는 라우터(스내피즘.py)에서 처리
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from guide_content import render_guide
 
 BASE_DIR    = Path(__file__).parent.parent
 MASTER      = BASE_DIR / "data" / "master.csv"
@@ -43,7 +46,7 @@ st.markdown("""
 }
 .section-title { font-size:1.05rem; font-weight:600; margin-bottom:4px; }
 [data-testid="stDeployButton"] { display:none !important; }
-[data-testid="stSidebarNav"] ul li:first-child a::before { content: "📊 "; }
+/* 사이드바 헤더/아이콘은 라우터(스내피즘.py) + st.navigation 에서 처리 */
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,6 +125,7 @@ def auto_match_frames(ip_name: str, all_frames: list) -> list:
 
 # ── 데이터 로드 ────────────────────────────────────────────────
 st.title("💰 IP 정산 현황")
+render_guide("settle")
 st.caption("Snapism 브랜드 IP — 어드민 매출 × Jira RS율 정산")
 
 df_all   = load_sales()

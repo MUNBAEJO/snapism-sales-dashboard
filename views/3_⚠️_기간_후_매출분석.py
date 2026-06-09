@@ -14,12 +14,10 @@ import json, sys, re
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from jira_ip_dates import fetch_ip_dates
 
-st.set_page_config(
-    page_title="기간 후 매출 분석",
-    page_icon="⚠️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# set_page_config 는 라우터(스내피즘.py)에서 처리
+import os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+from guide_content import render_guide
 st.markdown("""
 <style>
 [data-testid="metric-container"] {
@@ -28,7 +26,7 @@ st.markdown("""
 }
 .section-title { font-size:1.05rem; font-weight:600; margin-bottom:4px; }
 [data-testid="stDeployButton"] { display:none !important; }
-[data-testid="stSidebarNav"] ul li:first-child a::before { content: "📊 "; }
+/* 사이드바 헤더/아이콘은 라우터(스내피즘.py) + st.navigation 에서 처리 */
 </style>
 """, unsafe_allow_html=True)
 
@@ -139,6 +137,7 @@ def load_photo():
 
 # ── 헤더 ──────────────────────────────────────────────────────
 st.title("⚠️ 종료일 이후 매출 분석")
+render_guide("expired")
 st.caption("Jira WBS 타이틀명의 종료일(duedate) 이후 실제 매출 발생 건을 탐지합니다.")
 
 # ── 사이드바 ──────────────────────────────────────────────────

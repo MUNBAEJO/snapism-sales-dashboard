@@ -24,7 +24,10 @@ from weekly_insight import (
 # ─────────────────────────────────────────────
 # 페이지 설정
 # ─────────────────────────────────────────────
-st.set_page_config(page_title="주간 리포트", page_icon="📋", layout="wide")
+# set_page_config 는 라우터(스내피즘.py)에서 처리
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from guide_content import render_guide
 
 st.markdown("""
 <style>
@@ -46,7 +49,7 @@ st.markdown("""
 }
 .gen-time { font-size: 0.78rem; color: #888; }
 [data-testid="stMetricValue"] { font-size: 1.6rem !important; }
-[data-testid="stSidebarNav"] ul li:first-child a::before { content: "📊 "; }
+/* 사이드바 헤더/아이콘은 라우터(스내피즘.py) + st.navigation 에서 처리 */
 </style>
 """, unsafe_allow_html=True)
 
@@ -103,6 +106,7 @@ else:
 # 헤더
 # ─────────────────────────────────────────────
 st.title("📋 주간 회의 자료")
+render_guide("weekly")
 st.caption(
     f"📅 **{week_label}**: {this_start} ~ {this_end} &nbsp;|&nbsp; "
     f"**비교**: {prev_start} ~ {prev_end} &nbsp;|&nbsp; "
