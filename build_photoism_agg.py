@@ -9,6 +9,7 @@ string 컬럼이 category로 읽혀서 메모리 90% 절약
 실행: python build_photoism_agg.py
 """
 import sys
+import json
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -18,6 +19,34 @@ BASE_DIR      = Path(__file__).parent
 PARQ_IN       = BASE_DIR / "data" / "master_photoism.parquet"
 PARQ_AGG      = BASE_DIR / "data" / "master_photoism_agg.parquet"
 PARQ_HOURLY   = BASE_DIR / "data" / "master_photoism_hourly.parquet"
+CONFIG_FILE   = BASE_DIR / "config.json"
+
+# ── 이상치 제외: 행별 KRW 환산액이 비정상적으로 큰 행 필터 ──
+# (예: 페루 PERU Feria 서비스코인 224,224 등 명백한 입력 오류 → 가짜 매출 차단)
+ROW_KRW_CAP = 1_000_000   # 한 거래 행의 단일 항목 KRW 환산 상한
+
+
+def _rate_case() -> str:
+    """결제 단위 → KRW 환율 CASE (config.json 기준)."""
+    try:
+        ex = json.load(open(CONFIG_FILE, encoding="utf-8")).get("exchange_rates", {})
+    except Exception:
+        ex = {}
+    whens = " ".join(f"WHEN '{c}' THEN {float(r)}" for c, r in ex.items()
+                     if c != "KRW" and r)
+    return f"CASE COALESCE(\"결제 단위\", 'KRW') {whens} ELSE 1 END"
+
+
+def _outlier_filter() -> str:
+    rc = _rate_case()
+    return (
+        f"  AND COALESCE(TRY_CAST(\"최종 결제 금액\" AS DOUBLE),0)*({rc}) <= {ROW_KRW_CAP}\n"
+        f"  AND COALESCE(TRY_CAST(\"서비스코인\"     AS DOUBLE),0)*({rc}) <= {ROW_KRW_CAP}\n"
+        f"  AND COALESCE(TRY_CAST(\"쿠폰 할인 금액\" AS DOUBLE),0)*({rc}) <= {ROW_KRW_CAP}"
+    )
+
+
+OUTLIER = _outlier_filter()
 
 
 def dict_encode_strings(table: pa.Table) -> pa.Table:
@@ -49,6 +78,7 @@ def build_agg(con, parq: str):
             CAST(COALESCE(SUM(TRY_CAST("서비스코인"     AS BIGINT)),0) AS BIGINT) AS "서비스코인"
         FROM read_parquet('{parq}')
         WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
+{OUTLIER}
         GROUP BY 1,2,3,4,5,6,7,8,9
         ORDER BY 1 DESC, 2, 7
     """).to_arrow_table()
@@ -74,6 +104,7 @@ def build_hourly(con, parq: str):
             CAST(COALESCE(SUM(TRY_CAST("서비스코인"     AS BIGINT)),0) AS BIGINT) AS "서비스코인"
         FROM read_parquet('{parq}')
         WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
+{OUTLIER}
         GROUP BY 1,2,3
         ORDER BY 1 DESC, 2
     """).to_arrow_table()
