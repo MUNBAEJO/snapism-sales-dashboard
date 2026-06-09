@@ -167,6 +167,28 @@ def log(msg: str):
         f.write(line + "\n")
 
 
+def fetch_yahoo_cross(usd_krw: float) -> dict:
+    """SMBS·fawazahmed0 미지원 통화(LAK/PEN)를 야후 파이낸스 USD 크로스레이트로 보강.
+    Yahoo '<CUR>=X' = 1 USD 당 해당 통화 수량 → 1 통화 = (1/price) USD → × USD_KRW.
+    (사용자 운영 시트와 동일한 계산식)"""
+    import urllib.request
+    out: dict = {}
+    targets = {"LAK": "LAK=X", "PEN": "PEN=X"}
+    if not usd_krw or usd_krw <= 0:
+        return out
+    for cur, sym in targets.items():
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1d"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            d = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            price = d["chart"]["result"][0]["meta"]["regularMarketPrice"]
+            if price and price > 0:
+                out[cur] = round((1.0 / price) * usd_krw, 4)
+        except Exception as e:
+            log(f"[야후 {cur}] 보강 실패: {e}")
+    return out
+
+
 def update_exchange_rates() -> bool:
     """오늘 환율을 SMBS → fawazahmed0 순으로 가져와 config.json 갱신."""
     # 1순위: SMBS
@@ -181,6 +203,12 @@ def update_exchange_rates() -> bool:
         else:
             log("[환율 업데이트 실패] 기존 값 유지")
             return False
+
+    # LAK/PEN 등 SMBS·fawazahmed0 미지원 통화 → 야후 USD 크로스레이트로 보강
+    cross = fetch_yahoo_cross(rates.get("USD"))
+    for cur, v in cross.items():
+        rates[cur] = v
+        log(f"[야후 보강] 1 {cur} = {v:,.4f} KRW")
 
     # config.json 저장
     try:
