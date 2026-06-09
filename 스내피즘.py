@@ -16,41 +16,72 @@ st.set_page_config(
 INK = "#1a1a2e"
 st.markdown(f"""
 <style>
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
+
+/* ── 사이드바 상단 타이틀 (CMS 매출 대시보드) ── */
 [data-testid="stSidebarNav"]::before {{
     content: "📊 CMS 매출 대시보드";
-    display: block; padding: 14px 14px 10px; margin-bottom: 6px;
-    font-size: 1.0rem; font-weight: 800; color: {INK};
-    border-bottom: 1px solid #e9edf5; white-space: nowrap;
+    display: block; padding: 16px 14px 12px; margin-bottom: 4px;
+    font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+    font-size: 1.12rem; font-weight: 800; color: {INK}; letter-spacing: -0.3px;
+    border-bottom: 1px solid #e6eaf2; white-space: nowrap;
 }}
+/* 사이드바 페이지 이름 폰트 */
+[data-testid="stSidebarNav"] a {{ font-weight: 600 !important; }}
+[data-testid="stSidebarNav"] a span, [data-testid="stSidebarNav"] a p {{
+    font-family: 'Pretendard', 'Malgun Gothic', sans-serif !important;
+    font-size: 0.93rem !important; font-weight: 600 !important;
+}}
+
 [data-testid="stDeployButton"] {{ display: none !important; }}
 [data-testid="stSidebar"] {{ background: #fbfcfe; border-right: 1px solid #eceff5; }}
 
-/* ── 전역 섹션 헤더 (모든 대시보드 공통, 구분 강화) ── */
-.section-title {{
-    font-size: 1.08rem !important; font-weight: 800 !important; color: {INK} !important;
-    background: linear-gradient(135deg, #f4f7ff 0%, #eef2fb 100%) !important;
-    border: 1px solid #e3e9f7 !important;
-    border-left: 5px solid #4361ee !important;
-    border-radius: 10px !important;
-    padding: 11px 16px !important;
-    margin: 28px 0 14px !important;
-    box-shadow: 0 1px 5px rgba(67,97,238,0.07) !important;
-    line-height: 1.35 !important;
+/* ── 사이드바 필터 구분 강화 ── */
+[data-testid="stSidebar"] h2 {{
+    font-size: 1.02rem !important; font-weight: 800 !important; color: {INK} !important;
+    background: #eef2fb !important; border-radius: 8px !important;
+    padding: 8px 12px !important; margin: 6px 0 12px !important;
 }}
-.section-title.purple {{ border-left-color: #7209b7 !important;
-    background: linear-gradient(135deg, #faf5ff 0%, #f3ecfb 100%) !important; }}
-.section-title.pink {{ border-left-color: #f72585 !important;
-    background: linear-gradient(135deg, #fff5fa 0%, #fdecf4 100%) !important; }}
-/* 첫 섹션은 위 여백 줄임 */
-[data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-child .section-title {{ margin-top: 6px !important; }}
-/* 하위 라벨도 구분감 부여 */
+[data-testid="stSidebar"] label p {{ font-weight: 700 !important; color: #3a3a52 !important; font-size: 0.88rem !important; }}
+[data-testid="stSidebar"] [data-testid="stDateInput"],
+[data-testid="stSidebar"] [data-testid="stSelectbox"],
+[data-testid="stSidebar"] [data-testid="stMultiSelect"] {{
+    padding-bottom: 11px !important; margin-bottom: 9px !important;
+    border-bottom: 1px solid #e9edf5 !important;
+}}
+
+/* ── 전역 톤다운 (글자 굵기 완화) ── */
+h1 {{ font-weight: 700 !important; }}
+[data-testid="stMetricValue"] {{ font-weight: 700 !important; }}
+
+/* ── 섹션 카드 박스 (st.container(border=True)) — 플랫·미니멀 ── */
+[data-testid="stVerticalBlockBorderWrapper"] {{
+    background: #ffffff !important;
+    border: 1px solid #cfd6e6 !important;
+    border-radius: 12px !important;
+    padding: 2px 18px 12px !important;
+    box-shadow: none !important;
+    margin-bottom: 12px !important;
+}}
+/* 카드 안의 카드(중첩 테두리) 방지 — 안쪽은 테두리 제거 */
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {{
+    border: none !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important;
+}}
+
+/* ── 섹션 제목 (가볍게: 플랫 + 좌측 액센트) ── */
+.section-title {{
+    font-size: 1.05rem !important; font-weight: 700 !important; color: {INK} !important;
+    margin: 10px 0 12px !important; padding-left: 11px !important;
+    border-left: 4px solid #4361ee !important; line-height: 1.4 !important;
+}}
+.section-title.purple {{ border-left-color: #7209b7 !important; }}
+.section-title.pink {{ border-left-color: #f72585 !important; }}
 .sub-label {{
     font-weight: 700 !important; color: #45456a !important;
-    margin: 16px 0 6px !important; padding-left: 10px !important;
+    margin: 14px 0 6px !important; padding-left: 9px !important;
     border-left: 3px solid #c7d0ee !important;
 }}
-/* 탭 패널 안쪽 여백 */
-[data-testid="stTabs"] [data-baseweb="tab-panel"] {{ padding-top: 6px !important; }}
+[data-testid="stTabs"] [data-baseweb="tab-panel"] {{ padding-top: 8px !important; }}
 </style>
 """, unsafe_allow_html=True)
 

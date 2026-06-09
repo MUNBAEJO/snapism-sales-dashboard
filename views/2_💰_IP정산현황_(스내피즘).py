@@ -381,256 +381,259 @@ st.caption(f"{_rate_icon} 환율 기준: **{_rate_label}**   {_rate_detail if _r
 st.divider()
 
 # ── 국가별 정산 테이블 ─────────────────────────────────────────
-st.markdown('<div class="section-title">🌏 국가별 정산 내역</div>', unsafe_allow_html=True)
+with st.container(border=True):
+    st.markdown('<div class="section-title">🌏 국가별 정산 내역</div>', unsafe_allow_html=True)
 
-if paid.empty and coupons.empty:
-    st.warning("해당 기간에 해당 프레임의 매출이 없습니다.")
-else:
-    if not paid.empty:
-        nat_paid = (
-            paid.groupby(["국가", "결제 단위"])
-            .agg(
-                결제건수=("최종 결제 금액", "count"),
-                원화매출=("최종 결제 금액", "sum"),
-                KRW매출=("KRW환산", "sum"),
-                쿠폰건수=("쿠폰 할인 금액", lambda x: (x > 0).sum()),
-                원화쿠폰=("쿠폰 할인 금액", "sum"),
-                쿠폰KRW=("쿠폰KRW", "sum"),
+    if paid.empty and coupons.empty:
+        st.warning("해당 기간에 해당 프레임의 매출이 없습니다.")
+    else:
+        if not paid.empty:
+            nat_paid = (
+                paid.groupby(["국가", "결제 단위"])
+                .agg(
+                    결제건수=("최종 결제 금액", "count"),
+                    원화매출=("최종 결제 금액", "sum"),
+                    KRW매출=("KRW환산", "sum"),
+                    쿠폰건수=("쿠폰 할인 금액", lambda x: (x > 0).sum()),
+                    원화쿠폰=("쿠폰 할인 금액", "sum"),
+                    쿠폰KRW=("쿠폰KRW", "sum"),
+                )
+                .reset_index()
             )
-            .reset_index()
-        )
-    else:
-        nat_paid = pd.DataFrame(
-            columns=["국가", "결제 단위", "결제건수", "원화매출", "KRW매출", "쿠폰건수", "원화쿠폰", "쿠폰KRW"]
-        )
-
-    if not coupons.empty:
-        nat_cpn = (
-            coupons.groupby(["국가", "결제 단위"])
-            .agg(
-                결제건수=("쿠폰 할인 금액", lambda x: 0),
-                원화매출=("최종 결제 금액", "sum"),
-                KRW매출=("KRW환산", "sum"),
-                쿠폰건수=("쿠폰 할인 금액", "count"),
-                원화쿠폰=("쿠폰 할인 금액", "sum"),
-                쿠폰KRW=("쿠폰KRW", "sum"),
+        else:
+            nat_paid = pd.DataFrame(
+                columns=["국가", "결제 단위", "결제건수", "원화매출", "KRW매출", "쿠폰건수", "원화쿠폰", "쿠폰KRW"]
             )
+
+        if not coupons.empty:
+            nat_cpn = (
+                coupons.groupby(["국가", "결제 단위"])
+                .agg(
+                    결제건수=("쿠폰 할인 금액", lambda x: 0),
+                    원화매출=("최종 결제 금액", "sum"),
+                    KRW매출=("KRW환산", "sum"),
+                    쿠폰건수=("쿠폰 할인 금액", "count"),
+                    원화쿠폰=("쿠폰 할인 금액", "sum"),
+                    쿠폰KRW=("쿠폰KRW", "sum"),
+                )
+                .reset_index()
+            )
+            nat = pd.concat([nat_paid, nat_cpn], ignore_index=True)
+            nat = nat.groupby(["국가", "결제 단위"], as_index=False).sum()
+        else:
+            nat = nat_paid
+
+        nat = nat.sort_values("KRW매출", ascending=False).reset_index(drop=True)
+        nat["정산기준KRW"] = nat["KRW매출"] + nat["쿠폰KRW"]
+        nat["소속사정산"] = (nat["정산기준KRW"] * (rs_agency or 0)).round(0).astype(int)
+        nat["대행사정산"] = (nat["정산기준KRW"] * (rs_mgmt   or 0)).round(0).astype(int)
+
+        def orig_fmt(r, col):
+            sym = CURRENCY_SYMBOLS.get(r["결제 단위"], r["결제 단위"])
+            return f"{sym}{int(r[col]):,}"
+
+        nat["매출(원화)"]    = nat.apply(lambda r: orig_fmt(r, "원화매출"), axis=1)
+        nat["매출(KRW)"]    = nat["KRW매출"].apply(fmt_krw)
+        nat["쿠폰(원화)"]    = nat.apply(lambda r: orig_fmt(r, "원화쿠폰"), axis=1)
+        nat["쿠폰(KRW)"]    = nat["쿠폰KRW"].apply(fmt_krw)
+        nat["정산기준(KRW)"] = nat["정산기준KRW"].apply(fmt_krw)
+        nat["소속사 정산액"]  = nat["소속사정산"].apply(fmt_krw)
+        nat["대행사 정산액"]  = nat["대행사정산"].apply(fmt_krw)
+
+        display_cols = [
+            "국가", "결제 단위", "결제건수", "매출(원화)", "매출(KRW)",
+            "쿠폰건수", "쿠폰(원화)", "쿠폰(KRW)",
+            "정산기준(KRW)", "소속사 정산액", "대행사 정산액",
+        ]
+        st.dataframe(nat[display_cols], use_container_width=True, hide_index=True)
+
+        total_row = {
+            "결제건수": nat["결제건수"].sum(),
+            "매출(KRW)": fmt_krw(nat["KRW매출"].sum()),
+            "쿠폰건수": nat["쿠폰건수"].sum(),
+            "쿠폰(KRW)": fmt_krw(nat["쿠폰KRW"].sum()),
+            "정산기준(KRW)": fmt_krw(nat["정산기준KRW"].sum()),
+            "소속사 정산액": fmt_krw(nat["소속사정산"].sum()),
+            "대행사 정산액": fmt_krw(nat["대행사정산"].sum()),
+        }
+        st.markdown(
+            f"**합계** | 결제 {total_row['결제건수']:,}건 | "
+            f"매출 {total_row['매출(KRW)']} | 쿠폰 {total_row['쿠폰(KRW)']} | "
+            f"정산기준 **{total_row['정산기준(KRW)']}** | "
+            f"소속사 **{total_row['소속사 정산액']}** | "
+            f"대행사 **{total_row['대행사 정산액']}**"
+        )
+
+        st.divider()
+        st.markdown('<div class="section-title">국가별 정산 기준액 비교</div>', unsafe_allow_html=True)
+        fig = px.bar(
+            nat.sort_values("정산기준KRW"),
+            x="정산기준KRW", y="국가", orientation="h",
+            color="정산기준KRW", color_continuous_scale="Teal",
+            custom_data=["소속사 정산액", "대행사 정산액"],
+        )
+        fig.update_traces(
+            hovertemplate="%{y}<br>정산기준: %{x:,}원<br>소속사: %{customdata[0]}<br>대행사: %{customdata[1]}<extra></extra>"
+        )
+        fig.update_layout(
+            height=max(200, len(nat) * 50),
+            coloraxis_showscale=False,
+            xaxis_tickformat=",", yaxis_title="",
+            margin=dict(t=10, b=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── 상품 카테고리별 정산 ───────────────────────────────────────
+st.divider()
+with st.container(border=True):
+    st.markdown('<div class="section-title">📦 상품 카테고리별 정산</div>', unsafe_allow_html=True)
+
+    if not paid.empty and "상품 카테고리" in paid.columns:
+        cat_paid = (
+            paid.groupby("상품 카테고리")
+            .agg(결제건수=("KRW환산","count"), 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
             .reset_index()
         )
-        nat = pd.concat([nat_paid, nat_cpn], ignore_index=True)
-        nat = nat.groupby(["국가", "결제 단위"], as_index=False).sum()
+        # 100% 쿠폰 건도 합산
+        if not coupons.empty and "상품 카테고리" in coupons.columns:
+            cat_cpn = (
+                coupons.groupby("상품 카테고리")
+                .agg(결제건수=("쿠폰KRW", lambda x: 0), 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
+                .reset_index()
+            )
+            cat_df = pd.concat([cat_paid, cat_cpn], ignore_index=True)
+            cat_df = cat_df.groupby("상품 카테고리", as_index=False).sum()
+        else:
+            cat_df = cat_paid
+
+        cat_df["정산기준KRW"] = cat_df["매출KRW"] + cat_df["쿠폰KRW"]
+        cat_df["소속사정산"]  = (cat_df["정산기준KRW"] * (rs_agency or 0)).round(0).astype(int)
+        cat_df["대행사정산"]  = (cat_df["정산기준KRW"] * (rs_mgmt   or 0)).round(0).astype(int)
+        cat_df = cat_df.sort_values("정산기준KRW", ascending=False).reset_index(drop=True)
+
+        cat_display = cat_df.copy()
+        cat_display["매출(KRW)"]    = cat_display["매출KRW"].apply(fmt_krw)
+        cat_display["쿠폰(KRW)"]    = cat_display["쿠폰KRW"].apply(fmt_krw)
+        cat_display["정산기준(KRW)"] = cat_display["정산기준KRW"].apply(fmt_krw)
+        cat_display["소속사 정산액"]  = cat_display["소속사정산"].apply(fmt_krw)
+        cat_display["대행사 정산액"]  = cat_display["대행사정산"].apply(fmt_krw)
+
+        # 합계 행 추가
+        total = pd.DataFrame([{
+            "상품 카테고리": "합계",
+            "결제건수": cat_df["결제건수"].sum(),
+            "매출(KRW)": fmt_krw(cat_df["매출KRW"].sum()),
+            "쿠폰(KRW)": fmt_krw(cat_df["쿠폰KRW"].sum()),
+            "정산기준(KRW)": fmt_krw(cat_df["정산기준KRW"].sum()),
+            "소속사 정산액": fmt_krw(cat_df["소속사정산"].sum()),
+            "대행사 정산액": fmt_krw(cat_df["대행사정산"].sum()),
+        }])
+        cat_show = pd.concat(
+            [cat_display[["상품 카테고리","결제건수","매출(KRW)","쿠폰(KRW)","정산기준(KRW)","소속사 정산액","대행사 정산액"]], total],
+            ignore_index=True,
+        )
+        st.dataframe(cat_show, use_container_width=True, hide_index=True)
+
+        # 카테고리별 바 차트
+        fig_cat = px.bar(
+            cat_df.sort_values("정산기준KRW"),
+            x="정산기준KRW", y="상품 카테고리", orientation="h",
+            color="정산기준KRW", color_continuous_scale="Blues",
+            text="결제건수",
+        )
+        fig_cat.update_traces(texttemplate="%{text}건", textposition="inside",
+                              hovertemplate="%{y}<br>정산기준: %{x:,}원<extra></extra>")
+        fig_cat.update_layout(height=max(180, len(cat_df)*50), coloraxis_showscale=False,
+                              xaxis_tickformat=",", yaxis_title="", margin=dict(t=10,b=0))
+        st.plotly_chart(fig_cat, use_container_width=True)
     else:
-        nat = nat_paid
+        st.caption("상품 카테고리 데이터 없음")
 
-    nat = nat.sort_values("KRW매출", ascending=False).reset_index(drop=True)
-    nat["정산기준KRW"] = nat["KRW매출"] + nat["쿠폰KRW"]
-    nat["소속사정산"] = (nat["정산기준KRW"] * (rs_agency or 0)).round(0).astype(int)
-    nat["대행사정산"] = (nat["정산기준KRW"] * (rs_mgmt   or 0)).round(0).astype(int)
-
-    def orig_fmt(r, col):
-        sym = CURRENCY_SYMBOLS.get(r["결제 단위"], r["결제 단위"])
-        return f"{sym}{int(r[col]):,}"
-
-    nat["매출(원화)"]    = nat.apply(lambda r: orig_fmt(r, "원화매출"), axis=1)
-    nat["매출(KRW)"]    = nat["KRW매출"].apply(fmt_krw)
-    nat["쿠폰(원화)"]    = nat.apply(lambda r: orig_fmt(r, "원화쿠폰"), axis=1)
-    nat["쿠폰(KRW)"]    = nat["쿠폰KRW"].apply(fmt_krw)
-    nat["정산기준(KRW)"] = nat["정산기준KRW"].apply(fmt_krw)
-    nat["소속사 정산액"]  = nat["소속사정산"].apply(fmt_krw)
-    nat["대행사 정산액"]  = nat["대행사정산"].apply(fmt_krw)
-
-    display_cols = [
-        "국가", "결제 단위", "결제건수", "매출(원화)", "매출(KRW)",
-        "쿠폰건수", "쿠폰(원화)", "쿠폰(KRW)",
-        "정산기준(KRW)", "소속사 정산액", "대행사 정산액",
-    ]
-    st.dataframe(nat[display_cols], use_container_width=True, hide_index=True)
-
-    total_row = {
-        "결제건수": nat["결제건수"].sum(),
-        "매출(KRW)": fmt_krw(nat["KRW매출"].sum()),
-        "쿠폰건수": nat["쿠폰건수"].sum(),
-        "쿠폰(KRW)": fmt_krw(nat["쿠폰KRW"].sum()),
-        "정산기준(KRW)": fmt_krw(nat["정산기준KRW"].sum()),
-        "소속사 정산액": fmt_krw(nat["소속사정산"].sum()),
-        "대행사 정산액": fmt_krw(nat["대행사정산"].sum()),
-    }
-    st.markdown(
-        f"**합계** | 결제 {total_row['결제건수']:,}건 | "
-        f"매출 {total_row['매출(KRW)']} | 쿠폰 {total_row['쿠폰(KRW)']} | "
-        f"정산기준 **{total_row['정산기준(KRW)']}** | "
-        f"소속사 **{total_row['소속사 정산액']}** | "
-        f"대행사 **{total_row['대행사 정산액']}**"
-    )
-
-    st.divider()
-    st.markdown('<div class="section-title">국가별 정산 기준액 비교</div>', unsafe_allow_html=True)
-    fig = px.bar(
-        nat.sort_values("정산기준KRW"),
-        x="정산기준KRW", y="국가", orientation="h",
-        color="정산기준KRW", color_continuous_scale="Teal",
-        custom_data=["소속사 정산액", "대행사 정산액"],
-    )
-    fig.update_traces(
-        hovertemplate="%{y}<br>정산기준: %{x:,}원<br>소속사: %{customdata[0]}<br>대행사: %{customdata[1]}<extra></extra>"
-    )
-    fig.update_layout(
-        height=max(200, len(nat) * 50),
-        coloraxis_showscale=False,
-        xaxis_tickformat=",", yaxis_title="",
-        margin=dict(t=10, b=0),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-# ── 상품 카테고리별 정산 ───────────────────────────────────────
+    # ── 상품 이름별 정산 ────────────────────────────────────────────
 st.divider()
-st.markdown('<div class="section-title">📦 상품 카테고리별 정산</div>', unsafe_allow_html=True)
+with st.container(border=True):
+    st.markdown('<div class="section-title">🏷 상품 이름별 정산</div>', unsafe_allow_html=True)
 
-if not paid.empty and "상품 카테고리" in paid.columns:
-    cat_paid = (
-        paid.groupby("상품 카테고리")
-        .agg(결제건수=("KRW환산","count"), 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
-        .reset_index()
-    )
-    # 100% 쿠폰 건도 합산
-    if not coupons.empty and "상품 카테고리" in coupons.columns:
-        cat_cpn = (
-            coupons.groupby("상품 카테고리")
-            .agg(결제건수=("쿠폰KRW", lambda x: 0), 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
+    if not paid.empty and "상품 이름" in paid.columns:
+        name_df = (
+            paid.groupby(["상품 이름", "상품 카테고리"] if "상품 카테고리" in paid.columns else ["상품 이름"])
+            .agg(결제건수=("KRW환산","count"), 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
             .reset_index()
+            .sort_values("매출KRW", ascending=False)
+            .reset_index(drop=True)
         )
-        cat_df = pd.concat([cat_paid, cat_cpn], ignore_index=True)
-        cat_df = cat_df.groupby("상품 카테고리", as_index=False).sum()
+        name_df["정산기준KRW"] = name_df["매출KRW"] + name_df["쿠폰KRW"]
+        name_df["소속사정산"]  = (name_df["정산기준KRW"] * (rs_agency or 0)).round(0).astype(int)
+        name_df["대행사정산"]  = (name_df["정산기준KRW"] * (rs_mgmt   or 0)).round(0).astype(int)
+
+        name_display = name_df.copy()
+        name_display["매출(KRW)"]    = name_display["매출KRW"].apply(fmt_krw)
+        name_display["정산기준(KRW)"] = name_display["정산기준KRW"].apply(fmt_krw)
+        name_display["소속사 정산액"]  = name_display["소속사정산"].apply(fmt_krw)
+        name_display["대행사 정산액"]  = name_display["대행사정산"].apply(fmt_krw)
+
+        show_cols_name = ["상품 이름"]
+        if "상품 카테고리" in name_display.columns:
+            show_cols_name.append("상품 카테고리")
+        show_cols_name += ["결제건수", "매출(KRW)", "정산기준(KRW)", "소속사 정산액", "대행사 정산액"]
+
+        col_n1, col_n2 = st.columns([3, 1])
+        with col_n1:
+            st.dataframe(name_display[show_cols_name], use_container_width=True,
+                         hide_index=True, height=350)
+        with col_n2:
+            # TOP5 파이 차트
+            top5 = name_df.head(5)
+            fig_pie = px.pie(top5, values="매출KRW", names="상품 이름",
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig_pie.update_traces(textposition="inside", textinfo="label+percent")
+            fig_pie.update_layout(height=320, margin=dict(t=10,b=0,l=0,r=0),
+                                  showlegend=False)
+            st.caption("매출 TOP 5")
+            st.plotly_chart(fig_pie, use_container_width=True)
     else:
-        cat_df = cat_paid
+        st.caption("상품 이름 데이터 없음")
 
-    cat_df["정산기준KRW"] = cat_df["매출KRW"] + cat_df["쿠폰KRW"]
-    cat_df["소속사정산"]  = (cat_df["정산기준KRW"] * (rs_agency or 0)).round(0).astype(int)
-    cat_df["대행사정산"]  = (cat_df["정산기준KRW"] * (rs_mgmt   or 0)).round(0).astype(int)
-    cat_df = cat_df.sort_values("정산기준KRW", ascending=False).reset_index(drop=True)
-
-    cat_display = cat_df.copy()
-    cat_display["매출(KRW)"]    = cat_display["매출KRW"].apply(fmt_krw)
-    cat_display["쿠폰(KRW)"]    = cat_display["쿠폰KRW"].apply(fmt_krw)
-    cat_display["정산기준(KRW)"] = cat_display["정산기준KRW"].apply(fmt_krw)
-    cat_display["소속사 정산액"]  = cat_display["소속사정산"].apply(fmt_krw)
-    cat_display["대행사 정산액"]  = cat_display["대행사정산"].apply(fmt_krw)
-
-    # 합계 행 추가
-    total = pd.DataFrame([{
-        "상품 카테고리": "합계",
-        "결제건수": cat_df["결제건수"].sum(),
-        "매출(KRW)": fmt_krw(cat_df["매출KRW"].sum()),
-        "쿠폰(KRW)": fmt_krw(cat_df["쿠폰KRW"].sum()),
-        "정산기준(KRW)": fmt_krw(cat_df["정산기준KRW"].sum()),
-        "소속사 정산액": fmt_krw(cat_df["소속사정산"].sum()),
-        "대행사 정산액": fmt_krw(cat_df["대행사정산"].sum()),
-    }])
-    cat_show = pd.concat(
-        [cat_display[["상품 카테고리","결제건수","매출(KRW)","쿠폰(KRW)","정산기준(KRW)","소속사 정산액","대행사 정산액"]], total],
-        ignore_index=True,
-    )
-    st.dataframe(cat_show, use_container_width=True, hide_index=True)
-
-    # 카테고리별 바 차트
-    fig_cat = px.bar(
-        cat_df.sort_values("정산기준KRW"),
-        x="정산기준KRW", y="상품 카테고리", orientation="h",
-        color="정산기준KRW", color_continuous_scale="Blues",
-        text="결제건수",
-    )
-    fig_cat.update_traces(texttemplate="%{text}건", textposition="inside",
-                          hovertemplate="%{y}<br>정산기준: %{x:,}원<extra></extra>")
-    fig_cat.update_layout(height=max(180, len(cat_df)*50), coloraxis_showscale=False,
-                          xaxis_tickformat=",", yaxis_title="", margin=dict(t=10,b=0))
-    st.plotly_chart(fig_cat, use_container_width=True)
-else:
-    st.caption("상품 카테고리 데이터 없음")
-
-# ── 상품 이름별 정산 ────────────────────────────────────────────
-st.divider()
-st.markdown('<div class="section-title">🏷 상품 이름별 정산</div>', unsafe_allow_html=True)
-
-if not paid.empty and "상품 이름" in paid.columns:
-    name_df = (
-        paid.groupby(["상품 이름", "상품 카테고리"] if "상품 카테고리" in paid.columns else ["상품 이름"])
-        .agg(결제건수=("KRW환산","count"), 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
-        .reset_index()
-        .sort_values("매출KRW", ascending=False)
-        .reset_index(drop=True)
-    )
-    name_df["정산기준KRW"] = name_df["매출KRW"] + name_df["쿠폰KRW"]
-    name_df["소속사정산"]  = (name_df["정산기준KRW"] * (rs_agency or 0)).round(0).astype(int)
-    name_df["대행사정산"]  = (name_df["정산기준KRW"] * (rs_mgmt   or 0)).round(0).astype(int)
-
-    name_display = name_df.copy()
-    name_display["매출(KRW)"]    = name_display["매출KRW"].apply(fmt_krw)
-    name_display["정산기준(KRW)"] = name_display["정산기준KRW"].apply(fmt_krw)
-    name_display["소속사 정산액"]  = name_display["소속사정산"].apply(fmt_krw)
-    name_display["대행사 정산액"]  = name_display["대행사정산"].apply(fmt_krw)
-
-    show_cols_name = ["상품 이름"]
-    if "상품 카테고리" in name_display.columns:
-        show_cols_name.append("상품 카테고리")
-    show_cols_name += ["결제건수", "매출(KRW)", "정산기준(KRW)", "소속사 정산액", "대행사 정산액"]
-
-    col_n1, col_n2 = st.columns([3, 1])
-    with col_n1:
-        st.dataframe(name_display[show_cols_name], use_container_width=True,
-                     hide_index=True, height=350)
-    with col_n2:
-        # TOP5 파이 차트
-        top5 = name_df.head(5)
-        fig_pie = px.pie(top5, values="매출KRW", names="상품 이름",
-                         color_discrete_sequence=px.colors.qualitative.Pastel)
-        fig_pie.update_traces(textposition="inside", textinfo="label+percent")
-        fig_pie.update_layout(height=320, margin=dict(t=10,b=0,l=0,r=0),
-                              showlegend=False)
-        st.caption("매출 TOP 5")
-        st.plotly_chart(fig_pie, use_container_width=True)
-else:
-    st.caption("상품 이름 데이터 없음")
-
-# ── 일별 추이 ─────────────────────────────────────────────────
-with st.expander("📅 일별 매출 추이"):
-    daily = (
-        paid.groupby("날짜")["KRW환산"].sum()
-        .reset_index().rename(columns={"KRW환산": "매출"})
-    )
-    daily["날짜_str"] = daily["날짜"].astype(str)
-    fig2 = px.bar(daily, x="날짜_str", y="매출", color_discrete_sequence=["#4361ee"])
-    fig2.update_layout(yaxis_tickformat=",", height=260, margin=dict(t=10, b=0))
-    fig2.update_traces(hovertemplate="%{x}<br>%{y:,}원<extra></extra>")
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ── 원본 데이터 ───────────────────────────────────────────────
-with st.expander("🗃 원본 데이터 보기"):
-    show_cols = [
-        "날짜", "국가", "매장 이름", "프레임 이름",
-        "최종 결제 금액", "쿠폰 할인 금액", "결제 단위", "KRW환산", "쿠폰KRW",
-        "결제 수단", "취소 여부",
-    ]
-    available = [c for c in show_cols if c in df_ip.columns]
-    st.dataframe(
-        df_ip[available].sort_values("날짜", ascending=False).reset_index(drop=True),
-        use_container_width=True, height=350,
-    )
-    csv_out = df_ip[available].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button(
-        f"CSV 다운로드 ({selected_ip})",
-        csv_out,
-        f"settlement_{selected_ip}.csv",
-        "text/csv",
-    )
-
-# ── Jira RS 미등록 프레임 안내 ─────────────────────────────────
-if unmatched_frames:
-    with st.expander(f"⚠️ Jira 미매칭 어드민 프레임 ({len(unmatched_frames)}개) — 클릭해서 확인"):
-        st.caption(
-            "어드민에 매출이 있지만 Snapism Jira 티켓과 자동 매칭되지 않은 프레임입니다. "
-            "위에서 IP를 선택한 뒤 프레임을 직접 추가하고 '💾 매핑 저장'을 눌러두면 다음번에 자동 적용됩니다."
+    # ── 일별 추이 ─────────────────────────────────────────────────
+    with st.expander("📅 일별 매출 추이"):
+        daily = (
+            paid.groupby("날짜")["KRW환산"].sum()
+            .reset_index().rename(columns={"KRW환산": "매출"})
         )
+        daily["날짜_str"] = daily["날짜"].astype(str)
+        fig2 = px.bar(daily, x="날짜_str", y="매출", color_discrete_sequence=["#4361ee"])
+        fig2.update_layout(yaxis_tickformat=",", height=260, margin=dict(t=10, b=0))
+        fig2.update_traces(hovertemplate="%{x}<br>%{y:,}원<extra></extra>")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # ── 원본 데이터 ───────────────────────────────────────────────
+    with st.expander("🗃 원본 데이터 보기"):
+        show_cols = [
+            "날짜", "국가", "매장 이름", "프레임 이름",
+            "최종 결제 금액", "쿠폰 할인 금액", "결제 단위", "KRW환산", "쿠폰KRW",
+            "결제 수단", "취소 여부",
+        ]
+        available = [c for c in show_cols if c in df_ip.columns]
         st.dataframe(
-            pd.DataFrame({"프레임 이름": unmatched_frames}),
-            use_container_width=True, hide_index=True,
+            df_ip[available].sort_values("날짜", ascending=False).reset_index(drop=True),
+            use_container_width=True, height=350,
         )
+        csv_out = df_ip[available].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button(
+            f"CSV 다운로드 ({selected_ip})",
+            csv_out,
+            f"settlement_{selected_ip}.csv",
+            "text/csv",
+        )
+
+    # ── Jira RS 미등록 프레임 안내 ─────────────────────────────────
+    if unmatched_frames:
+        with st.expander(f"⚠️ Jira 미매칭 어드민 프레임 ({len(unmatched_frames)}개) — 클릭해서 확인"):
+            st.caption(
+                "어드민에 매출이 있지만 Snapism Jira 티켓과 자동 매칭되지 않은 프레임입니다. "
+                "위에서 IP를 선택한 뒤 프레임을 직접 추가하고 '💾 매핑 저장'을 눌러두면 다음번에 자동 적용됩니다."
+            )
+            st.dataframe(
+                pd.DataFrame({"프레임 이름": unmatched_frames}),
+                use_container_width=True, hide_index=True,
+            )

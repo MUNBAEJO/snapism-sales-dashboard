@@ -258,87 +258,90 @@ c4.metric("📊 분석된 타이틀",    f"{len(unique_titles):,}개")
 st.divider()
 
 # ── 소스별 비교 차트 ──────────────────────────────────────────
-col_l, col_r = st.columns(2)
-with col_l:
-    st.markdown('<div class="section-title">소스별 기한 초과 금액</div>', unsafe_allow_html=True)
-    src_grp = result_df.groupby("소스")["기한후 금액"].sum().reset_index()
-    fig1 = px.bar(src_grp, x="소스", y="기한후 금액",
-                  color="소스", color_discrete_map={"스내피즘": "#4361ee", "포토이즘": "#7209b7"},
-                  text_auto=True)
-    fig1.update_traces(texttemplate="₩%{y:,}", textposition="outside")
-    fig1.update_layout(height=280, yaxis_tickformat=",", showlegend=False,
-                       margin=dict(t=20, b=0))
-    st.plotly_chart(fig1, use_container_width=True)
+with st.container(border=True):
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.markdown('<div class="section-title">소스별 기한 초과 금액</div>', unsafe_allow_html=True)
+        src_grp = result_df.groupby("소스")["기한후 금액"].sum().reset_index()
+        fig1 = px.bar(src_grp, x="소스", y="기한후 금액",
+                      color="소스", color_discrete_map={"스내피즘": "#4361ee", "포토이즘": "#7209b7"},
+                      text_auto=True)
+        fig1.update_traces(texttemplate="₩%{y:,}", textposition="outside")
+        fig1.update_layout(height=280, yaxis_tickformat=",", showlegend=False,
+                           margin=dict(t=20, b=0))
+        st.plotly_chart(fig1, use_container_width=True)
 
-with col_r:
-    st.markdown('<div class="section-title">기한 초과 금액 TOP 10</div>', unsafe_allow_html=True)
-    top10 = result_df.head(10).sort_values("기한후 금액")
-    fig2  = px.bar(top10, x="기한후 금액", y="타이틀명", orientation="h",
-                   color="소스", color_discrete_map={"스내피즘": "#4361ee", "포토이즘": "#7209b7"},
-                   custom_data=["종료일", "기한후 건수"])
-    fig2.update_traces(hovertemplate="%{y}<br>₩%{x:,}  (%{customdata[1]}건)<br>종료일: %{customdata[0]}<extra></extra>")
-    fig2.update_layout(height=280, xaxis_tickformat=",",
-                       yaxis_title="", margin=dict(t=20, b=0))
-    st.plotly_chart(fig2, use_container_width=True)
+    with col_r:
+        st.markdown('<div class="section-title">기한 초과 금액 TOP 10</div>', unsafe_allow_html=True)
+        top10 = result_df.head(10).sort_values("기한후 금액")
+        fig2  = px.bar(top10, x="기한후 금액", y="타이틀명", orientation="h",
+                       color="소스", color_discrete_map={"스내피즘": "#4361ee", "포토이즘": "#7209b7"},
+                       custom_data=["종료일", "기한후 건수"])
+        fig2.update_traces(hovertemplate="%{y}<br>₩%{x:,}  (%{customdata[1]}건)<br>종료일: %{customdata[0]}<extra></extra>")
+        fig2.update_layout(height=280, xaxis_tickformat=",",
+                           yaxis_title="", margin=dict(t=20, b=0))
+        st.plotly_chart(fig2, use_container_width=True)
 
 # ── 결과 테이블 ───────────────────────────────────────────────
-st.markdown('<div class="section-title">기한 초과 타이틀 목록</div>', unsafe_allow_html=True)
+with st.container(border=True):
+    st.markdown('<div class="section-title">기한 초과 타이틀 목록</div>', unsafe_allow_html=True)
 
-disp = result_df.copy()
-disp["기한후 금액"] = disp["기한후 금액"].apply(lambda x: f"₩{x:,}")
-disp["Jira 링크"]  = disp["Jira 티켓"].apply(
-    lambda t: f"https://seobukcorp.atlassian.net/browse/{t}" if t else ""
-)
+    disp = result_df.copy()
+    disp["기한후 금액"] = disp["기한후 금액"].apply(lambda x: f"₩{x:,}")
+    disp["Jira 링크"]  = disp["Jira 티켓"].apply(
+        lambda t: f"https://seobukcorp.atlassian.net/browse/{t}" if t else ""
+    )
 
-st.dataframe(
-    disp[["타이틀명", "종료일", "소스", "브랜드", "기한후 건수",
-          "기한후 금액", "최초 초과일", "최근 초과일", "Jira 상태", "Jira 티켓"]],
-    use_container_width=True, hide_index=True, height=450,
-)
+    st.dataframe(
+        disp[["타이틀명", "종료일", "소스", "브랜드", "기한후 건수",
+              "기한후 금액", "최초 초과일", "최근 초과일", "Jira 상태", "Jira 티켓"]],
+        use_container_width=True, hide_index=True, height=450,
+    )
 
 # ── 상세 거래 내역 ─────────────────────────────────────────────
 st.divider()
-st.markdown('<div class="section-title">🔍 상세 거래 내역</div>', unsafe_allow_html=True)
-st.caption("포토이즘은 일·타이틀·매장 단위 집계 행, 스내피즘은 개별 거래 행으로 표시됩니다. (건수 = 실거래 수)")
+with st.container(border=True):
+    st.markdown('<div class="section-title">🔍 상세 거래 내역</div>', unsafe_allow_html=True)
+    st.caption("포토이즘은 일·타이틀·매장 단위 집계 행, 스내피즘은 개별 거래 행으로 표시됩니다. (건수 = 실거래 수)")
 
-sel = st.selectbox(
-    "타이틀 선택",
-    ["전체"] + result_df["타이틀명"].tolist(),
-    key="detail_sel",
-)
-
-entry_map = {r["타이틀명"]: r for r in rows}
-
-if sel == "전체":
-    detail = all_sales[all_sales["타이틀명_비교"].isin(result_df["타이틀명"])]
-    # 기한 초과 건만
-    detail_rows = []
-    for title, entry in entry_map.items():
-        due = date.fromisoformat(entry["종료일"])
-        part = all_sales[(all_sales["타이틀명_비교"] == title) & (all_sales["날짜"] > due)]
-        detail_rows.append(part)
-    detail = pd.concat(detail_rows, ignore_index=True) if detail_rows else pd.DataFrame()
-else:
-    e   = entry_map.get(sel, {})
-    due = date.fromisoformat(e["종료일"]) if e.get("종료일") else None
-    t_s = all_sales[all_sales["타이틀명_비교"] == sel]
-    detail = t_s[t_s["날짜"] > due] if due else t_s
-    _cnt = int(detail["건수"].sum()) if "건수" in detail.columns else len(detail)
-    st.info(
-        f"**{sel}**  종료일: `{e.get('종료일')}` | "
-        f"{_cnt:,}건 · ₩{detail['정산금액'].sum():,}  "
-        f"([Jira ↗](https://seobukcorp.atlassian.net/browse/{e.get('Jira 티켓', '')}))"
+    sel = st.selectbox(
+        "타이틀 선택",
+        ["전체"] + result_df["타이틀명"].tolist(),
+        key="detail_sel",
     )
 
-if not detail.empty:
-    show_cols = ["날짜", "브랜드소스", "국가", "매장 이름", "타이틀명_비교",
-                 "건수", "정산금액", "결제 수단"]
-    avail = [c for c in show_cols if c in detail.columns]
-    st.dataframe(
-        detail[avail].sort_values("날짜", ascending=False).reset_index(drop=True),
-        use_container_width=True, height=400,
-    )
-    csv = detail[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("CSV 다운로드", csv, "기한초과매출.csv", "text/csv")
-else:
-    st.info("상세 데이터 없음")
+    entry_map = {r["타이틀명"]: r for r in rows}
+
+    if sel == "전체":
+        detail = all_sales[all_sales["타이틀명_비교"].isin(result_df["타이틀명"])]
+        # 기한 초과 건만
+        detail_rows = []
+        for title, entry in entry_map.items():
+            due = date.fromisoformat(entry["종료일"])
+            part = all_sales[(all_sales["타이틀명_비교"] == title) & (all_sales["날짜"] > due)]
+            detail_rows.append(part)
+        detail = pd.concat(detail_rows, ignore_index=True) if detail_rows else pd.DataFrame()
+    else:
+        e   = entry_map.get(sel, {})
+        due = date.fromisoformat(e["종료일"]) if e.get("종료일") else None
+        t_s = all_sales[all_sales["타이틀명_비교"] == sel]
+        detail = t_s[t_s["날짜"] > due] if due else t_s
+        _cnt = int(detail["건수"].sum()) if "건수" in detail.columns else len(detail)
+        st.info(
+            f"**{sel}**  종료일: `{e.get('종료일')}` | "
+            f"{_cnt:,}건 · ₩{detail['정산금액'].sum():,}  "
+            f"([Jira ↗](https://seobukcorp.atlassian.net/browse/{e.get('Jira 티켓', '')}))"
+        )
+
+    if not detail.empty:
+        show_cols = ["날짜", "브랜드소스", "국가", "매장 이름", "타이틀명_비교",
+                     "건수", "정산금액", "결제 수단"]
+        avail = [c for c in show_cols if c in detail.columns]
+        st.dataframe(
+            detail[avail].sort_values("날짜", ascending=False).reset_index(drop=True),
+            use_container_width=True, height=400,
+        )
+        csv = detail[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("CSV 다운로드", csv, "기한초과매출.csv", "text/csv")
+    else:
+        st.info("상세 데이터 없음")

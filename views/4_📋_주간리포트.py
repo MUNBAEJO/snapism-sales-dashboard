@@ -227,123 +227,126 @@ photo_s = photo_data.get("summary", {})
 # 1. 통합 요약
 # ─────────────────────────────────────────────
 st.divider()
-st.subheader("📊 통합 요약")
+with st.container(border=True):
+    st.subheader("📊 통합 요약")
 
-total_this = snap_s.get("이번주_총매출", 0) + photo_s.get("이번주_총매출", 0)
-total_prev = snap_s.get("지난주_총매출", 0) + photo_s.get("지난주_총매출", 0)
-total_wow  = (total_this - total_prev) / total_prev * 100 if total_prev > 0 else 0
+    total_this = snap_s.get("이번주_총매출", 0) + photo_s.get("이번주_총매출", 0)
+    total_prev = snap_s.get("지난주_총매출", 0) + photo_s.get("지난주_총매출", 0)
+    total_wow  = (total_this - total_prev) / total_prev * 100 if total_prev > 0 else 0
 
-mc1, mc2, mc3, mc4 = st.columns(4)
-mc1.metric("💰 통합 총매출", f"₩{total_this:,.0f}")
-mc2.metric("📈 전주 대비",
-           f"{'+' if total_wow >= 0 else ''}{total_wow:.1f}%",
-           delta=f"{'+' if total_wow >= 0 else ''}{total_wow:.1f}%")
-mc3.metric("🟦 스내피즘", f"₩{snap_s.get('이번주_총매출',0):,.0f}",
-           delta=f"{'+' if snap_s.get('wow_pct',0) >= 0 else ''}{snap_s.get('wow_pct',0):.1f}%")
-mc4.metric("🟩 포토이즘", f"₩{photo_s.get('이번주_총매출',0):,.0f}",
-           delta=f"{'+' if photo_s.get('wow_pct',0) >= 0 else ''}{photo_s.get('wow_pct',0):.1f}%")
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("💰 통합 총매출", f"₩{total_this:,.0f}")
+    mc2.metric("📈 전주 대비",
+               f"{'+' if total_wow >= 0 else ''}{total_wow:.1f}%",
+               delta=f"{'+' if total_wow >= 0 else ''}{total_wow:.1f}%")
+    mc3.metric("🟦 스내피즘", f"₩{snap_s.get('이번주_총매출',0):,.0f}",
+               delta=f"{'+' if snap_s.get('wow_pct',0) >= 0 else ''}{snap_s.get('wow_pct',0):.1f}%")
+    mc4.metric("🟩 포토이즘", f"₩{photo_s.get('이번주_총매출',0):,.0f}",
+               delta=f"{'+' if photo_s.get('wow_pct',0) >= 0 else ''}{photo_s.get('wow_pct',0):.1f}%")
 
 
 # ─────────────────────────────────────────────
 # 2. 브랜드별 Top / 급등 / 급락 (2열)
 # ─────────────────────────────────────────────
 st.divider()
-col_snap, col_div, col_photo = st.columns([10, 1, 10])
+with st.container(border=True):
+    col_snap, col_div, col_photo = st.columns([10, 1, 10])
 
-def render_brand(col, label, css_cls, brand_data):
-    with col:
-        st.markdown(f'<div class="{css_cls}">{label}</div>', unsafe_allow_html=True)
+    def render_brand(col, label, css_cls, brand_data):
+        with col:
+            st.markdown(f'<div class="{css_cls}">{label}</div>', unsafe_allow_html=True)
 
-        s     = brand_data.get("summary", {})
-        top5  = brand_data.get("top5",  [])
-        rising= brand_data.get("rising", [])
-        falling=brand_data.get("falling",[])
+            s     = brand_data.get("summary", {})
+            top5  = brand_data.get("top5",  [])
+            rising= brand_data.get("rising", [])
+            falling=brand_data.get("falling",[])
 
-        wow = s.get("wow_pct", 0)
-        st.caption(
-            f"₩{s.get('이번주_총매출',0):,.0f} "
-            f"({'+'  if wow >= 0 else ''}{wow:.1f}%) &nbsp;|&nbsp; "
-            f"{s.get('이번주_건수',0):,}건 &nbsp;|&nbsp; "
-            f"활성 IP {s.get('활성IP수',0)}개"
-        )
-
-        # Top 5
-        st.markdown("**🏆 Top 5**")
-        for i, row in enumerate(top5):
-            ip  = row.get("IP", row.get("index", ""))
-            amt = int(row.get("이번주", 0))
-            pct = row.get("변동률", 0)
-            clr = "#43a047" if pct > 0 else ("#e53935" if pct < 0 else "#888")
-            arrow = "▲" if pct > 0 else ("▼" if pct < 0 else "➖")
-            st.markdown(
-                f"**{i+1}. {ip}** &nbsp; ₩{amt:,.0f} "
-                f"<span style='color:{clr}'>{arrow} {pct:+.0f}%</span>",
-                unsafe_allow_html=True,
+            wow = s.get("wow_pct", 0)
+            st.caption(
+                f"₩{s.get('이번주_총매출',0):,.0f} "
+                f"({'+'  if wow >= 0 else ''}{wow:.1f}%) &nbsp;|&nbsp; "
+                f"{s.get('이번주_건수',0):,}건 &nbsp;|&nbsp; "
+                f"활성 IP {s.get('활성IP수',0)}개"
             )
 
-        # 급등
-        if rising:
-            st.markdown("**🔥 급등**")
-            for row in rising:
+            # Top 5
+            st.markdown("**🏆 Top 5**")
+            for i, row in enumerate(top5):
                 ip  = row.get("IP", row.get("index", ""))
-                pct = row.get("변동률", 0)
                 amt = int(row.get("이번주", 0))
+                pct = row.get("변동률", 0)
+                clr = "#43a047" if pct > 0 else ("#e53935" if pct < 0 else "#888")
+                arrow = "▲" if pct > 0 else ("▼" if pct < 0 else "➖")
                 st.markdown(
-                    f'<div class="rise-card"><b>{ip}</b> &nbsp; ₩{amt:,.0f}'
-                    f'<br><span style="color:#43a047;font-weight:700">▲ +{pct:.0f}%</span></div>',
+                    f"**{i+1}. {ip}** &nbsp; ₩{amt:,.0f} "
+                    f"<span style='color:{clr}'>{arrow} {pct:+.0f}%</span>",
                     unsafe_allow_html=True,
                 )
 
-        # 급락
-        if falling:
-            st.markdown("**📉 하락 주의**")
-            for row in falling:
-                ip  = row.get("IP", row.get("index", ""))
-                pct = row.get("변동률", 0)
-                amt = int(row.get("이번주", 0))
-                st.markdown(
-                    f'<div class="fall-card"><b>{ip}</b> &nbsp; ₩{amt:,.0f}'
-                    f'<br><span style="color:#e53935;font-weight:700">▼ {pct:.0f}%</span></div>',
-                    unsafe_allow_html=True,
-                )
+            # 급등
+            if rising:
+                st.markdown("**🔥 급등**")
+                for row in rising:
+                    ip  = row.get("IP", row.get("index", ""))
+                    pct = row.get("변동률", 0)
+                    amt = int(row.get("이번주", 0))
+                    st.markdown(
+                        f'<div class="rise-card"><b>{ip}</b> &nbsp; ₩{amt:,.0f}'
+                        f'<br><span style="color:#43a047;font-weight:700">▲ +{pct:.0f}%</span></div>',
+                        unsafe_allow_html=True,
+                    )
 
-        if not rising and not falling:
-            st.caption("급등/급락 IP 없음")
+            # 급락
+            if falling:
+                st.markdown("**📉 하락 주의**")
+                for row in falling:
+                    ip  = row.get("IP", row.get("index", ""))
+                    pct = row.get("변동률", 0)
+                    amt = int(row.get("이번주", 0))
+                    st.markdown(
+                        f'<div class="fall-card"><b>{ip}</b> &nbsp; ₩{amt:,.0f}'
+                        f'<br><span style="color:#e53935;font-weight:700">▼ {pct:.0f}%</span></div>',
+                        unsafe_allow_html=True,
+                    )
 
-render_brand(col_snap,  "🟦 스내피즘",  "brand-header-snap",  snap_data)
-with col_div:
-    st.markdown("<div style='border-left:1px solid #ddd; height:600px; margin: auto;'></div>",
-                unsafe_allow_html=True)
-render_brand(col_photo, "🟩 포토이즘",  "brand-header-photo", photo_data)
+            if not rising and not falling:
+                st.caption("급등/급락 IP 없음")
+
+    render_brand(col_snap,  "🟦 스내피즘",  "brand-header-snap",  snap_data)
+    with col_div:
+        st.markdown("<div style='border-left:1px solid #ddd; height:600px; margin: auto;'></div>",
+                    unsafe_allow_html=True)
+    render_brand(col_photo, "🟩 포토이즘",  "brand-header-photo", photo_data)
 
 
 # ─────────────────────────────────────────────
 # 3. AI 분석 리포트
 # ─────────────────────────────────────────────
 st.divider()
-st.subheader("🤖 AI 분석 리포트")
-st.caption("Google Search Grounding 기반 — 아티스트/IP 최근 이슈 검색 후 브랜드별 분리 분석")
+with st.container(border=True):
+    st.subheader("🤖 AI 분석 리포트")
+    st.caption("Google Search Grounding 기반 — 아티스트/IP 최근 이슈 검색 후 브랜드별 분리 분석")
 
-ai_text  = ai.get("text", "")
-ai_error = ai.get("error", "")
+    ai_text  = ai.get("text", "")
+    ai_error = ai.get("error", "")
 
-if ai_error and not ai_text:
-    st.error(f"⚠️ {ai_error}")
-elif ai_text:
-    model_used = ai.get("model", "gemini-2.5-flash")
-    if model_used != "gemini-2.5-flash":
-        st.info(f"ℹ️ {model_used} 로 생성됨 (fallback)")
+    if ai_error and not ai_text:
+        st.error(f"⚠️ {ai_error}")
+    elif ai_text:
+        model_used = ai.get("model", "gemini-2.5-flash")
+        if model_used != "gemini-2.5-flash":
+            st.info(f"ℹ️ {model_used} 로 생성됨 (fallback)")
 
-    st.markdown(f'<div class="report-box">{ai_text}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="report-box">{ai_text}</div>', unsafe_allow_html=True)
 
-    st.download_button(
-        label="📄 텍스트 저장 (회의 준비용)",
-        data=ai_text,
-        file_name=f"주간리포트_{insight.get('period',str(this_start)).replace(' ','')}.txt",
-        mime="text/plain",
-    )
-else:
-    st.warning("AI 리포트가 없습니다. 리포트 생성 버튼을 눌러주세요.")
+        st.download_button(
+            label="📄 텍스트 저장 (회의 준비용)",
+            data=ai_text,
+            file_name=f"주간리포트_{insight.get('period',str(this_start)).replace(' ','')}.txt",
+            mime="text/plain",
+        )
+    else:
+        st.warning("AI 리포트가 없습니다. 리포트 생성 버튼을 눌러주세요.")
 
 
 # ─────────────────────────────────────────────

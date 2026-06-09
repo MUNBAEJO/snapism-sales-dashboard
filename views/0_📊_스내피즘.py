@@ -306,300 +306,305 @@ tab_ov, tab_nat, tab_cat, tab_etc = st.tabs([
 
 # ════════════ 탭 1: 매출 개요 ════════════
 with tab_ov:
-    col_left, col_right = st.columns([3, 2])
+    with st.container(border=True):
+        col_left, col_right = st.columns([3, 2])
 
-    with col_left:
-        head_l, head_r = st.columns([3, 2])
-        with head_l:
-            section("📈 매출 추이")
-        with head_r:
-            gran = st.segmented_control(
-                "기간", ["월", "주", "일"], default="월",
-                key="trend_gran", label_visibility="collapsed",
-            )
-        if gran is None:
-            gran = "월"
+        with col_left:
+            head_l, head_r = st.columns([3, 2])
+            with head_l:
+                section("📈 매출 추이")
+            with head_r:
+                gran = st.segmented_control(
+                    "기간", ["월", "주", "일"], default="월",
+                    key="trend_gran", label_visibility="collapsed",
+                )
+            if gran is None:
+                gran = "월"
 
-        def period_key(dates, g):
-            d = pd.to_datetime(dates)
-            if g == "월":
-                return d.dt.to_period("M")
-            if g == "주":
-                return d.dt.to_period("W")
-            return d.dt.date
+            def period_key(dates, g):
+                d = pd.to_datetime(dates)
+                if g == "월":
+                    return d.dt.to_period("M")
+                if g == "주":
+                    return d.dt.to_period("W")
+                return d.dt.date
 
-        s_paid = sales.assign(_p=period_key(sales["날짜"], gran)).groupby("_p")["KRW환산금액"].sum().rename("실결제")
-        c100 = coupons.assign(_p=period_key(coupons["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum()
-        cpart_src = sales[sales["쿠폰 할인 금액"] > 0]
-        cpart = cpart_src.assign(_p=period_key(cpart_src["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum()
-        s_coupon = c100.add(cpart, fill_value=0).rename("쿠폰할인")
+            s_paid = sales.assign(_p=period_key(sales["날짜"], gran)).groupby("_p")["KRW환산금액"].sum().rename("실결제")
+            c100 = coupons.assign(_p=period_key(coupons["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum()
+            cpart_src = sales[sales["쿠폰 할인 금액"] > 0]
+            cpart = cpart_src.assign(_p=period_key(cpart_src["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum()
+            s_coupon = c100.add(cpart, fill_value=0).rename("쿠폰할인")
 
-        trend = pd.concat([s_paid, s_coupon], axis=1).fillna(0).sort_index()
-        if trend.empty:
-            st.info("해당 조건의 데이터가 없습니다.")
-        else:
-            trend["합계"] = trend["실결제"] + trend["쿠폰할인"]
-            win = {"월": 3, "주": 4, "일": 7}[gran]
-            ma_unit = {"월": "개월", "주": "주", "일": "일"}[gran]
-            trend["평균"] = trend["합계"].rolling(win, min_periods=1).mean().round(0)
-            trend = trend.reset_index()
-            if gran == "월":
-                trend["label"] = trend["_p"].apply(lambda p: f"{p.year}.{p.month:02d}")
-            elif gran == "주":
-                trend["label"] = trend["_p"].apply(lambda p: p.start_time.strftime("%m/%d") + "주")
+            trend = pd.concat([s_paid, s_coupon], axis=1).fillna(0).sort_index()
+            if trend.empty:
+                st.info("해당 조건의 데이터가 없습니다.")
             else:
-                trend["label"] = trend["_p"].astype(str)
+                trend["합계"] = trend["실결제"] + trend["쿠폰할인"]
+                win = {"월": 3, "주": 4, "일": 7}[gran]
+                ma_unit = {"월": "개월", "주": "주", "일": "일"}[gran]
+                trend["평균"] = trend["합계"].rolling(win, min_periods=1).mean().round(0)
+                trend = trend.reset_index()
+                if gran == "월":
+                    trend["label"] = trend["_p"].apply(lambda p: f"{p.year}.{p.month:02d}")
+                elif gran == "주":
+                    trend["label"] = trend["_p"].apply(lambda p: p.start_time.strftime("%m/%d") + "주")
+                else:
+                    trend["label"] = trend["_p"].astype(str)
 
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=trend["label"], y=trend["실결제"], name="실결제",
-                marker_color=PRIMARY, opacity=0.9,
-                hovertemplate="%{x}<br>실결제 %{y:,}원<extra></extra>"))
-            fig.add_trace(go.Bar(
-                x=trend["label"], y=trend["쿠폰할인"], name="쿠폰할인",
-                marker_color=ACCENT, opacity=0.9,
-                hovertemplate="%{x}<br>쿠폰할인 %{y:,}원<extra></extra>"))
-            if len(trend) >= 2:
-                fig.add_trace(go.Scatter(
-                    x=trend["label"], y=trend["평균"], name=f"{win}{ma_unit} 평균",
-                    line=dict(color=PINK, width=2.5), mode="lines",
-                    hovertemplate="%{x}<br>평균 %{y:,.0f}원<extra></extra>"))
-            fig.update_layout(barmode="stack", yaxis_tickformat=",")
-            style_fig(fig, 340)
-            fig.update_xaxes(type="category")
-            st.plotly_chart(fig, use_container_width=True)
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=trend["label"], y=trend["실결제"], name="실결제",
+                    marker_color=PRIMARY, opacity=0.9,
+                    hovertemplate="%{x}<br>실결제 %{y:,}원<extra></extra>"))
+                fig.add_trace(go.Bar(
+                    x=trend["label"], y=trend["쿠폰할인"], name="쿠폰할인",
+                    marker_color=ACCENT, opacity=0.9,
+                    hovertemplate="%{x}<br>쿠폰할인 %{y:,}원<extra></extra>"))
+                if len(trend) >= 2:
+                    fig.add_trace(go.Scatter(
+                        x=trend["label"], y=trend["평균"], name=f"{win}{ma_unit} 평균",
+                        line=dict(color=PINK, width=2.5), mode="lines",
+                        hovertemplate="%{x}<br>평균 %{y:,.0f}원<extra></extra>"))
+                fig.update_layout(barmode="stack", yaxis_tickformat=",")
+                style_fig(fig, 340)
+                fig.update_xaxes(type="category")
+                st.plotly_chart(fig, use_container_width=True)
 
-    with col_right:
-        section("🛍 상품 카테고리 비중", "purple")
-        cat_pie = (all_txns.groupby("상품 카테고리")["정산금액"].sum()
-                   .reset_index().sort_values("정산금액", ascending=False))
-        fig2 = px.pie(cat_pie, values="정산금액", names="상품 카테고리",
-                      color_discrete_sequence=px.colors.qualitative.Set2, hole=0.45)
-        fig2.update_traces(
-            textposition="inside", textinfo="percent",
-            hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
-        style_fig(fig2, 340)
-        st.plotly_chart(fig2, use_container_width=True)
+        with col_right:
+            section("🛍 상품 카테고리 비중", "purple")
+            cat_pie = (all_txns.groupby("상품 카테고리")["정산금액"].sum()
+                       .reset_index().sort_values("정산금액", ascending=False))
+            fig2 = px.pie(cat_pie, values="정산금액", names="상품 카테고리",
+                          color_discrete_sequence=px.colors.qualitative.Set2, hole=0.45)
+            fig2.update_traces(
+                textposition="inside", textinfo="percent",
+                hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
+            style_fig(fig2, 340)
+            st.plotly_chart(fig2, use_container_width=True)
 
     # 매장 / 프레임 TOP 10
-    col_a, col_b = st.columns(2)
-    with col_a:
-        section("🏬 매장별 매출 TOP 10")
-        store_df = (
-            all_txns.groupby("매장 이름")
-            .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
-            .reset_index().nlargest(10, "매출").sort_values("매출")
-        )
-        fig3 = px.bar(store_df, x="매출", y="매장 이름", orientation="h",
-                      color="매출", color_continuous_scale="Blues", custom_data=["건수"])
-        fig3.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-        fig3.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
-        style_fig(fig3, 380, legend=False)
-        st.plotly_chart(fig3, use_container_width=True)
-
-    with col_b:
-        section("🎬 프레임(아티스트/IP) TOP 10", "purple")
-        frame_all_df = (
-            all_txns[all_txns["프레임 이름"].notna() & (all_txns["프레임 이름"] != "nan")]
-            .groupby("프레임 이름")
-            .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
-            .reset_index().sort_values("매출", ascending=False)
-        )
-        frame_df = frame_all_df.nlargest(10, "매출").sort_values("매출")
-        fig4 = px.bar(frame_df, x="매출", y="프레임 이름", orientation="h",
-                      color="매출", color_continuous_scale="Purples", custom_data=["건수"])
-        fig4.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-        fig4.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
-        style_fig(fig4, 380, legend=False)
-        st.plotly_chart(fig4, use_container_width=True)
-
-        with st.expander(f"📋 전체 프레임 보기 ({len(frame_all_df):,}개)"):
-            fshow = frame_all_df.reset_index(drop=True)
-            fshow.index = fshow.index + 1
-            st.dataframe(
-                fshow, use_container_width=True, height=400,
-                column_config={
-                    "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
-                    "건수": st.column_config.NumberColumn("건수", format="localized"),
-                },
+    with st.container(border=True):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            section("🏬 매장별 매출 TOP 10")
+            store_df = (
+                all_txns.groupby("매장 이름")
+                .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+                .reset_index().nlargest(10, "매출").sort_values("매출")
             )
+            fig3 = px.bar(store_df, x="매출", y="매장 이름", orientation="h",
+                          color="매출", color_continuous_scale="Blues", custom_data=["건수"])
+            fig3.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+            fig3.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
+            style_fig(fig3, 380, legend=False)
+            st.plotly_chart(fig3, use_container_width=True)
 
-# ════════════ 탭 2: 국가별 분석 ════════════
-with tab_nat:
-    section("🌏 국가별 매출 분석")
-    col_nat, col_coupon = st.columns([3, 2])
-
-    with col_nat:
-        nat = (
-            all_txns.groupby(["국가", "결제 단위"])
-            .agg(건수=("정산금액", "count"),
-                 현지통화=("총원화금액", "sum"),
-                 KRW환산=("정산금액", "sum"))
-            .reset_index().sort_values("KRW환산", ascending=False)
-        )
-        nat["국기"] = nat["국가"].apply(flag_url)
-        nat["현지 통화 금액"] = nat.apply(lambda r: fmt_orig(r["현지통화"], r["결제 단위"]), axis=1)
-        tot_krw = nat["KRW환산"].sum()
-        nat["비중"] = (nat["KRW환산"] / tot_krw) if tot_krw else 0
-
-        st.dataframe(
-            nat[["국기", "국가", "결제 단위", "건수", "현지 통화 금액", "KRW환산", "비중"]],
-            use_container_width=True, hide_index=True, height=420,
-            column_config={
-                "국기": st.column_config.ImageColumn(" ", width="small"),
-                "국가": st.column_config.TextColumn("국가"),
-                "결제 단위": st.column_config.TextColumn("통화", width="small"),
-                "건수": st.column_config.NumberColumn("건수", format="localized"),
-                "현지 통화 금액": st.column_config.TextColumn("현지 통화 금액"),
-                "KRW환산": st.column_config.NumberColumn("KRW 환산 (₩)", format="localized"),
-                "비중": st.column_config.ProgressColumn(
-                    "비중", format="percent", min_value=0,
-                    max_value=float(nat["비중"].max()) if len(nat) else 1.0),
-            },
-        )
-
-        TOPN = 10
-        nat_bar = nat.copy()
-        if len(nat_bar) > TOPN:
-            top = nat_bar.head(TOPN)
-            rest = nat_bar.iloc[TOPN:]
-            others = pd.DataFrame([{
-                "국가": f"기타 ({len(rest)}개국)", "결제 단위": "-",
-                "건수": int(rest["건수"].sum()), "현지 통화 금액": "-",
-                "KRW환산": int(rest["KRW환산"].sum()), "비중": 0,
-            }])
-            nat_bar = pd.concat([top, others], ignore_index=True)
-
-        fig_nat = px.bar(
-            nat_bar.sort_values("KRW환산"),
-            x="KRW환산", y="국가", orientation="h",
-            color="KRW환산", color_continuous_scale="Teal",
-            custom_data=["현지 통화 금액", "결제 단위", "건수"])
-        fig_nat.update_traces(
-            hovertemplate="%{y}<br>정산기준 %{x:,}원<br>현지 %{customdata[0]} · %{customdata[2]:,}건<extra></extra>")
-        fig_nat.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
-        style_fig(fig_nat, 320, legend=False)
-        st.plotly_chart(fig_nat, use_container_width=True)
-
-    with col_coupon:
-        st.markdown('<div class="sub-label">🎟 쿠폰 할인 현황</div>', unsafe_allow_html=True)
-        all_coupon = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
-        if not all_coupon.empty:
-            cpn = (
-                all_coupon.groupby(["국가", "결제 단위"])
-                .agg(쿠폰건수=("쿠폰 할인 금액", "count"),
-                     할인금액=("쿠폰 할인 금액", "sum"),
-                     할인KRW=("쿠폰KRW", "sum"))
-                .reset_index().sort_values("할인KRW", ascending=False)
+        with col_b:
+            section("🎬 프레임(아티스트/IP) TOP 10", "purple")
+            frame_all_df = (
+                all_txns[all_txns["프레임 이름"].notna() & (all_txns["프레임 이름"] != "nan")]
+                .groupby("프레임 이름")
+                .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+                .reset_index().sort_values("매출", ascending=False)
             )
-            cpn["국기"] = cpn["국가"].apply(flag_url)
-            cpn["할인금액(현지)"] = cpn.apply(lambda r: fmt_orig(r["할인금액"], r["결제 단위"]), axis=1)
-            st.dataframe(
-                cpn[["국기", "국가", "쿠폰건수", "할인금액(현지)", "할인KRW"]],
-                use_container_width=True, hide_index=True,
-                column_config={
-                    "국기": st.column_config.ImageColumn(" ", width="small"),
-                    "국가": st.column_config.TextColumn("국가"),
-                    "쿠폰건수": st.column_config.NumberColumn("쿠폰건수", format="localized"),
-                    "할인금액(현지)": st.column_config.TextColumn("할인(현지)"),
-                    "할인KRW": st.column_config.NumberColumn("할인 (₩)", format="localized"),
-                },
-            )
-            total_cpn = all_coupon["쿠폰KRW"].sum()
-            st.info(f"쿠폰 총 할인 **{fmt_krw(total_cpn)}**  ·  {len(all_coupon):,}건")
-        else:
-            st.info("조회 기간 내 쿠폰 사용 없음")
+            frame_df = frame_all_df.nlargest(10, "매출").sort_values("매출")
+            fig4 = px.bar(frame_df, x="매출", y="프레임 이름", orientation="h",
+                          color="매출", color_continuous_scale="Purples", custom_data=["건수"])
+            fig4.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+            fig4.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
+            style_fig(fig4, 380, legend=False)
+            st.plotly_chart(fig4, use_container_width=True)
 
-# ════════════ 탭 3: 상품 카테고리 ════════════
-with tab_cat:
-    section("🧩 상품 카테고리 분석", "pink")
-    cat_bar_df = (
-        all_txns.groupby("상품 카테고리")
-        .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
-        .reset_index().sort_values("매출", ascending=False)
-    )
-
-    col_cat_chart, col_cat_tbl = st.columns([6, 4])
-    with col_cat_chart:
-        fig_cat = px.bar(cat_bar_df.sort_values("매출"),
-                         x="매출", y="상품 카테고리", orientation="h",
-                         color="매출", color_continuous_scale="Greens", custom_data=["건수"])
-        fig_cat.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-        fig_cat.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
-        style_fig(fig_cat, max(260, len(cat_bar_df) * 46 + 80), legend=False)
-        st.plotly_chart(fig_cat, use_container_width=True)
-    with col_cat_tbl:
-        ctbl = cat_bar_df.reset_index(drop=True)
-        csum = ctbl["매출"].sum()
-        ctbl["비중"] = (ctbl["매출"] / csum) if csum else 0
-        ctbl.index = ctbl.index + 1
-        st.dataframe(
-            ctbl, use_container_width=True, height=max(260, len(cat_bar_df) * 46 + 80),
-            column_config={
-                "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
-                "건수": st.column_config.NumberColumn("건수", format="localized"),
-                "비중": st.column_config.ProgressColumn(
-                    "비중", format="percent", min_value=0,
-                    max_value=float(ctbl["비중"].max()) if len(ctbl) else 1.0),
-            },
-        )
-
-    st.markdown('<div class="sub-label">📦 카테고리별 상품 순위</div>', unsafe_allow_html=True)
-    avail_cats = sorted(all_txns["상품 카테고리"].dropna().unique().tolist())
-    default_cat = "미니스티커" if "미니스티커" in avail_cats else (avail_cats[0] if avail_cats else None)
-
-    col_pcat, _ = st.columns([2, 8])
-    with col_pcat:
-        pick_cat = st.selectbox(
-            "카테고리 선택", avail_cats,
-            index=avail_cats.index(default_cat) if default_cat in avail_cats else 0,
-            key="prod_rank_cat", label_visibility="collapsed")
-
-    prod_rank_df = (
-        all_txns[all_txns["상품 카테고리"] == pick_cat]
-        .groupby("상품 이름")
-        .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
-        .reset_index().sort_values("매출", ascending=False)
-    )
-
-    if prod_rank_df.empty:
-        st.info("해당 카테고리의 데이터가 없습니다.")
-    else:
-        col_pr_chart, col_pr_tbl = st.columns([6, 4])
-        with col_pr_chart:
-            top_prod = prod_rank_df.head(15).sort_values("매출")
-            fig_pr = px.bar(top_prod, x="매출", y="상품 이름", orientation="h",
-                            color="매출", color_continuous_scale="Oranges", custom_data=["건수"])
-            fig_pr.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-            fig_pr.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
-            style_fig(fig_pr, max(300, len(top_prod) * 36 + 60), legend=False)
-            st.plotly_chart(fig_pr, use_container_width=True)
-        with col_pr_tbl:
-            pr = prod_rank_df.head(15).reset_index(drop=True)
-            psum = prod_rank_df["매출"].sum()
-            pr["비중"] = (pr["매출"] / psum) if psum else 0
-            pr.index = pr.index + 1
-            st.dataframe(
-                pr, use_container_width=True, height=max(300, len(top_prod) * 36 + 60),
-                column_config={
-                    "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
-                    "건수": st.column_config.NumberColumn("건수", format="localized"),
-                    "비중": st.column_config.ProgressColumn(
-                        "비중", format="percent", min_value=0,
-                        max_value=float(pr["비중"].max()) if len(pr) else 1.0),
-                },
-            )
-        if len(prod_rank_df) > 15:
-            with st.expander(f"📋 전체 보기 ({len(prod_rank_df):,}개)"):
-                full = prod_rank_df.reset_index(drop=True)
-                full.index = full.index + 1
+            with st.expander(f"📋 전체 프레임 보기 ({len(frame_all_df):,}개)"):
+                fshow = frame_all_df.reset_index(drop=True)
+                fshow.index = fshow.index + 1
                 st.dataframe(
-                    full, use_container_width=True, height=400,
+                    fshow, use_container_width=True, height=400,
                     column_config={
                         "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
                         "건수": st.column_config.NumberColumn("건수", format="localized"),
                     },
                 )
+
+# ════════════ 탭 2: 국가별 분석 ════════════
+with tab_nat:
+    with st.container(border=True):
+        section("🌏 국가별 매출 분석")
+        col_nat, col_coupon = st.columns([3, 2])
+
+        with col_nat:
+            nat = (
+                all_txns.groupby(["국가", "결제 단위"])
+                .agg(건수=("정산금액", "count"),
+                     현지통화=("총원화금액", "sum"),
+                     KRW환산=("정산금액", "sum"))
+                .reset_index().sort_values("KRW환산", ascending=False)
+            )
+            nat["국기"] = nat["국가"].apply(flag_url)
+            nat["현지 통화 금액"] = nat.apply(lambda r: fmt_orig(r["현지통화"], r["결제 단위"]), axis=1)
+            tot_krw = nat["KRW환산"].sum()
+            nat["비중"] = (nat["KRW환산"] / tot_krw) if tot_krw else 0
+
+            st.dataframe(
+                nat[["국기", "국가", "결제 단위", "건수", "현지 통화 금액", "KRW환산", "비중"]],
+                use_container_width=True, hide_index=True, height=420,
+                column_config={
+                    "국기": st.column_config.ImageColumn(" ", width="small"),
+                    "국가": st.column_config.TextColumn("국가"),
+                    "결제 단위": st.column_config.TextColumn("통화", width="small"),
+                    "건수": st.column_config.NumberColumn("건수", format="localized"),
+                    "현지 통화 금액": st.column_config.TextColumn("현지 통화 금액"),
+                    "KRW환산": st.column_config.NumberColumn("KRW 환산 (₩)", format="localized"),
+                    "비중": st.column_config.ProgressColumn(
+                        "비중", format="percent", min_value=0,
+                        max_value=float(nat["비중"].max()) if len(nat) else 1.0),
+                },
+            )
+
+            TOPN = 10
+            nat_bar = nat.copy()
+            if len(nat_bar) > TOPN:
+                top = nat_bar.head(TOPN)
+                rest = nat_bar.iloc[TOPN:]
+                others = pd.DataFrame([{
+                    "국가": f"기타 ({len(rest)}개국)", "결제 단위": "-",
+                    "건수": int(rest["건수"].sum()), "현지 통화 금액": "-",
+                    "KRW환산": int(rest["KRW환산"].sum()), "비중": 0,
+                }])
+                nat_bar = pd.concat([top, others], ignore_index=True)
+
+            fig_nat = px.bar(
+                nat_bar.sort_values("KRW환산"),
+                x="KRW환산", y="국가", orientation="h",
+                color="KRW환산", color_continuous_scale="Teal",
+                custom_data=["현지 통화 금액", "결제 단위", "건수"])
+            fig_nat.update_traces(
+                hovertemplate="%{y}<br>정산기준 %{x:,}원<br>현지 %{customdata[0]} · %{customdata[2]:,}건<extra></extra>")
+            fig_nat.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
+            style_fig(fig_nat, 320, legend=False)
+            st.plotly_chart(fig_nat, use_container_width=True)
+
+        with col_coupon:
+            st.markdown('<div class="sub-label">🎟 쿠폰 할인 현황</div>', unsafe_allow_html=True)
+            all_coupon = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
+            if not all_coupon.empty:
+                cpn = (
+                    all_coupon.groupby(["국가", "결제 단위"])
+                    .agg(쿠폰건수=("쿠폰 할인 금액", "count"),
+                         할인금액=("쿠폰 할인 금액", "sum"),
+                         할인KRW=("쿠폰KRW", "sum"))
+                    .reset_index().sort_values("할인KRW", ascending=False)
+                )
+                cpn["국기"] = cpn["국가"].apply(flag_url)
+                cpn["할인금액(현지)"] = cpn.apply(lambda r: fmt_orig(r["할인금액"], r["결제 단위"]), axis=1)
+                st.dataframe(
+                    cpn[["국기", "국가", "쿠폰건수", "할인금액(현지)", "할인KRW"]],
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "국기": st.column_config.ImageColumn(" ", width="small"),
+                        "국가": st.column_config.TextColumn("국가"),
+                        "쿠폰건수": st.column_config.NumberColumn("쿠폰건수", format="localized"),
+                        "할인금액(현지)": st.column_config.TextColumn("할인(현지)"),
+                        "할인KRW": st.column_config.NumberColumn("할인 (₩)", format="localized"),
+                    },
+                )
+                total_cpn = all_coupon["쿠폰KRW"].sum()
+                st.info(f"쿠폰 총 할인 **{fmt_krw(total_cpn)}**  ·  {len(all_coupon):,}건")
+            else:
+                st.info("조회 기간 내 쿠폰 사용 없음")
+
+# ════════════ 탭 3: 상품 카테고리 ════════════
+with tab_cat:
+    with st.container(border=True):
+        section("🧩 상품 카테고리 분석", "pink")
+        cat_bar_df = (
+            all_txns.groupby("상품 카테고리")
+            .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+            .reset_index().sort_values("매출", ascending=False)
+        )
+
+        col_cat_chart, col_cat_tbl = st.columns([6, 4])
+        with col_cat_chart:
+            fig_cat = px.bar(cat_bar_df.sort_values("매출"),
+                             x="매출", y="상품 카테고리", orientation="h",
+                             color="매출", color_continuous_scale="Greens", custom_data=["건수"])
+            fig_cat.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+            fig_cat.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
+            style_fig(fig_cat, max(260, len(cat_bar_df) * 46 + 80), legend=False)
+            st.plotly_chart(fig_cat, use_container_width=True)
+        with col_cat_tbl:
+            ctbl = cat_bar_df.reset_index(drop=True)
+            csum = ctbl["매출"].sum()
+            ctbl["비중"] = (ctbl["매출"] / csum) if csum else 0
+            ctbl.index = ctbl.index + 1
+            st.dataframe(
+                ctbl, use_container_width=True, height=max(260, len(cat_bar_df) * 46 + 80),
+                column_config={
+                    "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
+                    "건수": st.column_config.NumberColumn("건수", format="localized"),
+                    "비중": st.column_config.ProgressColumn(
+                        "비중", format="percent", min_value=0,
+                        max_value=float(ctbl["비중"].max()) if len(ctbl) else 1.0),
+                },
+            )
+
+    with st.container(border=True):
+        st.markdown('<div class="sub-label">📦 카테고리별 상품 순위</div>', unsafe_allow_html=True)
+        avail_cats = sorted(all_txns["상품 카테고리"].dropna().unique().tolist())
+        default_cat = "미니스티커" if "미니스티커" in avail_cats else (avail_cats[0] if avail_cats else None)
+
+        col_pcat, _ = st.columns([2, 8])
+        with col_pcat:
+            pick_cat = st.selectbox(
+                "카테고리 선택", avail_cats,
+                index=avail_cats.index(default_cat) if default_cat in avail_cats else 0,
+                key="prod_rank_cat", label_visibility="collapsed")
+
+        prod_rank_df = (
+            all_txns[all_txns["상품 카테고리"] == pick_cat]
+            .groupby("상품 이름")
+            .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+            .reset_index().sort_values("매출", ascending=False)
+        )
+
+        if prod_rank_df.empty:
+            st.info("해당 카테고리의 데이터가 없습니다.")
+        else:
+            col_pr_chart, col_pr_tbl = st.columns([6, 4])
+            with col_pr_chart:
+                top_prod = prod_rank_df.head(15).sort_values("매출")
+                fig_pr = px.bar(top_prod, x="매출", y="상품 이름", orientation="h",
+                                color="매출", color_continuous_scale="Oranges", custom_data=["건수"])
+                fig_pr.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+                fig_pr.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
+                style_fig(fig_pr, max(300, len(top_prod) * 36 + 60), legend=False)
+                st.plotly_chart(fig_pr, use_container_width=True)
+            with col_pr_tbl:
+                pr = prod_rank_df.head(15).reset_index(drop=True)
+                psum = prod_rank_df["매출"].sum()
+                pr["비중"] = (pr["매출"] / psum) if psum else 0
+                pr.index = pr.index + 1
+                st.dataframe(
+                    pr, use_container_width=True, height=max(300, len(top_prod) * 36 + 60),
+                    column_config={
+                        "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
+                        "건수": st.column_config.NumberColumn("건수", format="localized"),
+                        "비중": st.column_config.ProgressColumn(
+                            "비중", format="percent", min_value=0,
+                            max_value=float(pr["비중"].max()) if len(pr) else 1.0),
+                    },
+                )
+            if len(prod_rank_df) > 15:
+                with st.expander(f"📋 전체 보기 ({len(prod_rank_df):,}개)"):
+                    full = prod_rank_df.reset_index(drop=True)
+                    full.index = full.index + 1
+                    st.dataframe(
+                        full, use_container_width=True, height=400,
+                        column_config={
+                            "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
+                            "건수": st.column_config.NumberColumn("건수", format="localized"),
+                        },
+                    )
 
     with st.expander("🔍 IP별 상품 카테고리 상세", expanded=(selected_frame != "전체")):
         frame_src = all_txns[all_txns["프레임 이름"].notna() & (all_txns["프레임 이름"] != "nan")]
@@ -643,22 +648,22 @@ with tab_cat:
 
 # ════════════ 탭 4: 시간대 · 데이터 ════════════
 with tab_etc:
-    section("⏰ 시간대별 매출 분포")
-    hourly = (
-        all_txns.assign(시간대=all_txns["결제일시"].dt.hour)
-        .groupby("시간대")["정산금액"].agg(["sum", "count"])
-        .reindex(range(24), fill_value=0).reset_index()
-        .rename(columns={"시간대": "시간", "sum": "매출", "count": "건수"})
-    )
-    hourly["시간_label"] = hourly["시간"].apply(lambda h: f"{h:02d}:00")
-    fig5 = px.bar(hourly, x="시간_label", y="매출",
-                  color="매출", color_continuous_scale="Oranges", custom_data=["건수"])
-    fig5.update_traces(hovertemplate="%{x}<br>%{y:,}원 · %{customdata[0]:,}건<extra></extra>")
-    fig5.update_layout(coloraxis_showscale=False, xaxis_title="", yaxis_tickformat=",")
-    style_fig(fig5, 260, legend=False)
-    st.plotly_chart(fig5, use_container_width=True)
+    with st.container(border=True):
+        section("⏰ 시간대별 매출 분포")
+        hourly = (
+            all_txns.assign(시간대=all_txns["결제일시"].dt.hour)
+            .groupby("시간대")["정산금액"].agg(["sum", "count"])
+            .reindex(range(24), fill_value=0).reset_index()
+            .rename(columns={"시간대": "시간", "sum": "매출", "count": "건수"})
+        )
+        hourly["시간_label"] = hourly["시간"].apply(lambda h: f"{h:02d}:00")
+        fig5 = px.bar(hourly, x="시간_label", y="매출",
+                      color="매출", color_continuous_scale="Oranges", custom_data=["건수"])
+        fig5.update_traces(hovertemplate="%{x}<br>%{y:,}원 · %{customdata[0]:,}건<extra></extra>")
+        fig5.update_layout(coloraxis_showscale=False, xaxis_title="", yaxis_tickformat=",")
+        style_fig(fig5, 260, legend=False)
+        st.plotly_chart(fig5, use_container_width=True)
 
-    st.divider()
     with st.expander("🗃 원본 데이터 보기"):
         show_cols = [
             "날짜", "결제일시", "국가", "매장 이름", "상품 카테고리", "상품 이름",
