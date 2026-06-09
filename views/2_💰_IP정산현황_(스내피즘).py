@@ -38,15 +38,42 @@ STATUS_COLORS = {
     "할 일":             "⚪",
 }
 
-st.markdown("""
+INK = "#1a1a2e"; PRIMARY = "#4361ee"; SECONDARY = "#7209b7"; PINK = "#f72585"
+st.markdown(f"""
 <style>
-[data-testid="metric-container"] {
-    background:#f8f9fa; border:1px solid #e9ecef;
-    border-radius:10px; padding:12px 20px;
-}
-.section-title { font-size:1.05rem; font-weight:600; margin-bottom:4px; }
-[data-testid="stDeployButton"] { display:none !important; }
-/* 사이드바 헤더/아이콘은 라우터(스내피즘.py) + st.navigation 에서 처리 */
+html, body, [class*="css"], [data-testid="stAppViewContainer"] {{
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
+                 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+}}
+[data-testid="stAppViewContainer"] .main .block-container {{
+    padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1500px;
+}}
+h1 {{ font-weight: 800 !important; letter-spacing: -0.5px; color: {INK}; }}
+.section-title {{
+    font-size: 1.12rem; font-weight: 700; color: {INK};
+    margin: 6px 0 12px; padding-left: 12px; border-left: 4px solid {PRIMARY}; line-height: 1.4;
+}}
+.section-title.purple {{ border-left-color: {SECONDARY}; }}
+.section-title.pink   {{ border-left-color: {PINK}; }}
+.sub-label {{ font-size: .9rem; font-weight: 600; color: #5a5a72; margin-bottom: 6px; }}
+[data-testid="stMetric"], [data-testid="metric-container"] {{
+    background: linear-gradient(135deg, #ffffff 0%, #f5f8ff 100%);
+    border: 1px solid #e7ecf7; border-radius: 16px; padding: 16px 20px;
+    box-shadow: 0 2px 10px rgba(67,97,238,0.06);
+    transition: transform .15s ease, box-shadow .15s ease;
+}}
+[data-testid="stMetric"]:hover, [data-testid="metric-container"]:hover {{
+    transform: translateY(-3px); box-shadow: 0 8px 20px rgba(67,97,238,0.14);
+}}
+[data-testid="stMetricLabel"] p {{ font-weight: 600; color: #6b7280; font-size: .82rem; }}
+[data-testid="stMetricValue"] {{ font-weight: 800; color: {INK}; letter-spacing: -0.5px; }}
+[data-testid="stMetricDelta"] {{ font-size: 0.82rem; }}
+hr {{ margin: 1.4rem 0 1.2rem; border: none; border-top: 1px solid #e9edf5; }}
+[data-testid="stDeployButton"] {{ display: none !important; }}
+[data-testid="stElementToolbar"] {{ display: none; }}
+[data-testid="stSidebar"] {{ background: #fbfcfe; border-right: 1px solid #eceff5; }}
+[data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; }}
+button[data-baseweb="tab"] p {{ font-size: 1.0rem !important; font-weight: 700 !important; }}
 </style>
 """, unsafe_allow_html=True)
 

@@ -24,21 +24,42 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
 
-st.markdown("""
+INK = "#1a1a2e"; PRIMARY = "#4361ee"; SECONDARY = "#7209b7"; PINK = "#f72585"
+st.markdown(f"""
 <style>
-/* TV 최적화: 메트릭 카드 크게 */
-[data-testid="metric-container"] {
-    background: #f8f9fa; border: 1px solid #e9ecef;
-    border-radius: 12px; padding: 16px 24px;
-}
-[data-testid="stMetricLabel"]  { font-size: 1.05rem !important; font-weight: 600 !important; }
-[data-testid="stMetricValue"]  { font-size: 2.1rem  !important; font-weight: 700 !important; color: #1a1a2e !important; }
-[data-testid="stMetricDelta"]  { font-size: 0.95rem !important; }
-.section-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 6px; color: #1a1a2e; }
-[data-testid="stDeployButton"] { display: none !important; }
-/* 탭 글씨 크게 */
-button[data-baseweb="tab"] p { font-size: 1.0rem !important; font-weight: 600 !important; }
-/* 사이드바 헤더/아이콘은 라우터(스내피즘.py) + st.navigation 에서 처리 */
+html, body, [class*="css"], [data-testid="stAppViewContainer"] {{
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
+                 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+}}
+[data-testid="stAppViewContainer"] .main .block-container {{
+    padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1500px;
+}}
+h1 {{ font-weight: 800 !important; letter-spacing: -0.5px; color: {INK}; }}
+.section-title {{
+    font-size: 1.15rem; font-weight: 700; color: {INK};
+    margin: 6px 0 12px; padding-left: 12px; border-left: 4px solid {PRIMARY}; line-height: 1.4;
+}}
+.section-title.purple {{ border-left-color: {SECONDARY}; }}
+.section-title.pink   {{ border-left-color: {PINK}; }}
+/* KPI 카드 (TV 가독성 위해 값 글씨 크게 유지) */
+[data-testid="stMetric"], [data-testid="metric-container"] {{
+    background: linear-gradient(135deg, #ffffff 0%, #f5f8ff 100%);
+    border: 1px solid #e7ecf7; border-radius: 16px; padding: 16px 24px;
+    box-shadow: 0 2px 10px rgba(67,97,238,0.06);
+    transition: transform .15s ease, box-shadow .15s ease;
+}}
+[data-testid="stMetric"]:hover, [data-testid="metric-container"]:hover {{
+    transform: translateY(-3px); box-shadow: 0 8px 20px rgba(67,97,238,0.14);
+}}
+[data-testid="stMetricLabel"] p {{ font-size: 1.0rem !important; font-weight: 600 !important; color: #6b7280; }}
+[data-testid="stMetricValue"] {{ font-size: 2.0rem !important; font-weight: 800 !important; color: {INK} !important; letter-spacing: -0.5px; }}
+[data-testid="stMetricDelta"] {{ font-size: 0.9rem !important; }}
+hr {{ margin: 1.4rem 0 1.2rem; border: none; border-top: 1px solid #e9edf5; }}
+[data-testid="stDeployButton"] {{ display: none !important; }}
+[data-testid="stElementToolbar"] {{ display: none; }}
+[data-testid="stSidebar"] {{ background: #fbfcfe; border-right: 1px solid #eceff5; }}
+[data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; }}
+button[data-baseweb="tab"] p {{ font-size: 1.0rem !important; font-weight: 700 !important; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -303,8 +324,11 @@ def load_ip_drilldown(ip_name: str, start_date, end_date) -> pd.DataFrame:
     """특정 IP + 날짜 범위의 프레임별 상세 데이터.
     DuckDB on master_photoism.parquet (필터 후 소량 로드).
     """
-    import duckdb
     if not PARQ_FILE.exists():
+        return pd.DataFrame()
+    try:
+        import duckdb
+    except Exception:
         return pd.DataFrame()
     parq = str(PARQ_FILE).replace("\\", "/")
     safe_ip = ip_name.replace("'", "''")

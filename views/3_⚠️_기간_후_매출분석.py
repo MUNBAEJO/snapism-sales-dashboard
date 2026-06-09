@@ -20,13 +20,28 @@ sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))
 from guide_content import render_guide
 st.markdown("""
 <style>
-[data-testid="metric-container"] {
-    background:#fff3cd; border:1px solid #ffc107;
-    border-radius:10px; padding:12px 20px;
+html, body, [class*="css"], [data-testid="stAppViewContainer"] {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
 }
-.section-title { font-size:1.05rem; font-weight:600; margin-bottom:4px; }
-[data-testid="stDeployButton"] { display:none !important; }
-/* 사이드바 헤더/아이콘은 라우터(스내피즘.py) + st.navigation 에서 처리 */
+[data-testid="stAppViewContainer"] .main .block-container { padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1500px; }
+h1 { font-weight: 800 !important; letter-spacing: -0.5px; color: #1a1a2e; }
+.section-title { font-size: 1.12rem; font-weight: 700; color: #1a1a2e; margin: 6px 0 12px; padding-left: 12px; border-left: 4px solid #f59e0b; line-height: 1.4; }
+/* 경고 톤 KPI 카드 (종료일 초과 알림 페이지) */
+[data-testid="stMetric"], [data-testid="metric-container"] {
+    background: linear-gradient(135deg, #fffdf5 0%, #fff8e6 100%);
+    border: 1px solid #ffe3a3; border-radius: 16px; padding: 16px 20px;
+    box-shadow: 0 2px 10px rgba(245,158,11,0.08);
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+[data-testid="stMetric"]:hover, [data-testid="metric-container"]:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(245,158,11,0.16); }
+[data-testid="stMetricLabel"] p { font-weight: 600; color: #92722a; font-size: .82rem; }
+[data-testid="stMetricValue"] { font-weight: 800; color: #1a1a2e; letter-spacing: -0.5px; }
+[data-testid="stMetricDelta"] { font-size: 0.82rem; }
+hr { margin: 1.4rem 0 1.2rem; border: none; border-top: 1px solid #e9edf5; }
+[data-testid="stDeployButton"] { display: none !important; }
+[data-testid="stElementToolbar"] { display: none; }
+[data-testid="stSidebar"] { background: #fbfcfe; border-right: 1px solid #eceff5; }
+[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 

@@ -185,8 +185,12 @@ def load_sales_detail(group_col, start_date, end_date,
                       ip_list=None, country="전체", store="전체",
                       brand="전체", daebun="전체"):
     """전체 parquet에서 세부 판매 항목(프레임/테마 등) DuckDB on-demand 집계."""
-    import duckdb
     if group_col not in DETAIL_DIMS.values() or not PARQUET_FILE.exists():
+        return pd.DataFrame()
+    try:
+        import duckdb
+    except Exception:
+        # DuckDB 초기화 실패(드물게 동시 초기화 충돌 등) 시 이 섹션만 건너뜀
         return pd.DataFrame()
     parq = str(PARQUET_FILE).replace("\\", "/")
 
