@@ -202,16 +202,6 @@ def load_sales_detail(group_col, start_date, end_date,
         "LOWER(CAST(\"취소 여부\" AS VARCHAR)) NOT IN ('true','1','yes')",
         "TRY_CAST(\"최종 결제 금액\" AS DOUBLE) >= 0",
     ]
-    # 이상치 제외: 행별 KRW 환산액이 비정상적으로 큰 행(입력 오류) 차단
-    _exr = load_exchange_rates()
-    _rc = ("CASE COALESCE(\"결제 단위\",'KRW') "
-           + " ".join(f"WHEN '{c}' THEN {float(r)}" for c, r in _exr.items() if c != "KRW" and r)
-           + " ELSE 1 END")
-    where += [
-        f"COALESCE(TRY_CAST(\"최종 결제 금액\" AS DOUBLE),0)*({_rc}) <= 1000000",
-        f"COALESCE(TRY_CAST(\"서비스코인\"     AS DOUBLE),0)*({_rc}) <= 1000000",
-        f"COALESCE(TRY_CAST(\"쿠폰 할인 금액\" AS DOUBLE),0)*({_rc}) <= 1000000",
-    ]
     if ip_list:
         ins = ",".join(f"'{esc(x)}'" for x in ip_list)
         where.append(f"CAST(\"타이틀명\" AS VARCHAR) IN ({ins})")
@@ -234,7 +224,10 @@ def load_sales_detail(group_col, start_date, end_date,
                 LOWER(COALESCE(CAST("국가코드" AS VARCHAR), '')) AS "국가코드",
                 SUM(TRY_CAST("최종 결제 금액" AS DOUBLE)) AS "최종 결제 금액",
                 SUM(TRY_CAST("쿠폰 할인 금액" AS DOUBLE)) AS "쿠폰 할인 금액",
-                SUM(TRY_CAST("서비스코인" AS DOUBLE))     AS "서비스코인",
+                SUM(CASE WHEN TRY_CAST("서비스코인" AS DOUBLE) > TRY_CAST("상품총액" AS DOUBLE)
+                              AND TRY_CAST("상품총액" AS DOUBLE) > 0
+                         THEN TRY_CAST("상품총액" AS DOUBLE)
+                         ELSE COALESCE(TRY_CAST("서비스코인" AS DOUBLE), 0) END) AS "서비스코인",
                 COUNT(*) AS "건수"
             FROM read_parquet('{parq}')
             WHERE {where_sql}
