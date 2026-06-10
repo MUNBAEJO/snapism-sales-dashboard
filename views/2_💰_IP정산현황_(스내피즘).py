@@ -15,6 +15,7 @@ from update_rates import get_rates_for_date, get_effective_date
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
+import data_io
 
 BASE_DIR    = Path(__file__).parent.parent
 MASTER      = BASE_DIR / "data" / "master.csv"
@@ -107,11 +108,11 @@ def save_mapping(ip_name: str, frames: list):
         json.dump(mapping, f, ensure_ascii=False, indent=2)
 
 
-@st.cache_data(ttl=30)
-def load_sales():
+@st.cache_data(ttl=900)
+def _load_sales(_v):
     if not MASTER.exists():
         return pd.DataFrame()
-    df = pd.read_csv(MASTER, encoding="utf-8-sig", low_memory=False)
+    df = data_io.read_master(MASTER)  # parquet 우선(없으면 csv)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df["결제일시"] = pd.to_datetime(df["결제일시"], format="%Y.%m.%d %H:%M", errors="coerce")
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
@@ -124,6 +125,10 @@ def load_sales():
     df["쿠폰KRW"]  = (df["쿠폰 할인 금액"]  * df["환율"]).round(0).astype(int)
     df["프레임 이름"] = df["프레임 이름"].astype(str).str.strip().replace("nan", "")
     return df
+
+
+def load_sales():
+    return _load_sales(data_io.file_version(MASTER))
 
 
 @st.cache_data(ttl=3600)

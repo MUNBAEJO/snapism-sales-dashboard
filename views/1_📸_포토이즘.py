@@ -765,71 +765,80 @@ with tab_ip:
                     "여러 개 선택 시 합산·비교 분석도 제공됩니다.")
 
     st.divider()
-    with st.container(border=True):
-        st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 테마)</div>',
-                    unsafe_allow_html=True)
-        st.caption("전체 거래 데이터에서 프레임·테마 등 세부 항목을 분류별로 집계합니다. "
-                   "현재 사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용됩니다.")
 
-        dcol1, dcol2 = st.columns([1, 2])
-        with dcol1:
-            sel_dim_label = st.selectbox("분류 기준", list(DETAIL_DIMS.keys()), key="detail_dim")
-        with dcol2:
-            search_kw = st.text_input(
-                "🔍 검색어 (항목명 일부)", key="detail_search",
-                placeholder="예: 메인, 화이트, ENHYPEN, EVENT …",
-            )
+    # @st.fragment: 검색어/분류기준 입력은 이 조각만 재실행 → 탭 유지·익스팬더 유지·즉시 반응.
+    # 사이드바 필터 값은 인자로 받아, 사이드바 변경 시에만 전체 재실행되며 최신값으로 갱신됨.
+    @st.fragment
+    def _detail_search(date_range, selected_ips, selected_country,
+                       selected_store, selected_brand, selected_대분류):
+        with st.container(border=True):
+            st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 테마)</div>',
+                        unsafe_allow_html=True)
+            st.caption("전체 거래 데이터에서 프레임·테마 등 세부 항목을 분류별로 집계합니다. "
+                       "현재 사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용됩니다.")
 
-        if len(date_range) == 2:
-            detail_df = load_sales_detail(
-                DETAIL_DIMS[sel_dim_label], date_range[0], date_range[1],
-                ip_list=selected_ips or None, country=selected_country,
-                store=selected_store, brand=selected_brand, daebun=selected_대분류,
-            )
-        else:
-            detail_df = pd.DataFrame()
+            dcol1, dcol2 = st.columns([1, 2])
+            with dcol1:
+                sel_dim_label = st.selectbox("분류 기준", list(DETAIL_DIMS.keys()), key="detail_dim")
+            with dcol2:
+                search_kw = st.text_input(
+                    "🔍 검색어 (항목명 일부)", key="detail_search",
+                    placeholder="예: 메인, 화이트, ENHYPEN, EVENT …",
+                )
 
-        if detail_df.empty:
-            st.info("해당 조건의 세부 항목 데이터가 없습니다.")
-        else:
-            if search_kw.strip():
-                detail_df = detail_df[
-                    detail_df["항목"].astype(str).str.contains(search_kw.strip(), case=False, na=False)
-                ]
-            if detail_df.empty:
-                st.warning(f"'{search_kw}' 검색 결과가 없습니다.")
+            if len(date_range) == 2:
+                detail_df = load_sales_detail(
+                    DETAIL_DIMS[sel_dim_label], date_range[0], date_range[1],
+                    ip_list=selected_ips or None, country=selected_country,
+                    store=selected_store, brand=selected_brand, daebun=selected_대분류,
+                )
             else:
-                d_rev = int(detail_df["매출"].sum())
-                d_cnt = int(detail_df["건수"].sum())
-                dm1, dm2, dm3 = st.columns(3)
-                dm1.metric("검색 항목 수", f"{len(detail_df):,}개")
-                dm2.metric("합계 매출", fmt_krw(d_rev))
-                dm3.metric("합계 건수", f"{d_cnt:,}건")
+                detail_df = pd.DataFrame()
 
-                top_n = detail_df.nlargest(20, "매출").sort_values("매출")
-                fig_d = px.bar(top_n, x="매출", y="항목", orientation="h",
-                               color="매출", color_continuous_scale="Tealgrn", custom_data=["건수"])
-                fig_d.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-                fig_d.update_layout(height=max(320, len(top_n) * 26 + 60), coloraxis_showscale=False,
-                                    xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-                st.plotly_chart(fig_d, use_container_width=True)
-                if len(detail_df) > 20:
-                    st.caption(f"※ 차트는 매출 TOP 20만 표시 (전체 {len(detail_df):,}개는 아래 표·CSV 참고)")
+            if detail_df.empty:
+                st.info("해당 조건의 세부 항목 데이터가 없습니다.")
+            else:
+                if search_kw.strip():
+                    detail_df = detail_df[
+                        detail_df["항목"].astype(str).str.contains(search_kw.strip(), case=False, na=False)
+                    ]
+                if detail_df.empty:
+                    st.warning(f"'{search_kw}' 검색 결과가 없습니다.")
+                else:
+                    d_rev = int(detail_df["매출"].sum())
+                    d_cnt = int(detail_df["건수"].sum())
+                    dm1, dm2, dm3 = st.columns(3)
+                    dm1.metric("검색 항목 수", f"{len(detail_df):,}개")
+                    dm2.metric("합계 매출", fmt_krw(d_rev))
+                    dm3.metric("합계 건수", f"{d_cnt:,}건")
 
-                tbl = detail_df.copy()
-                tbl.insert(0, "순위", range(1, len(tbl) + 1))
-                tbl["평균단가"] = (tbl["매출"] / tbl["건수"].replace(0, 1)).round(0).astype("int64")
-                tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
-                tbl["매출"]     = tbl["매출"].apply(fmt_krw)
-                tbl["평균단가"] = tbl["평균단가"].apply(fmt_krw)
-                tbl = tbl.rename(columns={"항목": sel_dim_label})
-                st.dataframe(tbl, use_container_width=True, height=480, hide_index=True)
+                    top_n = detail_df.nlargest(20, "매출").sort_values("매출")
+                    fig_d = px.bar(top_n, x="매출", y="항목", orientation="h",
+                                   color="매출", color_continuous_scale="Tealgrn", custom_data=["건수"])
+                    fig_d.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+                    fig_d.update_layout(height=max(320, len(top_n) * 26 + 60), coloraxis_showscale=False,
+                                        xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
+                    st.plotly_chart(fig_d, use_container_width=True)
+                    if len(detail_df) > 20:
+                        st.caption(f"※ 차트는 매출 TOP 20만 표시 (전체 {len(detail_df):,}개는 아래 표·CSV 참고)")
 
-                csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
-                    index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                st.download_button("세부 항목 CSV 다운로드", csv_d,
-                                   f"photoism_detail_{DETAIL_DIMS[sel_dim_label]}.csv", "text/csv",
-                                   key="detail_csv")
+                    tbl = detail_df.copy()
+                    tbl.insert(0, "순위", range(1, len(tbl) + 1))
+                    tbl["평균단가"] = (tbl["매출"] / tbl["건수"].replace(0, 1)).round(0).astype("int64")
+                    tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
+                    tbl["매출"]     = tbl["매출"].apply(fmt_krw)
+                    tbl["평균단가"] = tbl["평균단가"].apply(fmt_krw)
+                    tbl = tbl.rename(columns={"항목": sel_dim_label})
+                    st.dataframe(tbl, use_container_width=True, height=480, hide_index=True)
+
+                    csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
+                        index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                    st.download_button("세부 항목 CSV 다운로드", csv_d,
+                                       f"photoism_detail_{DETAIL_DIMS[sel_dim_label]}.csv", "text/csv",
+                                       key="detail_csv")
+
+    _detail_search(date_range, selected_ips, selected_country,
+                   selected_store, selected_brand, selected_대분류)
 
 # ════════════ 탭 4: 시간대 · 데이터 ════════════
 with tab_etc:

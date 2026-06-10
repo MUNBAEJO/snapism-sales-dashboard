@@ -4,9 +4,13 @@
 """
 import json
 import re
+import sys
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta, date
+
+sys.path.insert(0, str(Path(__file__).parent))
+import data_io  # parquet 우선 로딩 헬퍼
 
 BASE_DIR     = Path(__file__).parent
 DATA_DIR     = BASE_DIR / "data"
@@ -101,7 +105,7 @@ def load_snapism(ip_only: bool = True) -> pd.DataFrame:
     cfg   = load_config()
     rates = cfg.get("exchange_rates", {})
 
-    df = pd.read_csv(MASTER_SNAP, encoding="utf-8-sig", low_memory=False)
+    df = data_io.read_master(MASTER_SNAP)  # parquet 우선(없으면 csv)
 
     # 취소 제거
     df = df[df["취소 여부"].astype(str).str.lower() != "true"].copy()
@@ -151,7 +155,7 @@ def load_photoism(ip_only: bool = True) -> pd.DataFrame:
     rates = cfg.get("exchange_rates", {})
     alias = load_frame_alias()
 
-    ph = pd.read_csv(MASTER_PHOTO, encoding="utf-8-sig", low_memory=False)
+    ph = data_io.read_master(MASTER_PHOTO)  # 116MB parquet 우선(2GB csv 회피)
 
     # 취소 제거
     ph = ph[ph["취소 여부"].astype(str).str.lower() != "true"].copy()

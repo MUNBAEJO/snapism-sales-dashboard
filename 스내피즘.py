@@ -111,6 +111,10 @@ components.html("""
 """, height=0)
 
 # ── 공통 Plotly 테마 (전 페이지 차트 베이스 통일) ──
+# plotly 가 템플릿 검증 시 pandas(pd.Series)를 lazy import 하는데, Streamlit
+# 멀티스레드 환경에서 pandas 초기화와 경합하면 'partially initialized module
+# pandas' 오류가 난다. 템플릿을 만지기 전에 pandas 를 완전히 import 해 둔다.
+import pandas as _pd  # noqa: F401
 import plotly.io as pio
 import plotly.graph_objects as _go
 pio.templates["premium"] = _go.layout.Template(layout=dict(

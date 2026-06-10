@@ -18,6 +18,7 @@ from jira_ip_dates import fetch_ip_dates
 import os as _os
 sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 from guide_content import render_guide
+import data_io
 st.markdown("""
 <style>
 html, body, [class*="css"], [data-testid="stAppViewContainer"] {
@@ -59,11 +60,11 @@ def load_jira():
     return fetch_ip_dates(brand="all", force_refresh=False)
 
 
-@st.cache_data(ttl=60)
-def load_snap():
+@st.cache_data(ttl=900)
+def _load_snap(_v):
     if not SNAP_MASTER.exists():
         return pd.DataFrame()
-    df = pd.read_csv(SNAP_MASTER, encoding="utf-8-sig", low_memory=False)
+    df = data_io.read_master(SNAP_MASTER)  # parquet 우선(없으면 csv)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true","1","yes"])
     for col in ["KRW환산금액", "쿠폰KRW"]:
@@ -76,6 +77,10 @@ def load_snap():
     df["건수"]       = 1   # 개별 거래 행 → 1건
     df["타이틀명_비교"] = df["프레임 이름"].fillna("").astype(str) if "프레임 이름" in df.columns else ""
     return df[~df["취소 여부"]]
+
+
+def load_snap():
+    return _load_snap(data_io.file_version(SNAP_MASTER))
 
 
 @st.cache_data(ttl=60)
@@ -96,10 +101,11 @@ def load_photo():
                 break
             except Exception:
                 df = pd.DataFrame()
-    if df.empty and PHOTO_MASTER.exists():
-        df = pd.read_csv(PHOTO_MASTER, encoding="utf-8-sig", low_memory=False)
     if df.empty:
-        return df
+        # 최후 폴백인 2GB master_photoism.csv 직접 로드는 20~60초 멈춤을 유발하므로
+        # 읽지 않는다. (parquet 집계/전체가 모두 실패한 비정상 상황 → 빈 DF 반환,
+        #  집계 parquet 을 재생성하면 정상 복구됨)
+        return pd.DataFrame()
 
     # 날짜/취소 정리 후 취소 건 먼저 제거 (이후 연산 메모리 절감)
     df["날짜"] = pd.to_datetime(df["날짜"].astype("object"), errors="coerce").dt.date

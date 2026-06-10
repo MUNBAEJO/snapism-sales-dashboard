@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
+import data_io
 
 # (set_page_config / 상단메뉴 한글화는 라우터 스내피즘.py에서 처리)
 
@@ -125,12 +126,13 @@ def load_exchange_rates():
     return load_config().get("exchange_rates", {"KRW": 1})
 
 
-@st.cache_data(ttl=30)
-def load_data():
+@st.cache_data(ttl=900)
+def _load_data(_v):
+    # _v(파일 mtime)는 캐시 무효화용 — 데이터가 바뀌면 자동 재로딩
     if not MASTER_FILE.exists():
         return pd.DataFrame()
 
-    df = pd.read_csv(MASTER_FILE, encoding="utf-8-sig", low_memory=False)
+    df = data_io.read_master(MASTER_FILE)  # parquet 우선(없으면 csv)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df["결제일시"] = pd.to_datetime(df["결제일시"], format="%Y.%m.%d %H:%M", errors="coerce")
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
@@ -147,6 +149,10 @@ def load_data():
     df["총원화금액"] = df["최종 결제 금액"] + df["쿠폰 할인 금액"]  # 현지 통화 기준 합
 
     return df
+
+
+def load_data():
+    return _load_data(data_io.file_version(MASTER_FILE))
 
 
 def paid_sales(df):
@@ -548,65 +554,73 @@ with tab_cat:
                 },
             )
 
-    with st.container(border=True):
-        st.markdown('<div class="sub-label">📦 카테고리별 상품 순위</div>', unsafe_allow_html=True)
-        avail_cats = sorted(all_txns["상품 카테고리"].dropna().unique().tolist())
-        default_cat = "미니스티커" if "미니스티커" in avail_cats else (avail_cats[0] if avail_cats else None)
+    # @st.fragment: 카테고리 선택은 이 조각만 재실행 → 탭 유지·즉시 반응
+    @st.fragment
+    def _category_rank(all_txns):
+        with st.container(border=True):
+            st.markdown('<div class="sub-label">📦 카테고리별 상품 순위</div>', unsafe_allow_html=True)
+            avail_cats = sorted(all_txns["상품 카테고리"].dropna().unique().tolist())
+            default_cat = "미니스티커" if "미니스티커" in avail_cats else (avail_cats[0] if avail_cats else None)
 
-        col_pcat, _ = st.columns([2, 8])
-        with col_pcat:
-            pick_cat = st.selectbox(
-                "카테고리 선택", avail_cats,
-                index=avail_cats.index(default_cat) if default_cat in avail_cats else 0,
-                key="prod_rank_cat", label_visibility="collapsed")
+            col_pcat, _ = st.columns([2, 8])
+            with col_pcat:
+                pick_cat = st.selectbox(
+                    "카테고리 선택", avail_cats,
+                    index=avail_cats.index(default_cat) if default_cat in avail_cats else 0,
+                    key="prod_rank_cat", label_visibility="collapsed")
 
-        prod_rank_df = (
-            all_txns[all_txns["상품 카테고리"] == pick_cat]
-            .groupby("상품 이름")
-            .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
-            .reset_index().sort_values("매출", ascending=False)
-        )
+            prod_rank_df = (
+                all_txns[all_txns["상품 카테고리"] == pick_cat]
+                .groupby("상품 이름")
+                .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+                .reset_index().sort_values("매출", ascending=False)
+            )
 
-        if prod_rank_df.empty:
-            st.info("해당 카테고리의 데이터가 없습니다.")
-        else:
-            col_pr_chart, col_pr_tbl = st.columns([6, 4])
-            with col_pr_chart:
-                top_prod = prod_rank_df.head(15).sort_values("매출")
-                fig_pr = px.bar(top_prod, x="매출", y="상품 이름", orientation="h",
-                                color="매출", color_continuous_scale="Oranges", custom_data=["건수"])
-                fig_pr.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-                fig_pr.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
-                style_fig(fig_pr, max(300, len(top_prod) * 36 + 60), legend=False)
-                st.plotly_chart(fig_pr, use_container_width=True)
-            with col_pr_tbl:
-                pr = prod_rank_df.head(15).reset_index(drop=True)
-                psum = prod_rank_df["매출"].sum()
-                pr["비중"] = (pr["매출"] / psum) if psum else 0
-                pr.index = pr.index + 1
-                st.dataframe(
-                    pr, use_container_width=True, height=max(300, len(top_prod) * 36 + 60),
-                    column_config={
-                        "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
-                        "건수": st.column_config.NumberColumn("건수", format="localized"),
-                        "비중": st.column_config.ProgressColumn(
-                            "비중", format="percent", min_value=0,
-                            max_value=float(pr["비중"].max()) if len(pr) else 1.0),
-                    },
-                )
-            if len(prod_rank_df) > 15:
-                with st.expander(f"📋 전체 보기 ({len(prod_rank_df):,}개)"):
-                    full = prod_rank_df.reset_index(drop=True)
-                    full.index = full.index + 1
+            if prod_rank_df.empty:
+                st.info("해당 카테고리의 데이터가 없습니다.")
+            else:
+                col_pr_chart, col_pr_tbl = st.columns([6, 4])
+                with col_pr_chart:
+                    top_prod = prod_rank_df.head(15).sort_values("매출")
+                    fig_pr = px.bar(top_prod, x="매출", y="상품 이름", orientation="h",
+                                    color="매출", color_continuous_scale="Oranges", custom_data=["건수"])
+                    fig_pr.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+                    fig_pr.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
+                    style_fig(fig_pr, max(300, len(top_prod) * 36 + 60), legend=False)
+                    st.plotly_chart(fig_pr, use_container_width=True)
+                with col_pr_tbl:
+                    pr = prod_rank_df.head(15).reset_index(drop=True)
+                    psum = prod_rank_df["매출"].sum()
+                    pr["비중"] = (pr["매출"] / psum) if psum else 0
+                    pr.index = pr.index + 1
                     st.dataframe(
-                        full, use_container_width=True, height=400,
+                        pr, use_container_width=True, height=max(300, len(top_prod) * 36 + 60),
                         column_config={
                             "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
                             "건수": st.column_config.NumberColumn("건수", format="localized"),
+                            "비중": st.column_config.ProgressColumn(
+                                "비중", format="percent", min_value=0,
+                                max_value=float(pr["비중"].max()) if len(pr) else 1.0),
                         },
                     )
+                if len(prod_rank_df) > 15:
+                    with st.expander(f"📋 전체 보기 ({len(prod_rank_df):,}개)"):
+                        full = prod_rank_df.reset_index(drop=True)
+                        full.index = full.index + 1
+                        st.dataframe(
+                            full, use_container_width=True, height=400,
+                            column_config={
+                                "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
+                                "건수": st.column_config.NumberColumn("건수", format="localized"),
+                            },
+                        )
 
-    with st.expander("🔍 IP별 상품 카테고리 상세", expanded=(selected_frame != "전체")):
+    _category_rank(all_txns)
+
+    # @st.fragment: IP 선택은 이 조각만 재실행 → 익스팬더 유지·탭 유지
+    @st.fragment
+    def _ip_category_detail(all_txns, selected_frame):
+      with st.expander("🔍 IP별 상품 카테고리 상세", expanded=(selected_frame != "전체")):
         frame_src = all_txns[all_txns["프레임 이름"].notna() & (all_txns["프레임 이름"] != "nan")]
         ip_options = ["전체"] + sorted(frame_src["프레임 이름"].unique().tolist())
         col_ip1, _ = st.columns([2, 8])
@@ -645,6 +659,8 @@ with tab_cat:
                         "건수": st.column_config.NumberColumn("건수", format="localized"),
                     },
                 )
+
+    _ip_category_detail(all_txns, selected_frame)
 
 # ════════════ 탭 4: 시간대 · 데이터 ════════════
 with tab_etc:

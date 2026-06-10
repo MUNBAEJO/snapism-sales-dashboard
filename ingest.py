@@ -144,6 +144,13 @@ def ingest():
     combined.to_csv(MASTER_FILE, index=False, encoding="utf-8-sig")
     print(f"\n[완료] 누적 {len(combined):,}건 저장 완료  ->  data/master.csv")
 
+    # 대시보드 로딩 가속용 parquet 동시 생성 (master.csv 원본 그대로)
+    try:
+        import data_io
+        print(data_io.rebuild_parquet(MASTER_FILE))
+    except Exception as e:
+        print(f"[경고] master.parquet 생성 실패(대시보드는 csv 폴백): {e}")
+
 
 if __name__ == "__main__":
     ingest()

@@ -25,6 +25,9 @@ OWNER_EMAILS = {"ansqo34@seobuk.kr"}
 # (선택) 도메인 통째 허용. 비우면 승인제만. 예: "seobuk.kr"
 ALLOWED_DOMAIN = ""
 
+# 로그인 유지 시간 (초). 이 시간이 지나면 강제 로그아웃 → 재로그인.
+SESSION_MAX_SECONDS = 2 * 60 * 60  # 2시간
+
 
 # ── 승인 계정 스토어 ──────────────────────────────────────────────
 def _load_users() -> dict:
@@ -68,6 +71,38 @@ def _add_pending(email: str) -> None:
     _save_users(u)
 
 
+def _user_claim(key: str):
+    """st.user 에서 OIDC 클레임 안전 추출 (.get / [] 순서 시도)."""
+    u = getattr(st, "user", None)
+    if u is None:
+        return None
+    try:
+        v = u.get(key)
+        if v is not None:
+            return v
+    except Exception:
+        pass
+    try:
+        return u[key]
+    except Exception:
+        return None
+
+
+def _enforce_session_timeout() -> None:
+    """Google id_token 발급시각(iat) 기준 SESSION_MAX_SECONDS 경과 시 강제 로그아웃."""
+    iat = _user_claim("iat")
+    if not iat:
+        return
+    try:
+        import time
+        if time.time() - float(iat) > SESSION_MAX_SECONDS:
+            _log_access((st.user.email or "").strip().lower(), "session-expired")
+            st.logout()
+            st.stop()
+    except (TypeError, ValueError):
+        pass
+
+
 def _log_access(email: str, event: str) -> None:
     try:
         ACCESS_LOG_PATH.parent.mkdir(exist_ok=True)
@@ -80,37 +115,111 @@ def _log_access(email: str, event: str) -> None:
 
 # ── 화면 ──────────────────────────────────────────────────────────
 def _render_login_page() -> None:
-    st.markdown(
-        """
-        <style>
-        [data-testid="stSidebar"], [data-testid="stSidebarNav"] { display:none !important; }
-        [data-testid="stHeader"] { background: transparent; }
-        .login-card {
-            max-width: 420px; margin: 9vh auto 0; padding: 40px 38px 34px;
-            background:#fff; border:1px solid #e5e7eb; border-radius:16px;
-            box-shadow:0 8px 30px rgba(20,30,60,.06); text-align:center;
-            font-family:'Pretendard','Malgun Gothic',sans-serif;
-        }
-        .login-card .logo { font-size:44px; }
-        .login-card h1 { font-size:1.35rem; font-weight:800; color:#1a1a2e; margin:10px 0 4px; }
-        .login-card p  { color:#64748b; font-size:.92rem; line-height:1.6; margin:0 0 6px; }
-        </style>
-        <div class="login-card">
-          <div class="logo">📊</div>
-          <h1>CMS 매출 대시보드</h1>
-          <p>허용된 <b>Google 계정</b>만 접근할 수 있어요.<br>회사 계정으로 로그인해 주세요.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    import urllib.parse
+    g_svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'>"
+        "<path fill='#EA4335' d='M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z'/>"
+        "<path fill='#4285F4' d='M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z'/>"
+        "<path fill='#FBBC05' d='M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z'/>"
+        "<path fill='#34A853' d='M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z'/></svg>"
     )
-    _, mid, _ = st.columns([1, 1.2, 1])
-    with mid:
-        st.button(
-            "  Google 계정으로 로그인  ",
-            type="primary",
-            use_container_width=True,
-            on_click=st.login,
-            args=["google"],
+    g_uri = "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(g_svg)
+
+    css = """
+    <style>
+    @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
+    [data-testid="stSidebar"], [data-testid="stSidebarNav"], [data-testid="stHeader"], [data-testid="stToolbar"] { display:none !important; }
+    .stApp { background:#eef1f6; font-family:'Pretendard','Malgun Gothic',sans-serif; }
+    /* 화면 정중앙 정렬 */
+    section[data-testid="stMain"] { display:flex; flex-direction:column; justify-content:center; align-items:center; min-height:100vh; }
+    .block-container { width:100% !important; max-width: 1220px !important; padding: 3vh 1.4rem !important; }
+    section[data-testid="stMain"] [data-testid="stVerticalBlock"] { width:100% !important; }
+
+    /* 2단 카드 */
+    [data-testid="stHorizontalBlock"] {
+        width:100% !important; min-height:540px;
+        gap:0 !important; background:#fff; border-radius:26px; overflow:hidden;
+        box-shadow:0 34px 80px -28px rgba(30,45,100,.45); border:1px solid #e9ecf3;
+        align-items:stretch !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child {
+        background:linear-gradient(155deg,#3b62f6 0%, #5840ee 55%, #7a35e0 100%);
+        padding:60px 56px !important;
+        display:flex !important; flex-direction:column !important; justify-content:center !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
+        padding:66px 58px 50px !important;
+        display:flex !important; flex-direction:column !important; justify-content:center !important;
+    }
+
+    /* 좌 패널 */
+    .lp-badge { width:70px;height:70px;border-radius:20px;background:rgba(255,255,255,.16);
+        border:1px solid rgba(255,255,255,.28);
+        display:flex;align-items:center;justify-content:center;font-size:34px;margin-bottom:30px; }
+    .lp-title { font-size:2.2rem;font-weight:800;line-height:1.16;letter-spacing:-.5px;color:#fff;margin:0 0 16px; }
+    .lp-desc { font-size:1rem;line-height:1.65;color:rgba(255,255,255,.84);margin:0 0 38px; }
+    .lp-feat { display:flex;align-items:flex-start;gap:14px;margin:18px 0; }
+    .lp-feat .ic { width:36px;height:36px;flex:0 0 36px;border-radius:11px;background:rgba(255,255,255,.16);
+        display:flex;align-items:center;justify-content:center;font-size:17px; }
+    .lp-feat b { display:block;font-size:1rem;font-weight:700;color:#fff;margin-bottom:2px; }
+    .lp-feat span { font-size:.85rem;color:rgba(255,255,255,.74); }
+
+    /* 우 패널 */
+    .rp-label { color:#4361ee;font-weight:800;font-size:.86rem;letter-spacing:.2px;margin-bottom:15px; }
+    .rp-title { font-size:2rem;font-weight:800;color:#16182e;margin:0 0 10px; }
+    .rp-sub { color:#6b7390;font-size:.98rem;line-height:1.6;margin:0; }
+    .rp-note { background:#f4f6fb;border:1px solid #e7ebf4;border-radius:13px;
+        padding:15px 17px;color:#5c6480;font-size:.86rem;line-height:1.62;margin-top:8px; }
+    .rp-note b { color:#3a3f5c; }
+    .rp-foot { color:#a6acbe;font-size:.78rem;margin-top:16px; }
+
+    /* Google 버튼 */
+    div[data-testid="stButton"] > button {
+        background:#fff !important;color:#3c4043 !important;border:1px solid #dadce0 !important;
+        border-radius:13px !important;font-family:'Pretendard','Malgun Gothic',sans-serif !important;
+        font-weight:700 !important;font-size:1.05rem !important;padding:15px 18px !important;
+        box-shadow:0 1px 2px rgba(20,30,60,.05) !important;
+        transition:box-shadow .14s,border-color .14s,transform .04s !important;
+    }
+    div[data-testid="stButton"] > button:hover { border-color:#c2c9d6 !important;box-shadow:0 5px 16px -3px rgba(40,55,120,.22) !important; }
+    div[data-testid="stButton"] > button:active { transform:translateY(1px) !important; }
+    div[data-testid="stButton"] > button::before {
+        content:"";display:inline-block;width:21px;height:21px;margin-right:11px;vertical-align:-5px;
+        background:url("__GG__") center/contain no-repeat;
+    }
+    </style>
+    """.replace("__GG__", g_uri)
+    st.markdown(css, unsafe_allow_html=True)
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown(
+            """
+            <div class="lp-badge">📊</div>
+            <div class="lp-title">CMS 매출<br>대시보드</div>
+            <div class="lp-desc">스내피즘·포토이즘 매출을 한곳에서<br>집계·분석하는 내부 매출 분석 도구입니다.</div>
+            <div class="lp-feat"><div class="ic">🔒</div><div><b>구글 계정 인증</b><span>안전한 OAuth 로그인</span></div></div>
+            <div class="lp-feat"><div class="ic">✅</div><div><b>승인제 접근</b><span>관리자가 승인한 계정만 이용</span></div></div>
+            <div class="lp-feat"><div class="ic">📋</div><div><b>접속 로그</b><span>접속·행동 감사 기록</span></div></div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with right:
+        st.markdown(
+            """
+            <div class="rp-label">SEOBUK · 콘텐츠운영팀</div>
+            <div class="rp-title">로그인</div>
+            <div class="rp-sub">계속하려면 회사 구글 계정으로<br>로그인하세요.</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.button("Google로 로그인", use_container_width=True, on_click=st.login, args=["google"])
+        st.markdown(
+            """
+            <div class="rp-note">🔒 <b>승인된 계정만</b> 로그인됩니다. 처음 로그인하면 승인 대기로 접수되며, 관리자 승인 후 이용할 수 있어요.</div>
+            <div class="rp-foot">© SEOBUK · 콘텐츠운영팀</div>
+            """,
+            unsafe_allow_html=True,
         )
 
 
@@ -149,6 +258,9 @@ def require_login() -> str:
     if not getattr(st, "user", None) or not st.user.is_logged_in:
         _render_login_page()
         st.stop()
+
+    # 2시간 경과 세션은 강제 로그아웃
+    _enforce_session_timeout()
 
     email = (st.user.email or "").strip().lower()
     if not can_access(email):
