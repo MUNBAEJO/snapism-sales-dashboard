@@ -521,6 +521,109 @@ with tab_nat:
 
 # ════════════ 탭 3: 상품 카테고리 ════════════
 with tab_cat:
+    # ── 🎭 카테고리별 매출 (아티스트 / 캐릭터 / 기타) ──────────────
+    _CAT_EMOJI = {"아티스트": "🎤", "캐릭터": "🧸", "기타": "🎁"}
+    _CAT_COLOR = {"아티스트": PRIMARY, "캐릭터": SECONDARY, "기타": "#adb5bd"}
+    _CAT_ORDER = {"아티스트": 0, "캐릭터": 1, "기타": 2}
+    _cr_all = all_txns["카테고리"].astype(str).str.strip()
+    _cat_src = all_txns[all_txns["카테고리"].notna()
+                        & _cr_all.ne("") & _cr_all.ne("nan")].copy()
+    if not _cat_src.empty:
+        _cr = _cat_src["카테고리"].astype(str).str.strip()
+        _cat_src["_cat3"] = _cr.where(_cr.isin(["아티스트", "캐릭터"]), "기타")
+        catg = (_cat_src.groupby("_cat3")
+                .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+                .reset_index())
+        catg["_o"] = catg["_cat3"].map(_CAT_ORDER)
+        catg = catg.sort_values("_o")
+        cat_present = [c for c in ["아티스트", "캐릭터", "기타"] if c in set(catg["_cat3"])]
+
+        with st.container(border=True):
+            section("🎭 카테고리별 매출 (아티스트 · 캐릭터)")
+            _tot = int(catg["매출"].sum())
+            mcols = st.columns(len(catg))
+            for mc, (_, r) in zip(mcols, catg.iterrows()):
+                share = (r["매출"] / _tot * 100) if _tot else 0
+                mc.metric(f"{_CAT_EMOJI.get(r['_cat3'], '🎬')} {r['_cat3']}",
+                          fmt_krw(int(r["매출"])), f"{share:.1f}% · {int(r['건수']):,}건")
+            cc1, cc2 = st.columns([3, 2])
+            with cc1:
+                gb = catg.sort_values("매출")
+                figc = px.bar(gb, x="매출", y="_cat3", orientation="h", color="_cat3",
+                              color_discrete_map=_CAT_COLOR, custom_data=["건수"])
+                figc.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+                figc.update_layout(xaxis_tickformat=",", yaxis_title="")
+                style_fig(figc, 240, legend=False)
+                st.plotly_chart(figc, use_container_width=True)
+            with cc2:
+                figcp = px.pie(catg, values="매출", names="_cat3", hole=0.5,
+                               color="_cat3", color_discrete_map=_CAT_COLOR)
+                figcp.update_traces(sort=False, textposition="inside", texttemplate="%{percent}",
+                                    hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
+                style_fig(figcp, 240)
+                st.plotly_chart(figcp, use_container_width=True)
+            _etc = sorted(set(_cr[~_cr.isin(["아티스트", "캐릭터"])]))
+            if _etc:
+                st.caption("※ '기타' = " + " · ".join(_etc[:8])
+                           + (" 등" if len(_etc) > 8 else "") + " (이벤트·기획전 등)")
+
+        # 카테고리별 TOP 프레임(IP) — 구분 탭
+        with st.container(border=True):
+            st.markdown('<div class="sub-label">🎬 카테고리별 TOP 프레임(IP)</div>',
+                        unsafe_allow_html=True)
+            _ctabs = st.tabs([f"{_CAT_EMOJI[c]} {c}" for c in cat_present])
+            for _i, _c in enumerate(cat_present):
+                with _ctabs[_i]:
+                    _sub = _cat_src[_cat_src["_cat3"] == _c]
+                    _fr = (_sub[_sub["프레임 이름"].notna()
+                                & (_sub["프레임 이름"].astype(str).str.strip() != "")]
+                           .groupby("프레임 이름")
+                           .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+                           .reset_index().sort_values("매출", ascending=False))
+                    if _fr.empty:
+                        st.info("해당 카테고리의 프레임 데이터가 없습니다.")
+                        continue
+                    fm1, fm2, fm3 = st.columns(3)
+                    fm1.metric("매출", fmt_krw(int(_fr["매출"].sum())))
+                    fm2.metric("건수", f"{int(_fr['건수'].sum()):,}건")
+                    fm3.metric("프레임(IP) 수", f"{len(_fr):,}개")
+                    fcb, fct = st.columns([6, 4])
+                    with fcb:
+                        _top = _fr.head(15).sort_values("매출")
+                        figf = px.bar(_top, x="매출", y="프레임 이름", orientation="h",
+                                      color_discrete_sequence=[_CAT_COLOR.get(_c, "#999")],
+                                      custom_data=["건수"])
+                        figf.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+                        figf.update_layout(xaxis_tickformat=",", yaxis_title="")
+                        style_fig(figf, max(300, len(_top) * 32 + 60), legend=False)
+                        st.plotly_chart(figf, use_container_width=True)
+                    with fct:
+                        _ft = _fr.head(15).reset_index(drop=True)
+                        _fs = _fr["매출"].sum()
+                        _ft["비중"] = (_ft["매출"] / _fs) if _fs else 0
+                        _ft.index = _ft.index + 1
+                        st.dataframe(
+                            _ft, use_container_width=True, height=max(300, len(_top) * 32 + 60),
+                            column_config={
+                                "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
+                                "건수": st.column_config.NumberColumn("건수", format="localized"),
+                                "비중": st.column_config.ProgressColumn(
+                                    "비중", format="percent", min_value=0,
+                                    max_value=float(_ft["비중"].max()) if len(_ft) else 1.0)},
+                        )
+                    if len(_fr) > 15:
+                        with st.expander(f"📋 전체 보기 ({len(_fr):,}개)"):
+                            _full = _fr.reset_index(drop=True)
+                            _full.index = _full.index + 1
+                            st.dataframe(
+                                _full, use_container_width=True, height=400,
+                                column_config={
+                                    "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
+                                    "건수": st.column_config.NumberColumn("건수", format="localized")},
+                            )
+
+        st.divider()
+
     with st.container(border=True):
         section("🧩 상품 카테고리 분석", "pink")
         cat_bar_df = (
