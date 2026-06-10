@@ -14,6 +14,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
 
+import ip_classify  # IP구분/IP명 분류 공용 모듈
+
 BASE_DIR      = Path(__file__).parent
 PARQ_IN       = BASE_DIR / "data" / "master_photoism.parquet"
 PARQ_AGG      = BASE_DIR / "data" / "master_photoism_agg.parquet"
@@ -40,30 +42,72 @@ def dict_encode_strings(table: pa.Table) -> pa.Table:
 
 
 def build_agg(con, parq: str):
-    """날짜/국가/매장/타이틀 기준 집계 (시간대 제외 → 행 수 최소화)"""
-    print("  [1/2] 메인 집계 (날짜/국가/매장/타이틀)...")
-    arrow = con.execute(f"""
-        SELECT
-            TRY_CAST("날짜" AS DATE)                                           AS "날짜",
-            COALESCE("국가",    '')                                             AS "국가",
-            COALESCE("국가코드",'')                                             AS "국가코드",
-            COALESCE("브랜드",  '')                                             AS "브랜드",
-            COALESCE("대분류",  '')                                             AS "대분류",
-            COALESCE("타이틀명",'')                                             AS "타이틀명",
-            COALESCE("매장 이름",'')                                            AS "매장 이름",
-            COALESCE("결제 단위",'KRW')                                         AS "결제 단위",
-            CASE WHEN LOWER(CAST("취소 여부" AS VARCHAR))
-                 IN ('true','1','yes') THEN TRUE ELSE FALSE END                 AS "취소 여부",
-            CAST(COUNT(*)                                             AS BIGINT) AS "건수",
-            CAST(COALESCE(SUM(TRY_CAST("최종 결제 금액" AS BIGINT)),0) AS BIGINT) AS "최종 결제 금액",
-            CAST(COALESCE(SUM(TRY_CAST("쿠폰 할인 금액" AS BIGINT)),0) AS BIGINT) AS "쿠폰 할인 금액",
-            CAST(COALESCE(SUM({COIN_FIX}),0) AS BIGINT) AS "서비스코인"
-        FROM read_parquet('{parq}')
-        WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
-        GROUP BY 1,2,3,4,5,6,7,8,9
-        ORDER BY 1 DESC, 2, 7
-    """).to_arrow_table()
+    """날짜/국가/매장/타이틀 기준 집계 (시간대 제외 → 행 수 최소화).
 
+    기존 컬럼(대분류·타이틀명 등)은 그대로 두고, IP 분석용 파생 컬럼을 추가:
+      - 구좌  : BASIC/WITH/EVENT (원본)
+      - IP구분: 아티스트/캐릭터/렌탈/PICK/기획(P)/제외
+      - 타이틀: 날짜 + 대표 IP명 (예 '260527 우주소녀'). 출시(날짜)별 구분 유지,
+               같은 날짜+IP면 한·영 통합. '제외' 행은 ''.
+      - IP명  : 날짜 뗀 대표 IP명 (롤업·필터용). '제외' 행은 ''.
+    """
+    print("  [1/2] 메인 집계 (날짜/국가/매장 + IP구분/타이틀)...")
+    df = con.execute(f"""
+        WITH base AS (
+            SELECT
+                TRY_CAST("날짜" AS DATE)                                       AS "날짜",
+                COALESCE("국가",    '')                                         AS "국가",
+                COALESCE("국가코드",'')                                         AS "국가코드",
+                COALESCE("브랜드",  '')                                         AS "브랜드",
+                COALESCE("대분류",  '')                                         AS "대분류",
+                COALESCE("타이틀명",'')                                         AS "타이틀명",
+                COALESCE("매장 이름",'')                                        AS "매장 이름",
+                COALESCE("결제 단위",'KRW')                                     AS "결제 단위",
+                COALESCE(CAST("구좌" AS VARCHAR), '')                           AS "구좌",
+                CASE WHEN LOWER(CAST("취소 여부" AS VARCHAR))
+                     IN ('true','1','yes') THEN TRUE ELSE FALSE END             AS "취소 여부",
+                ({ip_classify.IP_GUBUN_SQL})                                    AS "IP구분",
+                ({ip_classify.IP_DATE_SQL})                                     AS "날짜코드",
+                ({ip_classify.IP_NAMECORE_SQL})                                AS "IP명_raw",
+                TRY_CAST("최종 결제 금액" AS BIGINT)                            AS "_amt",
+                TRY_CAST("쿠폰 할인 금액" AS BIGINT)                            AS "_cpn",
+                {COIN_FIX}                                                      AS "_coin"
+            FROM read_parquet('{parq}')
+            WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
+        ),
+        tagged AS (
+            SELECT *,
+                CASE WHEN "IP구분"='제외' THEN '' ELSE "IP명_raw" END  AS "IP명_c",
+                CASE WHEN "IP구분"='제외' THEN '' ELSE "날짜코드"  END  AS "날짜코드_c"
+            FROM base
+        )
+        SELECT
+            "날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
+            "결제 단위","구좌","IP구분","날짜코드_c" AS "날짜코드","IP명_c" AS "IP명_raw","취소 여부",
+            CAST(COUNT(*)                          AS BIGINT) AS "건수",
+            CAST(COALESCE(SUM("_amt"),0)           AS BIGINT) AS "최종 결제 금액",
+            CAST(COALESCE(SUM("_cpn"),0)           AS BIGINT) AS "쿠폰 할인 금액",
+            CAST(COALESCE(SUM("_coin"),0)          AS BIGINT) AS "서비스코인"
+        FROM tagged
+        GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
+    """).df()
+
+    # 한·영 통합(별칭→대표명): IP명(롤업) + 타이틀(날짜 유지). '제외'는 빈 값.
+    df["IP명"] = ip_classify.apply_alias(df["IP명_raw"])
+    _date = df["날짜코드"].astype(str).str.strip()
+    _name = df["IP명"].astype(str).str.strip()
+    df["타이틀"] = (_date + " " + _name).str.strip()
+    df.loc[_name == "", ["IP명", "타이틀"]] = ""
+    df = df.drop(columns=["날짜코드", "IP명_raw"])
+
+    group_dims = ["날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
+                  "결제 단위","구좌","IP구분","타이틀","IP명","취소 여부"]
+    df = (df.groupby(group_dims, dropna=False, observed=True)[
+              ["건수","최종 결제 금액","쿠폰 할인 금액","서비스코인"]]
+            .sum().reset_index())
+    df = df.sort_values(["날짜","국가","매장 이름"], ascending=[False, True, True])
+
+    arrow = pa.Table.from_pandas(df, preserve_index=False)
     arrow = dict_encode_strings(arrow)
     pq.write_table(arrow, PARQ_AGG, compression="snappy")
     mb = PARQ_AGG.stat().st_size / 1024 / 1024

@@ -11,6 +11,7 @@ from datetime import date, timedelta
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
+import ip_classify  # IP구분/IP명 분류 공용 모듈
 
 # ── 디자인 시스템 (스내피즘과 동일) ──
 PRIMARY = "#4361ee"; SECONDARY = "#7209b7"; ACCENT = "#4cc9f0"; PINK = "#f72585"; INK = "#1a1a2e"
@@ -107,9 +108,17 @@ def load_exchange_rates():
     return load_config().get("exchange_rates", {"KRW": 1})
 
 
-@st.cache_data(ttl=30)
-def load_data():
-    """집계 parquet 로드 (category 인코딩)"""
+def _file_mtime(p):
+    try:
+        return p.stat().st_mtime
+    except Exception:
+        return 0.0
+
+
+@st.cache_data(show_spinner=False)
+def _load_data(_agg_mtime, _cfg_mtime):
+    """집계 parquet 로드 (category 인코딩). 캐시 키 = 집계·환율 파일 mtime →
+    파일이 바뀔 때만 재계산(매일 ingest/환율 갱신 시). 평소엔 즉시 캐시 히트."""
     if AGG_FILE.exists():
         try:
             table = pq.read_table(str(AGG_FILE))
@@ -153,9 +162,45 @@ def load_data():
     return df
 
 
-@st.cache_data(ttl=30)
-def load_hourly():
-    """시간대 집계 parquet 로드 (시간대 차트 전용)"""
+def load_data():
+    """집계 데이터 로드 (mtime 캐시 래퍼). 파일 변경 시에만 재계산."""
+    return _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
+
+
+@st.cache_data(show_spinner=False)
+def _sidebar_options(_agg_mtime):
+    """사이드바 드롭다운 옵션을 데이터 버전당 한 번만 계산(캐시).
+    매 렌더마다 2.9M행 unique 스캔을 피함."""
+    d = _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
+    if d.empty:
+        return {"countries": [], "stores": [], "brands": [], "ip_by_gubun": {"_ALL": []}}
+
+    def uniq(col, drop_empty=False):
+        vals = sorted(str(v) for v in d[col].dropna().unique())
+        return [v for v in vals if v not in ("", "nan")] if drop_empty else vals
+
+    nonex = d[d["IP구분"] != "제외"]
+
+    def ip_list(frame):
+        return sorted(
+            v for v in (str(x) for x in frame["IP명"].dropna().unique())
+            if v.strip() and v not in ("nan", "")
+        )
+
+    ipmap = {"_ALL": ip_list(nonex)}
+    for g in ip_classify.IP_GUBUN_ORDER:
+        ipmap[g] = ip_list(nonex[nonex["IP구분"] == g])
+    return {
+        "countries": uniq("국가"),
+        "stores": uniq("매장 이름"),
+        "brands": uniq("브랜드", drop_empty=True),
+        "ip_by_gubun": ipmap,
+    }
+
+
+@st.cache_data(show_spinner=False)
+def _load_hourly(_mtime):
+    """시간대 집계 parquet 로드 (시간대 차트 전용). 캐시 키 = 파일 mtime."""
     if not HOURLY_FILE.exists():
         return pd.DataFrame()
     try:
@@ -169,22 +214,37 @@ def load_hourly():
         return pd.DataFrame()
 
 
-# 세부 항목 분류 기준 화이트리스트 (UI 라벨 → 실제 컬럼)
+def load_hourly():
+    return _load_hourly(_file_mtime(HOURLY_FILE))
+
+
+# 세부 항목 분류 기준 화이트리스트 (UI 라벨 → 실제 컬럼/파생키)
 DETAIL_DIMS = {
+    "타이틀 (날짜+IP·한영통합)": "타이틀",
+    "IP명 (날짜 합산·한영통합)": "IP명",
+    "IP 구분 (아티스트/캐릭터/…)": "IP구분",
     "프레임 이름": "프레임 이름",
     "테마 (구좌: BASIC/WITH/EVENT)": "구좌",
-    "타이틀 (IP)": "타이틀명",
+    "타이틀 (원본 그대로)": "타이틀명",
     "상품 카테고리 (브랜드)": "브랜드",
     "채널 (중분류)": "중분류",
     "사업형태 (소분류)": "소분류",
+}
+
+# 전체 parquet에는 타이틀/IP구분/IP명 컬럼이 없으므로 분류식을 직접 주입 (ip_classify 공용)
+_DETAIL_EXPR = {
+    "타이틀": ip_classify.IP_TITLE_RAW_SQL,   # 날짜+이름(접두어제거) → python에서 별칭통합
+    "IP명":  ip_classify.IP_NAMECORE_SQL,     # 이름토큰 → python 별칭통합
+    "IP구분": ip_classify.IP_GUBUN_SQL,
 }
 
 
 @st.cache_data(ttl=60)
 def load_sales_detail(group_col, start_date, end_date,
                       ip_list=None, country="전체", store="전체",
-                      brand="전체", daebun="전체"):
-    """전체 parquet에서 세부 판매 항목(프레임/테마 등) DuckDB on-demand 집계."""
+                      brand="전체", ipgubun="전체"):
+    """전체 parquet에서 세부 판매 항목(IP명/프레임/테마 등) DuckDB on-demand 집계.
+    IP구분/IP명 은 ip_classify 분류식을 쿼리에 주입해 산출."""
     if group_col not in DETAIL_DIMS.values() or not PARQUET_FILE.exists():
         return pd.DataFrame()
     try:
@@ -197,29 +257,31 @@ def load_sales_detail(group_col, start_date, end_date,
     def esc(v):
         return str(v).replace("'", "''")
 
+    group_expr = _DETAIL_EXPR.get(group_col, f'"{group_col}"')
+
     where = [
         f"TRY_CAST(\"날짜\" AS DATE) BETWEEN DATE '{start_date}' AND DATE '{end_date}'",
         "LOWER(CAST(\"취소 여부\" AS VARCHAR)) NOT IN ('true','1','yes')",
         "TRY_CAST(\"최종 결제 금액\" AS DOUBLE) >= 0",
     ]
-    if ip_list:
-        ins = ",".join(f"'{esc(x)}'" for x in ip_list)
-        where.append(f"CAST(\"타이틀명\" AS VARCHAR) IN ({ins})")
     if country and country != "전체":
         where.append(f"CAST(\"국가\" AS VARCHAR) = '{esc(country)}'")
     if store and store != "전체":
         where.append(f"CAST(\"매장 이름\" AS VARCHAR) = '{esc(store)}'")
     if brand and brand != "전체":
         where.append(f"CAST(\"브랜드\" AS VARCHAR) = '{esc(brand)}'")
-    if daebun and daebun != "전체":
-        where.append(f"CAST(\"대분류\" AS VARCHAR) = '{esc(daebun)}'")
+    # IP구분 필터: 특정 구분 / 'IP 전체'(제외 제외) / '전체'(필터 없음)
+    if ipgubun and ipgubun in ip_classify.IP_GUBUN_ORDER:
+        where.append(f"({ip_classify.IP_GUBUN_SQL}) = '{esc(ipgubun)}'")
+    elif ipgubun == "IP 전체":
+        where.append(f"({ip_classify.IP_GUBUN_SQL}) <> '제외'")
     where_sql = " AND ".join(where)
 
     con = duckdb.connect()
     try:
         df = con.execute(f"""
             SELECT
-                COALESCE(CAST("{group_col}" AS VARCHAR), '') AS "항목",
+                COALESCE(CAST(({group_expr}) AS VARCHAR), '') AS "항목",
                 COALESCE(CAST("결제 단위" AS VARCHAR), 'KRW') AS "결제 단위",
                 LOWER(COALESCE(CAST("국가코드" AS VARCHAR), '')) AS "국가코드",
                 SUM(TRY_CAST("최종 결제 금액" AS DOUBLE)) AS "최종 결제 금액",
@@ -238,6 +300,22 @@ def load_sales_detail(group_col, start_date, end_date,
 
     if df.empty:
         return df
+
+    # 한·영 별칭 통합: 타이틀은 날짜 유지하며 이름만, IP명은 이름 토큰 통합
+    if group_col == "타이틀":
+        df["항목"] = ip_classify.apply_alias_title(df["항목"].astype(str))
+    elif group_col == "IP명":
+        df["항목"] = ip_classify.apply_alias(df["항목"].astype(str))
+    # 선택된 IP명(사이드바 멀티셀렉트)으로 좁히기 — 타이틀 차원이면 IP명 포함 여부로 필터
+    if ip_list:
+        ipset = [str(x) for x in ip_list]
+        if group_col == "타이틀":
+            df = df[df["항목"].astype(str).apply(
+                lambda t: any(name in t for name in ipset))]
+        else:
+            df = df[df["항목"].astype(str).isin(ipset)]
+        if df.empty:
+            return df
 
     ex = load_exchange_rates()
     df["결제 단위"] = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW")
@@ -309,45 +387,51 @@ date_range = st.sidebar.date_input(
     min_value=first_date, max_value=last_date,
 )
 
-countries = ["전체"] + sorted(df_all["국가"].dropna().astype(str).unique().tolist())
-selected_country = st.sidebar.selectbox("국가", countries)
+_opts = _sidebar_options(_file_mtime(AGG_FILE))
 
-stores = ["전체"] + sorted(df_all["매장 이름"].dropna().astype(str).unique().tolist())
-selected_store = st.sidebar.selectbox("매장", stores)
+selected_country = st.sidebar.selectbox("국가", ["전체"] + _opts["countries"])
+selected_store = st.sidebar.selectbox("매장", ["전체"] + _opts["stores"])
 
-대분류_list = ["전체"] + sorted(
-    [v for v in df_all["대분류"].dropna().astype(str).unique() if v not in ("", "nan")]
+# IP 구분 (아티스트/캐릭터/렌탈/PICK/기획) — 기존 '대분류(매장유형)' 오라벨 필터를 교체
+IPGUBUN_OPTIONS = ["IP 전체"] + ip_classify.IP_GUBUN_ORDER + ["전체 (기본 프레임 포함)"]
+selected_ipgubun = st.sidebar.selectbox(
+    "IP 구분", IPGUBUN_OPTIONS,
+    help="아티스트 / 캐릭터 / 렌탈 / PICK(이벤트) / 기획(P). "
+         "'IP 전체'=IP 있는 매출만, '전체'=IP 없는 기본 프레임까지 포함.",
 )
-selected_대분류 = st.sidebar.selectbox("카테고리 (아티스트/캐릭터)", 대분류_list)
 
-brands = ["전체"] + sorted(
-    [v for v in df_all["브랜드"].dropna().astype(str).unique() if v not in ("", "nan")]
-)
-selected_brand = st.sidebar.selectbox("상품 카테고리", brands)
+selected_brand = st.sidebar.selectbox("상품 카테고리 (브랜드)", ["전체"] + _opts["brands"])
 
-_ip_all = sorted([
-    v for v in df_all["타이틀명"].dropna().astype(str).unique()
-    if v.strip() and v not in ("nan", "")
-])
+# IP명 후보: 선택된 IP구분 범위 안에서 (캐시된 목록에서 조회)
+_ip_all = _opts["ip_by_gubun"].get(
+    selected_ipgubun if selected_ipgubun in ip_classify.IP_GUBUN_ORDER else "_ALL", [])
 selected_ips = st.sidebar.multiselect(
-    "프레임 (IP)", options=_ip_all,
+    "IP명 선택", options=_ip_all,
     placeholder="전체 (선택 없음 = 전체)",
+    help="정규화·한·영 통합된 IP명. 위 'IP 구분'에 따라 후보가 좁혀집니다.",
 )
 
-# 필터 적용
-df = df_all.copy()
-if len(date_range) == 2:
-    df = df[(df["날짜"] >= date_range[0]) & (df["날짜"] <= date_range[1])]
+# 필터 적용 — scope = 날짜 외 모든 필터, df = scope + 날짜 (KPI 오늘/어제/이번달은 scope 기준)
+# categorical 컬럼은 .astype(str) 없이 직접 비교(코드 기반) → 2.9M행에서도 빠름
+scope = df_all
 if selected_country != "전체":
-    df = df[df["국가"].astype(str) == selected_country]
+    scope = scope[scope["국가"] == selected_country]
 if selected_brand != "전체":
-    df = df[df["브랜드"].astype(str) == selected_brand]
+    scope = scope[scope["브랜드"] == selected_brand]
 if selected_store != "전체":
-    df = df[df["매장 이름"].astype(str) == selected_store]
-if selected_대분류 != "전체":
-    df = df[df["대분류"].astype(str) == selected_대분류]
+    scope = scope[scope["매장 이름"] == selected_store]
+# IP 구분 필터 (아티스트/캐릭터/렌탈/PICK/기획 또는 'IP 전체'=제외 제외)
+if selected_ipgubun in ip_classify.IP_GUBUN_ORDER:
+    scope = scope[scope["IP구분"] == selected_ipgubun]
+elif selected_ipgubun == "IP 전체":
+    scope = scope[scope["IP구분"] != "제외"]
+# '전체 (기본 프레임 포함)' → IP구분 필터 없음
 if selected_ips:
-    df = df[df["타이틀명"].astype(str).isin(selected_ips)]
+    scope = scope[scope["IP명"].isin(selected_ips)]
+
+df = scope
+if len(date_range) == 2:
+    df = scope[(scope["날짜"] >= date_range[0]) & (scope["날짜"] <= date_range[1])]
 
 sales = paid_sales(df)
 
@@ -361,18 +445,78 @@ def period_rev(d):
     return int(paid_sales(d)["매출액"].sum())
 
 
-today_amt  = period_rev(df_all[df_all["날짜"] == today])
-yest_amt   = period_rev(df_all[df_all["날짜"] == yesterday])
-month_amt  = period_rev(df_all[df_all["날짜"] >= month_start])
+today_amt  = period_rev(scope[scope["날짜"] == today])
+yest_amt   = period_rev(scope[scope["날짜"] == yesterday])
+month_amt  = period_rev(scope[scope["날짜"] >= month_start])
 period_amt = period_rev(df)
 delta_pct  = ((today_amt - yest_amt) / yest_amt * 100) if yest_amt > 0 else 0
-yest_cnt   = tx_count(paid_sales(df_all[df_all["날짜"] == yesterday]))
+yest_cnt   = tx_count(paid_sales(scope[scope["날짜"] == yesterday]))
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("오늘 매출 (KRW)", fmt_krw(today_amt), f"{delta_pct:+.1f}% vs 어제")
 c2.metric("어제 매출 (KRW)", fmt_krw(yest_amt), f"{yest_cnt:,}건")
 c3.metric("이번 달 누적", fmt_krw(month_amt), f"{month_start.strftime('%m/%d')}~오늘")
 c4.metric("조회기간 합계", fmt_krw(period_amt), f"{tx_count(sales):,}건")
+
+# ── IP 구분별 매출 (탭: 전체 + 구분별 → 각 탭 안에 타이틀 상세) ────────────────
+_GUB_COLORS = {"아티스트": PRIMARY, "캐릭터": SECONDARY, "렌탈": "#4cc9f0",
+               "PICK": PINK, "기획(P)": "#3a0ca3"}
+_GUB_EMOJI = {"아티스트": "🎤", "캐릭터": "🧸", "렌탈": "🏪", "PICK": "⭐", "기획(P)": "🎨"}
+
+
+def _gubun_title_table(sub, color):
+    """한 IP구분의 타이틀(날짜+IP) 상세: 지표 + TOP 막대 + 전체 표."""
+    tot = int(sub["매출액"].sum())
+    cnt = tx_count(sub)
+    t = (
+        sub[(sub["타이틀"] != "") & sub["타이틀"].notna()]
+        .groupby("타이틀", observed=True)
+        .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
+        .reset_index().sort_values("매출", ascending=False)
+    )
+    m1, m2, m3 = st.columns(3)
+    m1.metric("매출", fmt_krw(tot))
+    m2.metric("건수", f"{cnt:,}건")
+    m3.metric("타이틀 수", f"{len(t):,}개")
+    if t.empty:
+        st.info("해당 조건의 타이틀 데이터가 없습니다.")
+        return
+    topn = t.head(15).sort_values("매출")
+    figt = px.bar(topn, x="매출", y="타이틀", orientation="h",
+                  color_discrete_sequence=[color], custom_data=["건수"])
+    figt.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
+    figt.update_layout(height=max(300, len(topn) * 28 + 60), showlegend=False,
+                       xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
+    st.plotly_chart(figt, use_container_width=True)
+    if len(t) > 15:
+        st.caption(f"※ 차트는 매출 TOP 15. 전체 {len(t):,}개는 아래 표 참고")
+    tbl = t.reset_index(drop=True)
+    tbl.insert(0, "순위", range(1, len(tbl) + 1))
+    tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
+    tbl["매출"] = tbl["매출"].apply(fmt_krw)
+    st.dataframe(
+        tbl, use_container_width=True, height=420, hide_index=True,
+        column_config={"건수": st.column_config.NumberColumn("건수", format="localized")},
+    )
+
+
+# IP 구분 요약 데이터 (「IP · 세부 항목」 탭의 구분별 상세에서 사용) — 첫 화면엔 미표시
+gub = pd.DataFrame()
+present = []
+if "IP구분" in sales.columns:
+    gub = (
+        sales[sales["IP구분"] != "제외"]
+        .groupby("IP구분", observed=True)
+        .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
+        .reset_index()
+    )
+    gub = gub[gub["매출"] > 0]
+    if not gub.empty:
+        gub["_o"] = gub["IP구분"].astype(str).map(
+            {g: i for i, g in enumerate(ip_classify.IP_GUBUN_ORDER)}).fillna(99)
+        gub = gub.sort_values("_o")
+        present = [g for g in ip_classify.IP_GUBUN_ORDER
+                   if g in set(gub["IP구분"].astype(str))]
 
 st.divider()
 
@@ -497,19 +641,16 @@ with tab_ov:
             st.plotly_chart(fig5, use_container_width=True)
 
         with col_d:
-            st.markdown('<div class="section-title">🎬 타이틀(IP) TOP 10</div>', unsafe_allow_html=True)
-            title_src = sales[
-                sales["타이틀명"].notna()
-                & ~sales["타이틀명"].astype(str).str.strip().isin(["", "nan"])
-            ]
+            st.markdown('<div class="section-title">🎬 타이틀 TOP 10 <span style="font-weight:500;color:#8a8aa0;font-size:.85rem">(날짜+IP · 한·영 통합)</span></div>', unsafe_allow_html=True)
+            title_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()]
             title_all = (
-                title_src.groupby("타이틀명", observed=True)
+                title_src.groupby("타이틀", observed=True)
                 .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
                 .reset_index().sort_values("매출", ascending=False)
             )
             title_df = title_all.nlargest(10, "매출").sort_values("매출")
             fig6 = px.bar(
-                title_df, x="매출", y="타이틀명", orientation="h",
+                title_df, x="매출", y="타이틀", orientation="h",
                 color="매출", color_continuous_scale="Oranges", custom_data=["건수"],
             )
             fig6.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
@@ -584,13 +725,9 @@ with tab_nat:
 
     st.divider()
     with st.container(border=True):
-        st.markdown('<div class="section-title purple">🏆 국가별 IP TOP 10</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title purple">🏆 국가별 타이틀 TOP 10 <span style="font-weight:500;color:#8a8aa0;font-size:.85rem">(날짜+IP)</span></div>', unsafe_allow_html=True)
 
-        ip_src = sales[
-            sales["타이틀명"].notna()
-            & ~sales["타이틀명"].astype(str).str.strip().isin(["", "nan"])
-        ].copy()
-        ip_src["타이틀명"] = ip_src["타이틀명"].astype(str).str.strip()
+        ip_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()].copy()
 
         if ip_src.empty:
             st.info("해당 기간 IP 데이터가 없습니다.")
@@ -604,8 +741,8 @@ with tab_nat:
                 f"국가 선택 (전체 {len(nat_choices)}개국)", nat_choices, key="ip_nat_sel",
             )
             cdf = (
-                ip_src[ip_src["국가"].astype(str) == sel_nat]
-                .groupby("타이틀명", observed=True)
+                ip_src[ip_src["국가"] == sel_nat]
+                .groupby("타이틀", observed=True)
                 .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
                 .reset_index().sort_values("매출", ascending=False)
             )
@@ -613,14 +750,14 @@ with tab_nat:
             _flag = (f'<img src="{_furl}" width="24" style="vertical-align:middle;'
                      f'margin-right:6px;border-radius:2px">' if _furl else "")
             st.markdown(
-                f'{_flag}<b>{sel_nat}</b> · 총 매출 {fmt_krw(int(cdf["매출"].sum()))} · IP {len(cdf):,}개',
+                f'{_flag}<b>{sel_nat}</b> · 총 매출 {fmt_krw(int(cdf["매출"].sum()))} · 타이틀 {len(cdf):,}개',
                 unsafe_allow_html=True,
             )
             col_ipb, col_ipt = st.columns([3, 2])
             with col_ipb:
                 top = cdf.head(10).sort_values("매출")
                 fig_c = px.bar(
-                    top, x="매출", y="타이틀명", orientation="h",
+                    top, x="매출", y="타이틀", orientation="h",
                     color="매출", color_continuous_scale="Purples", custom_data=["건수"],
                 )
                 fig_c.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
@@ -640,6 +777,18 @@ with tab_nat:
 
 # ════════════ 탭 3: IP · 세부 항목 ════════════
 with tab_ip:
+    # ── IP 구분별 타이틀 상세 (아티스트/캐릭터/렌탈/PICK/기획 → 각 탭 타이틀 목록) ──
+    if not gub.empty and present:
+        with st.container(border=True):
+            st.markdown('<div class="section-title">🎭 IP 구분별 타이틀 상세 <span style="font-weight:500;color:#8a8aa0;font-size:.85rem">(구분 선택 → 타이틀별 매출)</span></div>',
+                        unsafe_allow_html=True)
+            _gtabs = st.tabs([f"{_GUB_EMOJI.get(g, '🎬')} {g}" for g in present])
+            for _i, _g in enumerate(present):
+                with _gtabs[_i]:
+                    _gubun_title_table(sales[sales["IP구분"] == _g],
+                                       _GUB_COLORS.get(_g, "#999"))
+    st.divider()
+
     with st.container(border=True):
         if selected_ips:
             if len(selected_ips) == 1:
@@ -648,7 +797,7 @@ with tab_ip:
                 section_label = f"🔥 [{' + '.join(selected_ips)}] 합산 분석"
             st.markdown(f'<div class="section-title">{section_label}</div>', unsafe_allow_html=True)
 
-            ip_detail = sales[sales["타이틀명"].astype(str).isin(selected_ips)]
+            ip_detail = sales[sales["IP명"].isin(selected_ips)]
             if ip_detail.empty:
                 st.info("선택된 기간에 해당 IP 데이터가 없습니다.")
             else:
@@ -665,7 +814,7 @@ with tab_ip:
                 if len(selected_ips) >= 2:
                     st.markdown('<div class="section-title">📊 IP별 매출 비교</div>', unsafe_allow_html=True)
                     ip_compare = (
-                        ip_detail.groupby("타이틀명", observed=True)
+                        ip_detail.groupby("IP명", observed=True)
                         .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
                         .reset_index().sort_values("매출", ascending=False)
                     )
@@ -674,8 +823,8 @@ with tab_ip:
                     col_cmp1, col_cmp2 = st.columns([3, 2])
                     with col_cmp1:
                         fig_cmp = px.bar(
-                            ip_compare.sort_values("매출"), x="매출", y="타이틀명", orientation="h",
-                            color="타이틀명", color_discrete_sequence=_cmp_colors,
+                            ip_compare.sort_values("매출"), x="매출", y="IP명", orientation="h",
+                            color="IP명", color_discrete_sequence=_cmp_colors,
                             custom_data=["건수", "비중"],
                         )
                         fig_cmp.update_traces(
@@ -684,7 +833,7 @@ with tab_ip:
                                               xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
                         st.plotly_chart(fig_cmp, use_container_width=True)
                     with col_cmp2:
-                        fig_pie_cmp = px.pie(ip_compare, values="매출", names="타이틀명",
+                        fig_pie_cmp = px.pie(ip_compare, values="매출", names="IP명",
                                              color_discrete_sequence=_cmp_colors, hole=0.45)
                         fig_pie_cmp.update_traces(hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
                         fig_pie_cmp.update_layout(height=max(220, len(selected_ips) * 60 + 40), margin=dict(t=10, b=0))
@@ -716,7 +865,7 @@ with tab_ip:
                         fig_ip_daily = go.Figure()
                         for idx, ip_name in enumerate(selected_ips):
                             ip_d = (
-                                ip_detail[ip_detail["타이틀명"].astype(str) == ip_name]
+                                ip_detail[ip_detail["IP명"] == ip_name]
                                 .groupby("날짜", observed=True)["매출액"].sum()
                                 .reset_index().rename(columns={"매출액": "매출"})
                             )
@@ -770,7 +919,7 @@ with tab_ip:
     # 사이드바 필터 값은 인자로 받아, 사이드바 변경 시에만 전체 재실행되며 최신값으로 갱신됨.
     @st.fragment
     def _detail_search(date_range, selected_ips, selected_country,
-                       selected_store, selected_brand, selected_대분류):
+                       selected_store, selected_brand, selected_ipgubun):
         with st.container(border=True):
             st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 테마)</div>',
                         unsafe_allow_html=True)
@@ -790,7 +939,7 @@ with tab_ip:
                 detail_df = load_sales_detail(
                     DETAIL_DIMS[sel_dim_label], date_range[0], date_range[1],
                     ip_list=selected_ips or None, country=selected_country,
-                    store=selected_store, brand=selected_brand, daebun=selected_대분류,
+                    store=selected_store, brand=selected_brand, ipgubun=selected_ipgubun,
                 )
             else:
                 detail_df = pd.DataFrame()
@@ -838,7 +987,7 @@ with tab_ip:
                                        key="detail_csv")
 
     _detail_search(date_range, selected_ips, selected_country,
-                   selected_store, selected_brand, selected_대분류)
+                   selected_store, selected_brand, selected_ipgubun)
 
 # ════════════ 탭 4: 시간대 · 데이터 ════════════
 with tab_etc:
@@ -873,12 +1022,17 @@ with tab_etc:
 
     st.divider()
     with st.expander("🗃 집계 데이터 보기"):
-        show_cols = ["날짜", "국가", "브랜드", "대분류", "매장 이름",
-                     "타이틀명", "결제 단위", "건수", "최종 결제 금액", "KRW환산금액", "매출액"]
-        available = [c for c in show_cols if c in df.columns]
-        st.dataframe(
-            df[available].sort_values(["날짜", "매출액"], ascending=[False, False]).reset_index(drop=True),
-            use_container_width=True, height=400,
-        )
-        csv_export = df[available].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("CSV 다운로드", csv_export, "photoism_filtered.csv", "text/csv")
+        # 수십만 행을 매 렌더마다 직렬화하면 느려지므로, 요청 시에만 로드
+        if st.checkbox("데이터 표 불러오기", key="ph_show_raw"):
+            show_cols = ["날짜", "국가", "브랜드", "IP구분", "타이틀", "IP명", "매장 이름",
+                         "타이틀명", "결제 단위", "건수", "최종 결제 금액", "KRW환산금액", "매출액"]
+            available = [c for c in show_cols if c in df.columns]
+            view = df[available].sort_values(
+                ["날짜", "매출액"], ascending=[False, False]).reset_index(drop=True)
+            st.caption(f"총 {len(view):,}행 · 표는 상위 2,000행만 표시 (전체는 CSV)")
+            st.dataframe(view.head(2000), use_container_width=True, height=400)
+            csv_export = view.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+            st.download_button("CSV 다운로드 (전체)", csv_export,
+                               "photoism_filtered.csv", "text/csv")
+        else:
+            st.caption("체크하면 현재 필터 기준 집계 데이터를 표로 불러옵니다.")
