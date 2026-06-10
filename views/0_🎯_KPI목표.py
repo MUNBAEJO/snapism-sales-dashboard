@@ -1,21 +1,25 @@
 """
-KPI 목표 달성률 대시보드  (5탭 버전)
-  탭1 📊 전체     — TTL/국내/해외 월별 목표·실적·달성률 (게이지·추이)
-  탭2 👥 팀별     — A팀/C팀/오리지널 달성률 + 누적 요약
-  탭3 📅 주차별   — A팀·C팀 시트 주차별 실적 합계 추이
-  탭4 📈 25 vs 26 — YoY 전년비교 + 누적 비교 테이블
-  탭5 🏷 브랜드   — 팀별 포토이즘 브랜드 목표·실적 상세
+KPI 목표 달성률 대시보드  (4탭 · 실적 모델)
+  탭1 📊 전체     — A팀(아티스트)+C팀(캐릭터)+스내피즘 합산 실적·월별 추이
+  탭2 👥 팀별     — 세그먼트별 실적 카드·월별 추이·누적 요약
+  탭3 📅 주차별   — 최근 14주 세그먼트별 실적(월~일)
+  탭4 📈 전년비   — 전사(포토이즘 TTL) 기준 25 vs 26 (엑셀 25년 vs CMS 26년).
+                  ※ 앞 3탭(A/C/스내피즘)과 집계 범위가 다름 — 2025 CMS·스내피즘
+                    데이터가 없어 전년비는 전사 TTL 기준으로만 가능.
 
-IPX MASTER DATA.xlsx 업로드 시 자동 파싱:
-  REPORT 시트  → kpi_targets.csv / kpi_actuals.csv / kpi_yoy.csv / kpi_brand.csv
-  A팀·C팀 시트  → kpi_weekly.csv
+실적 산출(실시간):
+  · A팀=포토이즘 CMS IP구분 '아티스트', C팀='캐릭터' (KRW 환산, 취소 제외)
+  · 스내피즘=master.csv 정산금액(KRW환산+쿠폰, 취소 제외)
+  ※ 렌탈·PICK·기획(P)·제외는 현재 미포함 (TEAM_GUBUN 확장 지점)
+
+파일 관리(소유자 전용): IPX MASTER DATA.xlsx 업로드 시 목표/실적/주차 CSV 파싱·저장.
+  현재 화면은 실적만 표시 — 목표·달성률은 추후.
 """
-import io, json, calendar, re
+import io, json, re
 import streamlit as st
 import pandas as pd
 import pyarrow.parquet as pq
 import plotly.graph_objects as go
-import plotly.express as px
 from pathlib import Path
 from datetime import date
 
@@ -208,37 +212,6 @@ def load_monthly_actual(seg: str = "TTL"):
     return merged, label
 
 
-TEAM_LIST = ["A팀", "C팀", "오리지널"]
-
-@st.cache_data(ttl=30)
-def load_team_kpi(year: int) -> pd.DataFrame:
-    if not KPI_FILE.exists() or not ACTUALS_FILE.exists():
-        return pd.DataFrame()
-    tgt = pd.read_csv(KPI_FILE, encoding="utf-8-sig")
-    act = pd.read_csv(ACTUALS_FILE, encoding="utf-8-sig")
-    if "구분" not in tgt.columns or "구분" not in act.columns:
-        return pd.DataFrame()
-    for df in [tgt, act]:
-        df["연도"] = df["연도"].astype(int)
-        df["월"]   = df["월"].astype(int)
-    tgt["매출목표"] = pd.to_numeric(tgt["매출목표"], errors="coerce").fillna(0).astype(int)
-    act["실제매출"] = pd.to_numeric(act["실제매출"], errors="coerce").fillna(0).astype(int)
-    frames = []
-    for team in TEAM_LIST:
-        t = tgt[(tgt["구분"] == team) & (tgt["연도"] == year)][["월","매출목표"]]
-        a = act[(act["구분"] == team) & (act["연도"] == year)][["월","실제매출"]]
-        m = pd.merge(t, a, on="월", how="outer").fillna(0)
-        m["팀"]    = team
-        m["연도"]  = year
-        m["달성률"] = m.apply(
-            lambda r: round(r["실제매출"]/r["매출목표"]*100, 1) if r["매출목표"] > 0 else None, axis=1
-        )
-        frames.append(m)
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).sort_values(["팀","월"])
-
-
 @st.cache_data(ttl=30)
 def load_targets(seg: str = "TTL"):
     if not KPI_FILE.exists():
@@ -263,150 +236,155 @@ def load_yoy() -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=30)
-def load_brand() -> pd.DataFrame:
-    if not BRAND_FILE.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(BRAND_FILE, encoding="utf-8-sig")
-    df["값"] = pd.to_numeric(df["값"], errors="coerce")
-    return df
+# ══════════════════════════════════════════════════════════════
+# 사업부 실적 (A팀=아티스트 · C팀=캐릭터 · 스내피즘) — 실시간 산출
+#   · A/C팀: 포토이즘 CMS의 IP구분으로 산출 (CMS엔 팀 컬럼이 없음)
+#   · 스내피즘: master.csv 정산금액(KRW환산+쿠폰), 취소 제외
+#   ※ 렌탈·PICK·기획(P)·제외는 현재 미배정(일단 제외). 추후 구분이
+#     확정되면 TEAM_GUBUN 에 해당 IP구분을 추가하면 자동 편입된다.
+# ══════════════════════════════════════════════════════════════
+SNAP_MASTER = BASE_DIR / "data" / "master.csv"
+
+# 세그먼트 정의 — 확장 지점(렌탈/PICK/기획 편입 시 여기 수정)
+TEAM_GUBUN = {"A팀": ["아티스트"], "C팀": ["캐릭터"]}
+DIV_ORDER  = ["A팀", "C팀", "스내피즘"]
+DIV_COLORS = {"A팀": "#7209b7", "C팀": "#f72585", "스내피즘": "#4cc9f0"}
+DIV_LABEL  = {"A팀": "A팀 (아티스트)", "C팀": "C팀 (캐릭터)", "스내피즘": "스내피즘"}
 
 
-@st.cache_data(ttl=30)
-def load_weekly() -> pd.DataFrame:
-    if not WEEKLY_FILE.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(WEEKLY_FILE, encoding="utf-8-sig")
-    df["실적"] = pd.to_numeric(df["실적"], errors="coerce").fillna(0).astype(int)
-    return df
+def _mtime(p) -> float:
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return 0.0
 
 
-@st.cache_data(ttl=60)
-def load_ip_agg_data() -> pd.DataFrame:
-    """IP 트렌드 탭용: agg parquet(7.2 MB) 기반 KRW 환산 DataFrame.
-    타이틀명/국가코드/날짜/건수/KRW 열 포함. 프레임 이름은 없음 (드릴다운은 별도 쿼리).
-    """
+@st.cache_data(show_spinner=False)
+def _photoism_ip_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
+    """포토이즘 agg → 날짜·IP구분·국내여부별 KRW 매출액 (취소 제외, 일 단위 집계)."""
+    cols = ["날짜", "IP구분", "_kr", "매출액"]
     if not AGG_FILE.exists():
-        return pd.DataFrame()
+        return pd.DataFrame(columns=cols)
     df = pq.read_table(str(AGG_FILE)).to_pandas(strings_to_categorical=True)
-    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df[df["날짜"].notna()]
-    df["취소 여부"] = df["취소 여부"].astype(bool)
-    df = df[~df["취소 여부"]]
-
-    ex = load_exchange_rates()
-    df["결제 단위"] = df["결제 단위"].astype(str).str.strip().replace("nan","KRW")
-    df["환율"] = df["결제 단위"].map(ex).fillna(1)
-
-    for col in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인", "건수"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-    df["KRW_순수"] = (df["최종 결제 금액"] * df["환율"]).round(0)
-    df["KRW_쿠폰"] = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
-    df["KRW_코인"] = (df["서비스코인"]     * df["환율"]).round(0)
-
-    _cc = df["국가코드"].astype(str).str.lower().str.strip()
-    df["KRW_총매출"] = (
-        df["KRW_순수"]
-        + df["KRW_쿠폰"] * _cc.isin(_COUPON_CC).astype(int)
-        + df["KRW_코인"] * _cc.isin(_COIN_CC).astype(int)
-    )
-
-    df["타이틀명"] = df["타이틀명"].astype(str).str.strip()
-    df["국가코드"] = df["국가코드"].astype(str).str.upper()
-    df["국가"]     = df["국가"].astype(str)
-    df["날짜_dt"]  = pd.to_datetime(df["날짜"])
-    return df
+    df = df[~df["취소 여부"].astype(bool)]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    ex   = load_exchange_rates()
+    unit = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW")
+    rate = unit.map(ex).fillna(1)
+    cc   = df["국가코드"].astype(str).str.lower().str.strip()
+    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    base = pd.DataFrame({
+        "날짜":   df["날짜"].dt.normalize().values,
+        "IP구분":  df["IP구분"].astype(str).values,
+        "_kr":    cc.eq("kr").values,
+        "매출액": (
+            (df["최종 결제 금액"] * rate).round(0)
+            + (df["쿠폰 할인 금액"] * rate).round(0) * cc.isin(_COUPON_CC)
+            + (df["서비스코인"]     * rate).round(0) * cc.isin(_COIN_CC)
+        ).values,
+    })
+    return base.groupby(["날짜", "IP구분", "_kr"], as_index=False)["매출액"].sum()
 
 
-@st.cache_data(ttl=60)
-def load_ip_drilldown(ip_name: str, start_date, end_date) -> pd.DataFrame:
-    """특정 IP + 날짜 범위의 프레임별 상세 데이터.
-    DuckDB on master_photoism.parquet (필터 후 소량 로드).
-    """
-    if not PARQ_FILE.exists():
-        return pd.DataFrame()
-    try:
-        import duckdb
-    except Exception:
-        return pd.DataFrame()
-    parq = str(PARQ_FILE).replace("\\", "/")
-    safe_ip = ip_name.replace("'", "''")
-    con = duckdb.connect()
-    try:
-        arrow = con.execute(f"""
-            SELECT
-                TRY_CAST("날짜" AS DATE)                                             AS "날짜",
-                COALESCE(CAST("프레임 이름" AS VARCHAR), '')                          AS "프레임 이름",
-                COALESCE(CAST("결제 단위"  AS VARCHAR), 'KRW')                        AS "결제 단위",
-                COALESCE(CAST("국가코드"   AS VARCHAR), '')                           AS "국가코드",
-                CAST(COALESCE(TRY_CAST("최종 결제 금액" AS BIGINT), 0) AS BIGINT)     AS "최종 결제 금액",
-                CAST(COALESCE(TRY_CAST("쿠폰 할인 금액" AS BIGINT), 0) AS BIGINT)     AS "쿠폰 할인 금액",
-                CAST(COALESCE(TRY_CAST("서비스코인"     AS BIGINT), 0) AS BIGINT)     AS "서비스코인"
-            FROM read_parquet('{parq}')
-            WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start_date}' AND DATE '{end_date}'
-              AND CAST("타이틀명" AS VARCHAR) = '{safe_ip}'
-              AND LOWER(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1','yes')
-        """).to_arrow_table()
-    finally:
-        con.close()
-
-    df = arrow.to_pandas()
-    ex = load_exchange_rates()
-    df["환율"]     = df["결제 단위"].str.strip().map(ex).fillna(1)
-    df["KRW_순수"] = (df["최종 결제 금액"] * df["환율"]).round(0)
-    df["KRW_쿠폰"] = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
-    df["KRW_코인"] = (df["서비스코인"]     * df["환율"]).round(0)
-    _cc = df["국가코드"].str.lower().str.strip()
-    df["KRW_총매출"] = (
-        df["KRW_순수"]
-        + df["KRW_쿠폰"] * _cc.isin(_COUPON_CC).astype(int)
-        + df["KRW_코인"] * _cc.isin(_COIN_CC).astype(int)
-    )
-    # 프레임 alias 적용
-    alias = load_frame_alias()
-    if alias:
-        df["프레임 이름"] = df["프레임 이름"].map(
-            lambda x: alias.get(str(x).strip(), str(x).strip())
-        )
-    return df
+def photoism_ip_daily() -> pd.DataFrame:
+    return _photoism_ip_daily(_mtime(AGG_FILE), _mtime(CONFIG_FILE))
 
 
-@st.cache_data(ttl=60)
-def load_photoism_full() -> pd.DataFrame:
-    """[레거시] agg parquet이 없을 때 fallback. 가급적 load_ip_agg_data() 사용."""
-    if AGG_FILE.exists():
-        return load_ip_agg_data()
-    if not MASTER_FILE.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(MASTER_FILE, encoding="utf-8-sig", low_memory=False)
-    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
+@st.cache_data(show_spinner=False)
+def _snapism_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
+    """스내피즘 master → 날짜·국내여부별 정산금액(KRW환산+쿠폰, 취소 제외, 일 단위)."""
+    import data_io
+    cols = ["날짜", "_kr", "매출액"]
+    df = data_io.read_master(SNAP_MASTER)
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df[df["날짜"].notna()]
-    df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true","1","yes"])
-    df = df[~df["취소 여부"]]
-    ex = load_exchange_rates()
-    df["결제 단위"] = df["결제 단위"].fillna("KRW").astype(str).str.strip()
-    df["환율"] = df["결제 단위"].map(ex).fillna(1)
-    for col in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
-        df[col] = pd.to_numeric(df.get(col, 0), errors="coerce").fillna(0)
-    df["KRW_순수"] = (df["최종 결제 금액"] * df["환율"]).round(0)
-    df["KRW_쿠폰"] = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
-    df["KRW_코인"] = (df["서비스코인"] * df["환율"]).round(0)
-    _cc = df["국가코드"].astype(str).str.lower().fillna("")
-    df["KRW_총매출"] = (
-        df["KRW_순수"]
-        + df["KRW_쿠폰"] * _cc.isin(_COUPON_CC).astype(int)
-        + df["KRW_코인"] * _cc.isin(_COIN_CC).astype(int)
+    cancel = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
+    for c in ["최종 결제 금액", "쿠폰 할인 금액"]:
+        df[c] = pd.to_numeric(df.get(c, 0), errors="coerce").fillna(0)
+    ex   = load_exchange_rates()
+    unit = df["결제 단위"].fillna("KRW").astype(str).str.strip()
+    rate = unit.map(ex).fillna(1)
+    amt  = (df["최종 결제 금액"] * rate).round(0) + (df["쿠폰 할인 금액"] * rate).round(0)
+    keep = (~cancel) & ((df["최종 결제 금액"] > 0) | (df["쿠폰 할인 금액"] > 0))
+    base = pd.DataFrame({
+        "날짜":   df["날짜"].dt.normalize().values,
+        "_kr":   df.get("소스", "").astype(str).str.strip().eq("한국").values,
+        "매출액": amt.values,
+    })[keep.values]
+    return base.groupby(["날짜", "_kr"], as_index=False)["매출액"].sum()
+
+
+def snapism_daily() -> pd.DataFrame:
+    return _snapism_daily(
+        _mtime(SNAP_MASTER), _mtime(SNAP_MASTER.with_suffix(".parquet")), _mtime(CONFIG_FILE)
     )
-    df["타이틀명"] = df["타이틀명"].fillna("").astype(str).str.strip()
-    df["국가코드"] = df["국가코드"].fillna("").astype(str).str.upper()
-    df["국가"]     = df["국가"].fillna("").astype(str)
-    df["날짜_dt"]  = pd.to_datetime(df["날짜"])
-    df["건수"]     = 1  # 개별 행이라 건수=1
-    alias = load_frame_alias()
-    if alias:
-        df["프레임 이름"] = df["프레임 이름"].map(lambda x: alias.get(str(x).strip(), str(x).strip()))
+
+
+def _seg_filter(df: pd.DataFrame, seg: str) -> pd.DataFrame:
+    if seg == "국내":
+        return df[df["_kr"]]
+    if seg == "해외":
+        return df[~df["_kr"]]
     return df
+
+
+def _division_daily(seg: str = "TTL") -> pd.DataFrame:
+    """A팀(아티스트)·C팀(캐릭터)·스내피즘 일별 실적 long-form: 날짜, 세그먼트, 매출액."""
+    frames = []
+    ip = _seg_filter(photoism_ip_daily(), seg)
+    for team, gubuns in TEAM_GUBUN.items():
+        sub = ip[ip["IP구분"].isin(gubuns)]
+        g = sub.groupby("날짜", as_index=False)["매출액"].sum()
+        g["세그먼트"] = team
+        frames.append(g)
+    sp = _seg_filter(snapism_daily(), seg)
+    gs = sp.groupby("날짜", as_index=False)["매출액"].sum()
+    gs["세그먼트"] = "스내피즘"
+    frames.append(gs)
+    out = pd.concat(frames, ignore_index=True)
+    if out.empty:
+        return pd.DataFrame(columns=["날짜", "세그먼트", "매출액"])
+    out["날짜"] = pd.to_datetime(out["날짜"])
+    return out
+
+
+def division_monthly(seg: str = "TTL") -> pd.DataFrame:
+    """월별 실적 long-form: 연도, 월, 세그먼트, 실적."""
+    d = _division_daily(seg)
+    if d.empty:
+        return pd.DataFrame(columns=["연도", "월", "세그먼트", "실적"])
+    d["연도"] = d["날짜"].dt.year
+    d["월"]   = d["날짜"].dt.month
+    out = d.groupby(["연도", "월", "세그먼트"], as_index=False)["매출액"].sum()
+    out = out.rename(columns={"매출액": "실적"})
+    out["실적"] = pd.to_numeric(out["실적"], errors="coerce").fillna(0).astype("int64")
+    return out[out["연도"] > 0]
+
+
+def division_weekly(seg: str = "TTL", weeks: int = 14) -> pd.DataFrame:
+    """주차별 실적 long-form(최근 weeks주): 주시작(월요일), 주차, 세그먼트, 실적."""
+    d = _division_daily(seg)
+    if d.empty:
+        return pd.DataFrame(columns=["주시작", "주차", "세그먼트", "실적"])
+    d["주시작"] = (d["날짜"] - pd.to_timedelta(d["날짜"].dt.weekday, unit="D")).dt.normalize()
+    out = d.groupby(["주시작", "세그먼트"], as_index=False)["매출액"].sum()
+    out = out.rename(columns={"매출액": "실적"})
+    out["실적"] = pd.to_numeric(out["실적"], errors="coerce").fillna(0).astype("int64")
+    recent = sorted(out["주시작"].unique())[-weeks:]
+    out = out[out["주시작"].isin(recent)].copy()
+
+    def _wlabel(ws):
+        we = ws + pd.Timedelta(days=6)
+        return f"{ws.month}/{ws.day}~{we.month}/{we.day}"
+
+    out["주차"] = out["주시작"].apply(_wlabel)
+    return out.sort_values("주시작")
 
 
 def fmt_krw(n: float) -> str:
@@ -414,34 +392,6 @@ def fmt_krw(n: float) -> str:
 
 
 # ── 프레임 alias 관리 ─────────────────────────────────────────
-def load_frame_alias() -> dict:
-    """frame_alias.json 로드 (comment 키 제외)"""
-    if not ALIAS_FILE.exists():
-        return {}
-    try:
-        with open(ALIAS_FILE, encoding="utf-8") as f:
-            raw = json.load(f)
-        return {k: v for k, v in raw.items() if not k.startswith("_")}
-    except Exception:
-        return {}
-
-
-def save_frame_alias(alias: dict):
-    """frame_alias.json 저장 (comment 보존)"""
-    existing = {}
-    if ALIAS_FILE.exists():
-        try:
-            with open(ALIAS_FILE, encoding="utf-8") as f:
-                existing = json.load(f)
-        except Exception:
-            pass
-    # _comment 보존, 나머지 교체
-    out = {k: v for k, v in existing.items() if k.startswith("_")}
-    out.update(alias)
-    with open(ALIAS_FILE, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, indent=2)
-
-
 # ══════════════════════════════════════════════════════════════
 # 엑셀 파서 유틸
 # ══════════════════════════════════════════════════════════════
@@ -557,58 +507,6 @@ def parse_yoy_25(file) -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["구분","연도","월","실적"])
 
 
-def parse_brand_detail(file, year: int = 2026) -> pd.DataFrame:
-    """REPORT 시트 → 팀별 브랜드 목표·실적·달성률 파싱"""
-    raw = pd.read_excel(file, sheet_name="REPORT", header=None, engine="openpyxl")
-    month_cols = _find_month_cols(raw)
-
-    BRANDS = [
-        "포토이즘_스탠다드","포토이즘_WITH","포토이즘_BASIC","포토이즘_철수",
-        "포토이즘_ BASIC","포토이즘_ ORIGINAL","포토이즘_ WITH","포토이즘_ 스탠다드",
-    ]
-    ROW_TYPES = ["목표","실적","달성률","달성률(M)"]
-
-    rows = []
-    current_team = None
-
-    for _, row in raw.iterrows():
-        col1 = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
-        col2 = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
-
-        # 팀 헤더 감지
-        if "브랜드별" in col1:
-            if "A팀" in col1: current_team = "A팀"
-            elif "C팀" in col1: current_team = "C팀"
-        elif col1 == "A팀" and col2 in ROW_TYPES:
-            current_team = "A팀"
-        elif col1 == "C팀" and col2 in ROW_TYPES:
-            current_team = "C팀"
-
-        # 브랜드 행 감지
-        col1_n = col1.replace(" ","").lower()
-        is_brand = any(col1_n == b.replace(" ","").lower() for b in BRANDS)
-
-        if is_brand and col2 in ROW_TYPES:
-            vals = []
-            for ci in month_cols[:12]:
-                v = row.iloc[ci] if ci < len(row) else None
-                try:
-                    vals.append(float(v) if pd.notna(v) and str(v).strip() not in ("","nan") else None)
-                except Exception:
-                    vals.append(None)
-            for i, v in enumerate(vals):
-                rows.append({
-                    "팀": current_team or "?",
-                    "브랜드": col1.strip(),
-                    "행타입": col2,
-                    "월": i + 1,
-                    "값": v,
-                    "연도": year,
-                })
-
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-
 def parse_weekly_data(file) -> pd.DataFrame:
     """A팀·C팀 시트 → 주차별 합계 실적 파싱"""
     week_pat = re.compile(r"^\d{1,2}/\d{1,2}[-~]\d{1,2}/\d{1,2}$")
@@ -661,15 +559,24 @@ def parse_weekly_data(file) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════
 # 사이드바
 # ══════════════════════════════════════════════════════════════
-st.sidebar.header("📂 파일 관리")
+import auth
+_email    = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
+_is_owner = auth.is_owner(_email)
 
+st.sidebar.header("📊 보기 설정")
 col_yr, col_seg = st.sidebar.columns([1, 2])
 target_year = col_yr.number_input("연도", min_value=2024, max_value=2030, value=2026, step=1)
-seg_choice  = col_seg.radio("목표 기준", ["TTL (국내+해외)", "국내", "해외"], index=0)
+seg_choice  = col_seg.radio("지역 기준", ["TTL (국내+해외)", "국내", "해외"], index=0)
 SEG_MAP = {"TTL (국내+해외)": "TTL", "국내": "국내", "해외": "해외"}
 
-st.sidebar.caption("**IPX MASTER DATA.xlsx** 업로드 시 REPORT·A팀·C팀 시트 자동 파싱")
-uploaded = st.sidebar.file_uploader("파일 업로드 (.xlsx / .csv)", type=["xlsx", "csv"])
+# ── 파일 관리: 소유자(나)만 노출 ──────────────────────────────
+if _is_owner:
+    st.sidebar.divider()
+    st.sidebar.header("🔒 파일 관리 (소유자)")
+    st.sidebar.caption("**IPX MASTER DATA.xlsx** 업로드 시 REPORT·A팀·C팀 시트 자동 파싱")
+    uploaded = st.sidebar.file_uploader("데이터 파일 올리기 (.xlsx / .csv)", type=["xlsx", "csv"])
+else:
+    uploaded = None
 
 if uploaded:
     ext = Path(uploaded.name).suffix.lower()
@@ -705,7 +612,7 @@ if uploaded:
                 pd.concat(act_frames, ignore_index=True).to_csv(ACTUALS_FILE, index=False, encoding="utf-8-sig")
 
             parsed_segs = [f["구분"].iloc[0] for f in tgt_frames]
-            st.sidebar.success(f"✅ 목표·실적 파싱: {', '.join(parsed_segs)}")
+            st.sidebar.success(f"✅ 목표·실적을 불러왔어요: {', '.join(parsed_segs)}")
 
             # ── YoY 파싱 ──────────────────────────────────────
             try:
@@ -713,20 +620,9 @@ if uploaded:
                 yoy_df = parse_yoy_25(buf)
                 if not yoy_df.empty:
                     yoy_df.to_csv(YOY_FILE, index=False, encoding="utf-8-sig")
-                    st.sidebar.success(f"✅ 25년 YoY 파싱: {yoy_df['구분'].unique().tolist()}")
+                    st.sidebar.success(f"✅ 25년 전년비를 불러왔어요: {yoy_df['구분'].unique().tolist()}")
             except Exception as e:
-                st.sidebar.warning(f"YoY 파싱 오류: {e}")
-
-            # ── 브랜드 파싱 ────────────────────────────────────
-            try:
-                buf.seek(0)
-                brand_df = parse_brand_detail(buf, yr)
-                if not brand_df.empty:
-                    brand_df.to_csv(BRAND_FILE, index=False, encoding="utf-8-sig")
-                    brands_found = brand_df["브랜드"].unique().tolist()
-                    st.sidebar.success(f"✅ 브랜드 파싱: {', '.join(brands_found[:4])}{'...' if len(brands_found)>4 else ''}")
-            except Exception as e:
-                st.sidebar.warning(f"브랜드 파싱 오류: {e}")
+                st.sidebar.warning(f"전년비 데이터를 읽지 못했어요. 시트 구성을 확인한 뒤 다시 올려 주세요. ({e})")
 
             # ── 주차별 파싱 ────────────────────────────────────
             try:
@@ -735,9 +631,9 @@ if uploaded:
                 if not weekly_df.empty:
                     weekly_df.to_csv(WEEKLY_FILE, index=False, encoding="utf-8-sig")
                     w_cnt = weekly_df.groupby("팀")["주차"].count().to_dict()
-                    st.sidebar.success(f"✅ 주차별 파싱: {w_cnt}")
+                    st.sidebar.success(f"✅ 주차별 실적을 불러왔어요: {w_cnt}")
             except Exception as e:
-                st.sidebar.warning(f"주차별 파싱 오류: {e}")
+                st.sidebar.warning(f"주차별 데이터를 읽지 못했어요. ({e})")
 
             # 미리보기 (현재 seg)
             cur_seg = SEG_MAP[seg_choice]
@@ -763,28 +659,28 @@ if uploaded:
         elif ext == ".csv":
             new_tgt = pd.read_csv(uploaded, encoding="utf-8-sig")
             if not {"연도","월","매출목표"}.issubset(new_tgt.columns):
-                st.sidebar.error("필수 컬럼(연도, 월, 매출목표) 누락")
+                st.sidebar.error("CSV에 연도·월·매출목표 컬럼이 필요해요. 세 컬럼을 채워 다시 올려 주세요.")
             else:
                 new_tgt.to_csv(KPI_FILE, index=False, encoding="utf-8-sig")
-                st.sidebar.success("✅ CSV 저장 완료!")
+                st.sidebar.success("✅ 목표 CSV를 저장했어요. 대시보드에 바로 반영돼요.")
                 st.cache_data.clear()
                 st.rerun()
 
     except Exception as e:
-        st.sidebar.error(f"오류: {e}")
+        st.sidebar.error(f"파일을 처리하지 못했어요. 파일 형식을 확인한 뒤 다시 올려 주세요. ({e})")
 
-if ACTUALS_FILE.exists():
-    if st.sidebar.button("🗑 엑셀 실적 초기화 (CMS로 전환)"):
+if _is_owner:
+    if ACTUALS_FILE.exists() and st.sidebar.button("🗑 엑셀 실적 초기화 (CMS로 전환)"):
         ACTUALS_FILE.unlink()
         st.cache_data.clear()
         st.rerun()
 
-template = pd.DataFrame({"연도":[2026]*12,"월":list(range(1,13)),"매출목표":[0]*12})
-st.sidebar.download_button(
-    "📥 목표 CSV 템플릿",
-    template.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
-    "kpi_targets.csv", "text/csv",
-)
+    _template = pd.DataFrame({"연도": [2026]*12, "월": list(range(1, 13)), "매출목표": [0]*12})
+    st.sidebar.download_button(
+        "📥 목표 CSV 템플릿",
+        _template.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
+        "kpi_targets.csv", "text/csv",
+    )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -796,230 +692,148 @@ render_guide("kpi")
 _seg  = SEG_MAP[seg_choice]
 today = date.today()
 
-tab_all, tab_team, tab_weekly, tab_yoy, tab_brand, tab_ip = st.tabs([
-    "📊 전체", "👥 팀별", "📅 주차별", "📈 25 vs 26", "🏷 브랜드 상세", "🔥 IP 트렌드"
+tab_all, tab_team, tab_weekly, tab_yoy = st.tabs([
+    "📊 전체", "👥 팀별", "📅 주차별", "📈 전년비 (전사)"
 ])
 
 
 # ════════════════════════════════════════════════════════════
-# TAB 1 — 전체 (기존 유지)
+# TAB 1 — 전체 (A팀·C팀·스내피즘 합산 실적)
 # ════════════════════════════════════════════════════════════
 with tab_all:
     with st.container(border=True):
-        actual_df, actual_src = load_monthly_actual(_seg)
-        targets               = load_targets(_seg)
+        div = division_monthly(_seg)
+        st.caption(
+            f"실적 기준: **포토이즘 CMS(IP구분) + 스내피즘 실시간**  ·  "
+            f"지역: **{_seg}**  ·  목표·달성률은 준비 중이라 지금은 실적만 보여요. (새로고침 F5)"
+        )
 
-        st.caption(f"실적 기준: **{actual_src}**  |  목표 기준: **REPORT ({_seg})**  |  새로고침: F5")
-
-        if actual_df.empty:
-            st.warning("실적 데이터가 없습니다. 엑셀을 업로드하거나 포토이즘 크롤러를 실행하세요.")
+        if div.empty:
+            st.warning("아직 표시할 실적이 없어요. 포토이즘·스내피즘 데이터가 들어왔는지 확인해 주세요.")
             st.stop()
 
-        has_targets = not targets.empty and (targets["매출목표"] > 0).any()
-        if not has_targets:
-            st.info("📋 목표가 없습니다. 사이드바에서 **IPX MASTER DATA.xlsx** 를 업로드해주세요.")
+        div["연월"] = div["연도"].astype(str) + "-" + div["월"].apply(lambda x: f"{x:02d}")
 
-        merged = pd.merge(actual_df, targets, on=["연도","월"], how="outer")
-        merged["실제매출"] = merged["실제매출"].fillna(0).astype(int)
-        merged["매출목표"] = merged["매출목표"].fillna(0).astype(int)
-        merged["달성률"]   = merged.apply(
-            lambda r: round(r["실제매출"]/r["매출목표"]*100, 1) if r["매출목표"]>0 else None, axis=1
+        prev_m = today.month - 1 if today.month > 1 else 12
+        prev_y = today.year if today.month > 1 else today.year - 1
+        cur  = div[(div["연도"] == today.year) & (div["월"] == today.month)]
+        prev = div[(div["연도"] == prev_y) & (div["월"] == prev_m)]
+
+        def _sv(d, s):
+            return int(d[d["세그먼트"] == s]["실적"].sum())
+
+        tot_cur  = int(cur["실적"].sum())
+        tot_prev = int(prev["실적"].sum())
+
+        c0, c1, c2, c3 = st.columns(4)
+        c0.metric(
+            f"{today.month}월 합계 실적", fmt_krw(tot_cur),
+            f"{(tot_cur-tot_prev)/tot_prev*100:+.1f}% 전월비" if tot_prev > 0 else "",
         )
-        merged["연월"] = merged["연도"].astype(str) + "-" + merged["월"].apply(lambda x: f"{x:02d}")
-        merged = merged.sort_values(["연도","월"]).reset_index(drop=True)
-
-        days_total = calendar.monthrange(today.year, today.month)[1]
-        pace_ratio = today.day / days_total
-        this_row   = merged[(merged["연도"]==today.year) & (merged["월"]==today.month)]
-
-        if not this_row.empty:
-            r           = this_row.iloc[0]
-            actual_this = int(r["실제매출"])
-            target_this = int(r["매출목표"])
-            achieve_pct = r["달성률"]
-            pace_target = int(target_this * pace_ratio)
-            gap         = actual_this - target_this
-            pace_gap    = actual_this - pace_target
-
-            prev_m   = today.month - 1 if today.month > 1 else 12
-            prev_y   = today.year if today.month > 1 else today.year - 1
-            prev_row = merged[(merged["연도"]==prev_y) & (merged["월"]==prev_m)]
-            prev_actual = int(prev_row.iloc[0]["실제매출"]) if not prev_row.empty else 0
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("이번달 목표", fmt_krw(target_this) if target_this>0 else "미설정")
-            c2.metric(
-                "이번달 실적", fmt_krw(actual_this),
-                f"{(actual_this-prev_actual)/prev_actual*100:+.1f}% 전월비" if prev_actual>0 else "",
-            )
-            c3.metric(
-                "목표 달성률",
-                f"{achieve_pct:.1f}%" if achieve_pct is not None else "—",
-                f"페이스({today.day}/{days_total}일) 대비 {pace_gap/target_this*100:+.1f}%"
-                if target_this>0 else "",
-            )
-            c4.metric(
-                "목표 대비 Gap",
-                fmt_krw(abs(gap)) if target_this>0 else "—",
-                "초과 달성 ✅" if gap>=0 else "미달 ⚠️",
-                delta_color="normal" if gap>=0 else "inverse",
+        for col, seg_name in zip([c1, c2, c3], DIV_ORDER):
+            cv, pv = _sv(cur, seg_name), _sv(prev, seg_name)
+            col.metric(
+                DIV_LABEL[seg_name], fmt_krw(cv),
+                f"{(cv-pv)/pv*100:+.1f}% 전월비" if pv > 0 else "",
             )
 
-            st.divider()
-            col_g, col_b = st.columns([4, 6])
-            with col_g:
-                st.markdown('<div class="section-title">이번달 달성률</div>', unsafe_allow_html=True)
-                gv = float(min(achieve_pct or 0, 150))
-                fig_g = go.Figure(go.Indicator(
-                    mode="gauge+number+delta", value=gv,
-                    number={"suffix":"%","font":{"size":48,"color":"#7209b7"}},
-                    delta={"reference":100,"suffix":"%"},
-                    gauge={
-                        "axis":{"range":[0,150],"ticksuffix":"%","nticks":7},
-                        "bar":{"color":"#7209b7","thickness":0.28},
-                        "bgcolor":"white","borderwidth":0,
-                        "steps":[
-                            {"range":[0,70],"color":"#ffe0e0"},
-                            {"range":[70,90],"color":"#fff3cd"},
-                            {"range":[90,100],"color":"#d4edda"},
-                            {"range":[100,150],"color":"#cce5ff"},
-                        ],
-                        "threshold":{"line":{"color":"#e74c3c","width":3},"thickness":0.8,"value":100},
-                    },
-                    title={"text":f"{today.year}년 {today.month}월  ({today.day}/{days_total}일 경과)","font":{"size":13}},
-                ))
-                fig_g.update_layout(height=300, margin=dict(t=50,b=0,l=30,r=30))
-                st.plotly_chart(fig_g, use_container_width=True)
-                st.caption("🔴 0~70%  🟡 70~90%  🟢 90~100%  🔵 100%↑")
+        st.divider()
 
-            with col_b:
-                st.markdown('<div class="section-title">실적 / 페이스 기준 / 월 목표 비교</div>', unsafe_allow_html=True)
-                fig_b = go.Figure()
-                for lbl, val, col in zip(
-                    ["이번달 실적", f"페이스 기준\n({today.day}/{days_total}일)", "월 목표"],
-                    [actual_this, pace_target, target_this],
-                    ["#7209b7","#adb5bd","#dee2e6"],
-                ):
-                    fig_b.add_trace(go.Bar(
-                        x=[lbl], y=[val], marker_color=col,
-                        text=[fmt_krw(val)], textposition="outside",
-                        hovertemplate=f"{lbl}<br>{fmt_krw(val)}<extra></extra>",
-                        showlegend=False,
-                    ))
-                fig_b.update_layout(height=300, yaxis=dict(tickformat=",",title="",showgrid=True),
-                                    xaxis_title="", margin=dict(t=30,b=0), bargap=0.35)
-                st.plotly_chart(fig_b, use_container_width=True)
-            st.divider()
+        # ── 월별 실적 추이 (세그먼트 스택 + 합계 라인) ──
+        st.markdown('<div class="section-title">월별 실적 추이 (A팀·C팀·스내피즘)</div>', unsafe_allow_html=True)
+        order_ym = sorted(div["연월"].unique())
+        fig_m = go.Figure()
+        for seg_name in DIV_ORDER:
+            d = (div[div["세그먼트"] == seg_name]
+                 .set_index("연월").reindex(order_ym)["실적"].fillna(0))
+            fig_m.add_trace(go.Bar(
+                x=order_ym, y=d.values, name=DIV_LABEL[seg_name],
+                marker_color=DIV_COLORS[seg_name],
+                hovertemplate=f"{DIV_LABEL[seg_name]}<br>%{{x}}<br>%{{y:,}}원<extra></extra>",
+            ))
+        tot_ym = div.groupby("연월")["실적"].sum().reindex(order_ym).fillna(0)
+        fig_m.add_trace(go.Scatter(
+            x=order_ym, y=tot_ym.values, name="합계",
+            mode="lines+markers+text",
+            text=[fmt_krw(v) for v in tot_ym.values],
+            textposition="top center", textfont=dict(size=10, color="#1a1a2e"),
+            line=dict(color="#1a1a2e", width=2), marker=dict(size=7),
+            hovertemplate="%{x}<br>합계: %{y:,}원<extra></extra>",
+        ))
+        fig_m.update_layout(height=440, barmode="stack",
+                            yaxis=dict(tickformat=",", title="실적 (KRW)"),
+                            legend=dict(orientation="h", y=1.1), margin=dict(t=20, b=0))
+        st.plotly_chart(fig_m, use_container_width=True)
 
-        # 월별 추이
-        st.markdown('<div class="section-title">월별 목표 vs 실적 추이</div>', unsafe_allow_html=True)
-        plot_df = merged[merged["매출목표"]>0].copy()
-
-        if plot_df.empty:
-            st.info("목표가 입력된 월이 없습니다. IPX MASTER DATA.xlsx 를 업로드해주세요.")
-        else:
-            max_pct = plot_df["달성률"].dropna().max() if plot_df["달성률"].notna().any() else 100
-            y2_max  = max(160, round(float(max_pct)*1.15, -1))
-            fig_m = go.Figure()
-            fig_m.add_trace(go.Bar(x=plot_df["연월"], y=plot_df["매출목표"], name="목표", marker_color="#dee2e6",
-                                   hovertemplate="%{x}<br>목표: %{y:,}원<extra></extra>"))
-            fig_m.add_trace(go.Bar(x=plot_df["연월"], y=plot_df["실제매출"], name="실적", marker_color="#7209b7",
-                                   opacity=0.85, hovertemplate="%{x}<br>실적: %{y:,}원<extra></extra>"))
-            fig_m.add_trace(go.Scatter(x=plot_df["연월"], y=plot_df["달성률"], name="달성률", yaxis="y2",
-                                       mode="lines+markers+text",
-                                       line=dict(color="#f72585",width=2), marker=dict(size=9),
-                                       text=plot_df["달성률"].apply(lambda x: f"{x:.0f}%" if x is not None else ""),
-                                       textposition="top center", textfont=dict(size=11,color="#f72585"),
-                                       hovertemplate="%{x}<br>달성률: %{y:.1f}%<extra></extra>"))
-            fig_m.add_trace(go.Scatter(x=[plot_df["연월"].iloc[0], plot_df["연월"].iloc[-1]], y=[100,100],
-                                       yaxis="y2", mode="lines",
-                                       line=dict(color="#e74c3c",width=1,dash="dash"),
-                                       name="목표 100%", hoverinfo="skip"))
-            fig_m.update_layout(height=440, barmode="group",
-                                yaxis=dict(tickformat=",",title="매출 (KRW)"),
-                                yaxis2=dict(title="달성률 (%)",overlaying="y",side="right",
-                                            range=[0,y2_max],ticksuffix="%",showgrid=False),
-                                legend=dict(orientation="h",y=1.1), margin=dict(t=20,b=0))
-            st.plotly_chart(fig_m, use_container_width=True)
-
-            st.markdown('<div class="section-title">월별 요약</div>', unsafe_allow_html=True)
-            def status(x):
-                if x is None: return "—"
-                if x >= 100:  return "✅ 달성"
-                if x >= 80:   return "⚠️ 근접"
-                return "❌ 미달"
-            tbl = plot_df[["연월","매출목표","실제매출","달성률"]].copy().reset_index(drop=True)
-            tbl.index = tbl.index + 1
-            tbl["상태"] = tbl["달성률"].apply(status)
-            tbl["Gap"]  = (plot_df["실제매출"].values - plot_df["매출목표"].values)
-            tbl["Gap"]  = tbl["Gap"].apply(lambda x: ("+" if x>=0 else "") + fmt_krw(x))
-            tbl["매출목표"] = tbl["매출목표"].apply(fmt_krw)
-            tbl["실제매출"] = tbl["실제매출"].apply(fmt_krw)
-            tbl["달성률"]   = tbl["달성률"].apply(lambda x: f"{x:.1f}%" if x is not None else "—")
-            tbl.columns = ["연월","목표","실적","달성률","상태","Gap"]
-            st.dataframe(tbl, use_container_width=True, height=min(480, len(tbl)*40+55))
+        # ── 월별 요약 테이블 ──
+        st.markdown('<div class="section-title">월별 실적 요약</div>', unsafe_allow_html=True)
+        piv = div.pivot_table(index="연월", columns="세그먼트", values="실적", aggfunc="sum").fillna(0)
+        for s in DIV_ORDER:
+            if s not in piv.columns:
+                piv[s] = 0
+        piv = piv[DIV_ORDER]
+        piv["합계"] = piv.sum(axis=1)
+        disp = piv.map(lambda x: fmt_krw(x) if x > 0 else "—")
+        disp.columns = [DIV_LABEL.get(c, c) for c in piv.columns]
+        st.dataframe(disp, use_container_width=True, height=min(480, len(disp)*40 + 55))
+        st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 스내피즘=정산금액(실시간). "
+                   "렌탈·PICK·기획(P)·제외는 현재 미포함.")
 
 
     # ════════════════════════════════════════════════════════════
-    # TAB 2 — 팀별 (기존 유지)
+    # TAB 2 — 팀별 (세그먼트별 실적 상세)
     # ════════════════════════════════════════════════════════════
 with tab_team:
     with st.container(border=True):
-        TEAM_COLORS = {"A팀":"#7209b7","C팀":"#f72585","오리지널":"#4cc9f0"}
-        team_df = load_team_kpi(int(target_year))
+        div = division_monthly(_seg)
 
-        if team_df.empty:
-            st.info("팀별 데이터가 없습니다. 사이드바에서 **IPX MASTER DATA.xlsx** 를 업로드해주세요.")
+        if div.empty:
+            st.info("아직 표시할 실적이 없어요. 데이터가 들어오면 팀별 실적이 보여요.")
         else:
-            st.markdown(f"#### {today.year}년 {today.month}월 팀별 달성률")
-            cur_teams = team_df[team_df["월"]==today.month]
-            cols = st.columns(len(TEAM_LIST))
-            for i, team in enumerate(TEAM_LIST):
-                row = cur_teams[cur_teams["팀"]==team]
-                if row.empty: cols[i].metric(team,"—"); continue
-                r        = row.iloc[0]
-                rate_str = f"{r['달성률']:.1f}%" if r["달성률"] is not None else "—"
-                gap_v    = int(r["실제매출"]) - int(r["매출목표"])
-                gap_str  = ("+" if gap_v>=0 else "") + fmt_krw(gap_v) if r["매출목표"]>0 else ""
-                cols[i].metric(team, rate_str,
-                               f"실적 {fmt_krw(r['실제매출'])}  /  {gap_str}",
-                               delta_color="normal" if gap_v>=0 else "inverse")
+            div["연월"] = div["연도"].astype(str) + "-" + div["월"].apply(lambda x: f"{x:02d}")
+            prev_m = today.month - 1 if today.month > 1 else 12
+            prev_y = today.year if today.month > 1 else today.year - 1
+            cur  = div[(div["연도"] == today.year) & (div["월"] == today.month)]
+            prev = div[(div["연도"] == prev_y) & (div["월"] == prev_m)]
+
+            st.markdown(f"#### {today.year}년 {today.month}월 세그먼트별 실적")
+            cols = st.columns(len(DIV_ORDER))
+            for i, seg_name in enumerate(DIV_ORDER):
+                cv = int(cur[cur["세그먼트"] == seg_name]["실적"].sum())
+                pv = int(prev[prev["세그먼트"] == seg_name]["실적"].sum())
+                cols[i].metric(
+                    DIV_LABEL[seg_name], fmt_krw(cv),
+                    f"{(cv-pv)/pv*100:+.1f}% 전월비" if pv > 0 else "",
+                )
             st.divider()
 
-            st.markdown('<div class="section-title">월별 팀별 달성률 추이</div>', unsafe_allow_html=True)
-            plot_t = team_df[team_df["달성률"].notna() & (team_df["매출목표"]>0)].copy()
-            plot_t["월_label"] = plot_t["월"].apply(lambda x: f"{x}월")
+            st.markdown('<div class="section-title">월별 세그먼트별 실적</div>', unsafe_allow_html=True)
+            order_ym = sorted(div["연월"].unique())
             fig_t = go.Figure()
-            for team in TEAM_LIST:
-                td = plot_t[plot_t["팀"]==team]
-                fig_t.add_trace(go.Bar(x=td["월_label"], y=td["달성률"], name=team,
-                                       marker_color=TEAM_COLORS.get(team,"#adb5bd"),
-                                       text=td["달성률"].apply(lambda x: f"{x:.0f}%"),
-                                       textposition="outside",
-                                       hovertemplate=f"{team}<br>%{{x}}<br>달성률: %{{y:.1f}}%<extra></extra>"))
-            fig_t.add_hline(y=100, line_dash="dash", line_color="#e74c3c",
-                            annotation_text="100%", annotation_position="right")
-            fig_t.update_layout(height=400, barmode="group",
-                                yaxis=dict(ticksuffix="%",title="달성률"),
-                                xaxis_title="", legend=dict(orientation="h",y=1.1),
-                                margin=dict(t=20,b=0))
+            for seg_name in DIV_ORDER:
+                d = (div[div["세그먼트"] == seg_name]
+                     .set_index("연월").reindex(order_ym)["실적"].fillna(0))
+                fig_t.add_trace(go.Bar(
+                    x=order_ym, y=d.values, name=DIV_LABEL[seg_name],
+                    marker_color=DIV_COLORS[seg_name],
+                    text=[fmt_krw(v) if v > 0 else "" for v in d.values],
+                    textposition="outside", textfont=dict(size=9),
+                    hovertemplate=f"{DIV_LABEL[seg_name]}<br>%{{x}}<br>%{{y:,}}원<extra></extra>",
+                ))
+            fig_t.update_layout(height=420, barmode="group",
+                                yaxis=dict(tickformat=",", title="실적 (KRW)"),
+                                legend=dict(orientation="h", y=1.1), margin=dict(t=20, b=0))
             st.plotly_chart(fig_t, use_container_width=True)
 
-            st.markdown('<div class="section-title">팀별 누적 요약</div>', unsafe_allow_html=True)
-            summary_rows = []
-            for team in TEAM_LIST:
-                td   = team_df[team_df["팀"]==team]
-                ytd  = td[td["실제매출"]>0]
-                tot_tgt = int(ytd["매출목표"].sum())
-                tot_act = int(ytd["실제매출"].sum())
-                rate    = round(tot_act/tot_tgt*100, 1) if tot_tgt>0 else None
-                summary_rows.append({
-                    "팀": team, "누적 목표": fmt_krw(tot_tgt),
-                    "누적 실적": fmt_krw(tot_act),
-                    "달성률":   f"{rate:.1f}%" if rate is not None else "—",
-                    "상태":     ("✅ 달성" if rate>=100 else ("⚠️ 근접" if rate>=80 else "❌ 미달")) if rate is not None else "—",
-                })
-            st.dataframe(pd.DataFrame(summary_rows).set_index("팀"), use_container_width=True, height=175)
+            st.markdown('<div class="section-title">세그먼트별 누적 요약</div>', unsafe_allow_html=True)
+            rows = []
+            for seg_name in DIV_ORDER:
+                tot = int(div[div["세그먼트"] == seg_name]["실적"].sum())
+                rows.append({"세그먼트": DIV_LABEL[seg_name], "누적 실적": fmt_krw(tot)})
+            rows.append({"세그먼트": "합계", "누적 실적": fmt_krw(int(div["실적"].sum()))})
+            st.dataframe(pd.DataFrame(rows).set_index("세그먼트"), use_container_width=True, height=210)
+            st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 스내피즘=정산금액(실시간). "
+                       "렌탈·PICK·기획(P)·제외는 현재 미포함.")
 
 
     # ════════════════════════════════════════════════════════════
@@ -1027,28 +841,21 @@ with tab_team:
     # ════════════════════════════════════════════════════════════
 with tab_weekly:
     with st.container(border=True):
-        weekly_df = load_weekly()
+        wk = division_weekly(_seg, weeks=14)
 
-        if weekly_df.empty:
-            st.info("주차별 데이터가 없습니다. 사이드바에서 **IPX MASTER DATA.xlsx** 를 업로드해주세요.")
+        if wk.empty:
+            st.info("아직 주차별 실적이 없어요. 데이터가 쌓이면 주차별 추이가 보여요.")
         else:
-            team_w = st.radio("팀", ["전체 (A+C)", "A팀", "C팀"], horizontal=True, key="weekly_team")
+            st.caption(f"주차 = 월~일 기준  ·  지역: **{_seg}**  ·  "
+                       "세그먼트: A팀(아티스트)·C팀(캐릭터)·스내피즘 합산")
+            tot_wk = (wk.groupby(["주시작", "주차"], as_index=False)["실적"].sum()
+                        .sort_values("주시작"))
+            order_w = tot_wk["주차"].tolist()
 
-            if team_w == "전체 (A+C)":
-                plot_w = weekly_df.groupby("주차", as_index=False)["실적"].sum()
-                plot_w["팀"] = "전체"
-            else:
-                plot_w = weekly_df[weekly_df["팀"] == team_w].copy()
-
-            # 실적 있는 주차만
-            active_w = plot_w[plot_w["실적"] > 0]
-
-            # KPI 카드: 이번주 / 지난주 / 전주대비
-            if len(active_w) >= 2:
-                prev_w_val = int(active_w.iloc[-2]["실적"])
-                curr_w_val = int(active_w.iloc[-1]["실적"])
-                curr_w_lbl = active_w.iloc[-1]["주차"]
-                prev_w_lbl = active_w.iloc[-2]["주차"]
+            # KPI 카드: 최근 주 / 전주 / 전주대비 / 누적
+            if len(tot_wk) >= 2:
+                curr_w_val = int(tot_wk.iloc[-1]["실적"]); curr_w_lbl = tot_wk.iloc[-1]["주차"]
+                prev_w_val = int(tot_wk.iloc[-2]["실적"]); prev_w_lbl = tot_wk.iloc[-2]["주차"]
                 wow = (curr_w_val - prev_w_val) / prev_w_val * 100 if prev_w_val > 0 else 0
 
                 c1, c2, c3, c4 = st.columns(4)
@@ -1058,76 +865,63 @@ with tab_weekly:
                 c3.metric("전주 대비", f"{wow:+.1f}%",
                           "↑ 증가" if wow >= 0 else "↓ 감소",
                           delta_color="normal" if wow >= 0 else "inverse")
-                c4.metric("누적 합계", fmt_krw(active_w["실적"].sum()))
+                c4.metric("최근 14주 합계", fmt_krw(int(tot_wk["실적"].sum())))
                 st.divider()
 
-            # 주차별 바 차트
-            st.markdown('<div class="section-title">주차별 실적 추이</div>', unsafe_allow_html=True)
+            # 주차별 세그먼트 스택 바 + 합계 3주 이동평균
+            st.markdown('<div class="section-title">주차별 실적 추이 (세그먼트 스택)</div>', unsafe_allow_html=True)
             fig_w = go.Figure()
-
-            if team_w == "전체 (A+C)":
-                for team, color in [("A팀","#7209b7"),("C팀","#f72585")]:
-                    td = weekly_df[weekly_df["팀"] == team]
-                    fig_w.add_trace(go.Bar(
-                        x=td["주차"], y=td["실적"], name=team,
-                        marker_color=color,
-                        hovertemplate=f"{team} %{{x}}<br>%{{y:,}}원<extra></extra>",
-                    ))
-                fig_w.update_layout(barmode="stack")
-            else:
+            for seg_name in DIV_ORDER:
+                d = (wk[wk["세그먼트"] == seg_name]
+                     .set_index("주차").reindex(order_w)["실적"].fillna(0))
                 fig_w.add_trace(go.Bar(
-                    x=plot_w["주차"], y=plot_w["실적"],
-                    marker_color="#7209b7",
-                    text=plot_w["실적"].apply(lambda x: fmt_krw(x) if x > 0 else ""),
-                    textposition="outside",
-                    hovertemplate="%{x}<br>%{y:,}원<extra></extra>",
+                    x=order_w, y=d.values, name=DIV_LABEL[seg_name],
+                    marker_color=DIV_COLORS[seg_name],
+                    hovertemplate=f"{DIV_LABEL[seg_name]} %{{x}}<br>%{{y:,}}원<extra></extra>",
                 ))
-
-            # 7주 이동평균
-            if len(active_w) >= 3:
-                all_weeks = plot_w if team_w != "전체 (A+C)" else \
-                    weekly_df.groupby("주차", as_index=False)["실적"].sum()
-                ma = all_weeks["실적"].rolling(3, min_periods=1).mean()
+            if len(tot_wk) >= 3:
+                ma = tot_wk["실적"].rolling(3, min_periods=1).mean()
                 fig_w.add_trace(go.Scatter(
-                    x=all_weeks["주차"], y=ma, name="3주 이동평균",
-                    mode="lines", line=dict(color="#f4a261", width=2, dash="dot"),
+                    x=order_w, y=ma.values, name="합계 3주 이동평균",
+                    mode="lines", line=dict(color="#1a1a2e", width=2, dash="dot"),
                     hovertemplate="%{x}<br>이동평균: %{y:,.0f}원<extra></extra>",
                 ))
-
             fig_w.update_layout(
-                height=460,
+                height=460, barmode="stack",
                 yaxis=dict(tickformat=",", title="실적 (KRW)"),
                 xaxis=dict(title="", tickangle=-45, tickfont=dict(size=10)),
-                legend=dict(orientation="h", y=1.05),
+                legend=dict(orientation="h", y=1.08),
                 margin=dict(t=30, b=70),
             )
             st.plotly_chart(fig_w, use_container_width=True)
 
-            # 월별 주차 요약 테이블
-            if "월그룹" in weekly_df.columns:
-                st.markdown('<div class="section-title">월별 주차 합계</div>', unsafe_allow_html=True)
-                if team_w == "전체 (A+C)":
-                    monthly_w = weekly_df.groupby("월그룹", as_index=False)["실적"].sum()
-                else:
-                    monthly_w = weekly_df[weekly_df["팀"]==team_w].groupby("월그룹", as_index=False)["실적"].sum()
-                monthly_w = monthly_w[monthly_w["실적"] > 0]
-                if not monthly_w.empty:
-                    monthly_w["실적_표시"] = monthly_w["실적"].apply(fmt_krw)
-                    st.dataframe(monthly_w[["월그룹","실적_표시"]].rename(columns={"월그룹":"월","실적_표시":"실적 합계"}),
-                                 use_container_width=True, hide_index=True, height=300)
+            # 주차별 상세 (세그먼트 피벗)
+            st.markdown('<div class="section-title">주차별 상세</div>', unsafe_allow_html=True)
+            piv_w = (wk.pivot_table(index="주차", columns="세그먼트", values="실적", aggfunc="sum")
+                       .reindex(order_w).fillna(0))
+            for s in DIV_ORDER:
+                if s not in piv_w.columns:
+                    piv_w[s] = 0
+            piv_w = piv_w[DIV_ORDER]
+            piv_w["합계"] = piv_w.sum(axis=1)
+            disp_w = piv_w.map(lambda x: fmt_krw(x) if x > 0 else "—")
+            disp_w.columns = [DIV_LABEL.get(c, c) for c in piv_w.columns]
+            st.dataframe(disp_w, use_container_width=True, height=min(560, len(disp_w)*38 + 55))
 
 
-    # ════════════════════════════════════════════════════════════
-    # TAB 4 — 25 vs 26 YoY 비교
-    # ════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
+# TAB 4 — 전년비 (전사 TTL 기준) · 25년 엑셀 vs 26년 CMS
+# ════════════════════════════════════════════════════════════
 with tab_yoy:
     with st.container(border=True):
+        st.caption("⚠️ **전사(포토이즘 TTL) 기준** — 앞 탭(A·C·스내피즘)과 집계 범위가 다릅니다. "
+                   "25년=IPX 엑셀 확정값 · 26년=엑셀(확정월)+CMS 실시간.")
         yoy_df    = load_yoy()
         tgt_26    = load_targets(_seg)
         act_26, _ = load_monthly_actual(_seg)
 
         if yoy_df.empty:
-            st.info("25년 비교 데이터가 없습니다. 사이드바에서 **IPX MASTER DATA.xlsx** 를 업로드해주세요.")
+            st.info("아직 25년 비교 데이터가 없어요. 사이드바에서 **IPX MASTER DATA.xlsx**를 올려 주세요.")
         else:
             avail_groups = sorted(yoy_df["구분"].unique().tolist())
             default_idx  = avail_groups.index("TTL") if "TTL" in avail_groups else 0
@@ -1241,558 +1035,3 @@ with tab_yoy:
             tbl_yoy = tbl_yoy.rename(columns={"월_label":"월"})
             tbl_yoy.index = range(1, len(tbl_yoy)+1)
             st.dataframe(tbl_yoy, use_container_width=True, height=min(530, len(tbl_yoy)*40+55))
-
-
-    # ════════════════════════════════════════════════════════════
-    # TAB 5 — 브랜드 상세
-    # ════════════════════════════════════════════════════════════
-with tab_brand:
-    with st.container(border=True):
-        brand_df = load_brand()
-
-        if brand_df.empty:
-            st.info("브랜드 데이터가 없습니다. 사이드바에서 **IPX MASTER DATA.xlsx** 를 업로드해주세요.")
-        else:
-            teams_avail = [t for t in ["A팀","C팀"] if t in brand_df["팀"].values]
-            if not teams_avail:
-                st.warning("팀 정보를 파싱하지 못했습니다.")
-            else:
-                team_b = st.radio("팀 선택", teams_avail, horizontal=True, key="brand_team")
-                bdf    = brand_df[brand_df["팀"] == team_b].copy()
-                brands = sorted(bdf["브랜드"].dropna().unique())
-
-                BRAND_COLORS = ["#7209b7","#f72585","#4cc9f0","#4361ee","#3a0ca3","#f4a261"]
-
-                if not brands:
-                    st.info(f"{team_b} 브랜드 데이터가 없습니다.")
-                else:
-                    actual_b = bdf[bdf["행타입"]=="실적"].dropna(subset=["값"])
-                    target_b = bdf[bdf["행타입"]=="목표"].dropna(subset=["값"])
-
-                    # ── 브랜드별 누적 목표·실적·달성률 카드 ────────────
-                    st.markdown(f'<div class="section-title">{team_b} 브랜드별 달성 현황</div>', unsafe_allow_html=True)
-                    card_cols = st.columns(min(len(brands), 4))
-                    for i, brand in enumerate(brands[:4]):
-                        tgt_v = target_b[target_b["브랜드"]==brand]["값"].sum()
-                        act_v = actual_b[actual_b["브랜드"]==brand]["값"].sum()
-                        rate  = round(act_v/tgt_v*100, 1) if tgt_v > 0 else None
-                        delta = f"목표 달성률 {rate:.1f}%" if rate else ""
-                        card_cols[i].metric(
-                            brand.replace("포토이즘_","").replace("포토이즘_ ",""),
-                            fmt_krw(act_v) if act_v else "—",
-                            delta,
-                            delta_color="normal" if rate and rate>=100 else "off",
-                        )
-
-                    st.divider()
-
-                    # ── 브랜드별 월별 실적 스택 바 ────────────────────
-                    st.markdown(f'<div class="section-title">{team_b} 브랜드별 월별 실적</div>', unsafe_allow_html=True)
-                    fig_b = go.Figure()
-                    for i, brand in enumerate(brands):
-                        bd = actual_b[actual_b["브랜드"]==brand].sort_values("월")
-                        if bd.empty: continue
-                        fig_b.add_trace(go.Bar(
-                            x=bd["월"].apply(lambda x: f"{x}월"), y=bd["값"],
-                            name=brand.replace("포토이즘_","").replace("포토이즘_ ",""),
-                            marker_color=BRAND_COLORS[i % len(BRAND_COLORS)],
-                            hovertemplate=f"{brand}<br>%{{x}}: %{{y:,}}원<extra></extra>",
-                        ))
-                    fig_b.update_layout(height=400, barmode="stack",
-                                        yaxis=dict(tickformat=",", title="실적 (KRW)"),
-                                        legend=dict(orientation="h", y=1.08),
-                                        margin=dict(t=20,b=0))
-                    st.plotly_chart(fig_b, use_container_width=True)
-
-                    # ── 목표 vs 실적 비교 바 (브랜드별) ─────────────────
-                    st.markdown(f'<div class="section-title">{team_b} 브랜드별 목표 vs 실적</div>', unsafe_allow_html=True)
-                    fig_bt = go.Figure()
-                    brand_labels_short = [b.replace("포토이즘_","").replace("포토이즘_ ","") for b in brands]
-                    tgt_vals = [target_b[target_b["브랜드"]==b]["값"].sum() for b in brands]
-                    act_vals = [actual_b[actual_b["브랜드"]==b]["값"].sum() for b in brands]
-                    fig_bt.add_trace(go.Bar(x=brand_labels_short, y=tgt_vals, name="목표",
-                                            marker_color="#dee2e6",
-                                            hovertemplate="%{x}<br>목표: %{y:,}원<extra></extra>"))
-                    fig_bt.add_trace(go.Bar(x=brand_labels_short, y=act_vals, name="실적",
-                                            marker_color="#7209b7", opacity=0.85,
-                                            hovertemplate="%{x}<br>실적: %{y:,}원<extra></extra>"))
-                    # 달성률 표시
-                    for i, (t, a) in enumerate(zip(tgt_vals, act_vals)):
-                        if t > 0:
-                            rate = a/t*100
-                            fig_bt.add_annotation(
-                                x=brand_labels_short[i], y=max(t, a)*1.05,
-                                text=f"{rate:.0f}%", showarrow=False,
-                                font=dict(size=12, color="#f72585", family="Arial"),
-                            )
-                    fig_bt.update_layout(height=380, barmode="group",
-                                         yaxis=dict(tickformat=",", title="금액 (KRW)"),
-                                         legend=dict(orientation="h", y=1.08),
-                                         margin=dict(t=40,b=0))
-                    st.plotly_chart(fig_bt, use_container_width=True)
-
-                    # ── 브랜드별 월별 상세 테이블 ─────────────────────
-                    st.divider()
-                    with st.expander("📅 브랜드별 월별 상세 테이블"):
-                        if not actual_b.empty:
-                            pivot_b = actual_b.pivot_table(index="브랜드", columns="월",
-                                                            values="값", aggfunc="sum").fillna(0)
-                            pivot_b.columns = [f"{c}월" for c in pivot_b.columns]
-                            pivot_b["합계"] = pivot_b.sum(axis=1)
-                            pivot_b.index  = [idx.replace("포토이즘_","").replace("포토이즘_ ","")
-                                               for idx in pivot_b.index]
-                            pivot_disp = pivot_b.applymap(lambda x: fmt_krw(x) if x > 0 else "—")
-                            st.dataframe(pivot_disp, use_container_width=True)
-
-
-    # ════════════════════════════════════════════════════════════
-    # TAB 6 — IP 트렌드 분석
-    # ════════════════════════════════════════════════════════════
-with tab_ip:
-    with st.container(border=True):
-        from datetime import timedelta as _td
-
-        ph = load_ip_agg_data()   # agg parquet (7.2 MB) 기반 — load_photoism_full() 대비 훨씬 빠름
-
-        # ── 프레임 이름 통합 설정 UI ───────────────────────────────
-        with st.expander("⚙️ 프레임 이름 통합 설정 (영어 ↔ 한글 매핑)", expanded=False):
-            st.caption("영어 프레임 이름을 한글 이름으로 통합합니다. 같은 아티스트의 국내/글로벌 데이터가 합산됩니다.")
-            cur_alias = load_frame_alias()
-
-            # 현재 매핑 테이블 표시
-            if cur_alias:
-                alias_df = pd.DataFrame(
-                    [{"영어 이름 (원본)": k, "한글 이름 (통합)": v} for k, v in sorted(cur_alias.items())]
-                )
-                st.dataframe(alias_df, use_container_width=True, hide_index=True, height=220)
-            else:
-                st.info("등록된 매핑이 없습니다.")
-
-            st.divider()
-            col_a1, col_a2, col_a3 = st.columns([3, 3, 2])
-            new_eng = col_a1.text_input("영어 이름 (원본)", placeholder="예: KARINA", key="alias_eng")
-            new_kor = col_a2.text_input("한글 이름 (통합)", placeholder="예: 카리나",  key="alias_kor")
-            with col_a3:
-                st.write("")
-                st.write("")
-                if st.button("➕ 추가 저장", use_container_width=True):
-                    if new_eng.strip() and new_kor.strip():
-                        cur_alias[new_eng.strip()] = new_kor.strip()
-                        save_frame_alias(cur_alias)
-                        st.success(f"✅ {new_eng.strip()} → {new_kor.strip()} 저장됨")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.warning("영어/한글 이름을 모두 입력하세요.")
-
-            # 삭제
-            if cur_alias:
-                del_key = st.selectbox(
-                    "삭제할 매핑 선택",
-                    options=["— 선택 —"] + sorted(cur_alias.keys()),
-                    key="alias_del",
-                )
-                if del_key != "— 선택 —":
-                    if st.button(f"🗑 '{del_key}' 삭제", use_container_width=False):
-                        cur_alias.pop(del_key, None)
-                        save_frame_alias(cur_alias)
-                        st.success(f"'{del_key}' 삭제됨")
-                        st.cache_data.clear()
-                        st.rerun()
-
-        if ph.empty:
-            st.info("포토이즘 데이터가 없습니다. 크롤러를 실행하거나 master_photoism.csv를 확인해주세요.")
-        else:
-            # ── 기간 설정 ──────────────────────────────────────────
-            min_date = ph["날짜"].min()
-            max_date = ph["날짜"].max()
-
-            c_d1, c_d2, c_d3 = st.columns([2, 2, 2])
-            analysis_end  = c_d1.date_input("기준 종료일", value=max_date,
-                                             min_value=min_date, max_value=max_date, key="ip_end")
-            period_days   = c_d2.selectbox("비교 기간", [7, 14, 30], index=0,
-                                            format_func=lambda x: f"최근 {x}일 vs 이전 {x}일", key="ip_period")
-            top_n_ip      = c_d3.slider("TOP N 개수", 5, 30, 10, key="ip_topn")
-
-            curr_end   = analysis_end
-            curr_start = curr_end - _td(days=period_days - 1)
-            prev_end   = curr_start - _td(days=1)
-            prev_start = prev_end - _td(days=period_days - 1)
-
-            st.caption(
-                f"📅 이번 기간: **{curr_start} ~ {curr_end}**  ·  "
-                f"이전 기간: **{prev_start} ~ {prev_end}**"
-            )
-
-            # 타이틀명 없는 건 제외 (IP 미지정 결제)
-            ph_ip = ph[ph["타이틀명"].astype(str).str.strip() != ""]
-            curr_df = ph_ip[(ph_ip["날짜"] >= curr_start) & (ph_ip["날짜"] <= curr_end)]
-            prev_df = ph_ip[(ph_ip["날짜"] >= prev_start) & (ph_ip["날짜"] <= prev_end)]
-
-            # 제외 건수 안내 (agg parquet에서는 건수 컬럼으로 계산)
-            ph_range = ph[(ph["날짜"] >= curr_start) & (ph["날짜"] <= curr_end)]
-            excluded = int(ph_range["건수"].sum()) - int(curr_df["건수"].sum())
-            if excluded > 0:
-                st.caption(f"ℹ️ 타이틀명 미지정 건 {excluded:,}건 제외 (IP 없는 일반 결제)")
-
-            # IP별 집계 (agg parquet에서는 건수 컬럼 합산)
-            def _agg_ip(df):
-                return (
-                    df.groupby("타이틀명")
-                    .agg(매출=("KRW_총매출","sum"), 건수=("건수","sum"))
-                    .reset_index()
-                    .sort_values("매출", ascending=False)
-                    .reset_index(drop=True)
-                )
-
-            curr_agg = _agg_ip(curr_df)
-            prev_agg = _agg_ip(prev_df)
-            curr_agg["이번순위"] = range(1, len(curr_agg) + 1)
-            prev_agg["이전순위"] = range(1, len(prev_agg) + 1)
-
-            rank_df = pd.merge(
-                curr_agg[["타이틀명","매출","건수","이번순위"]],
-                prev_agg[["타이틀명","이전순위"]], on="타이틀명", how="left"
-            )
-
-            def _rank_badge(row):
-                if pd.isna(row["이전순위"]):
-                    return "🆕"
-                diff = int(row["이전순위"]) - int(row["이번순위"])
-                if diff > 0:   return f"🔺+{diff}"
-                elif diff < 0: return f"🔻{diff}"
-                return "➖"
-
-            rank_df["변동"] = rank_df.apply(_rank_badge, axis=1)
-
-            # ── Section 1: TOP IP 순위표 ───────────────────────────
-            st.markdown('<div class="section-title">🏆 이번 기간 IP 순위 + 변동</div>', unsafe_allow_html=True)
-
-            top_rank = rank_df.head(top_n_ip).copy()
-            top_rank.index = range(1, len(top_rank) + 1)
-
-            # 순위 바 차트 (가로)
-            fig_rank = go.Figure()
-            colors_rank = [
-                "#7209b7" if "🔺" in str(r["변동"]) or "🆕" in str(r["변동"])
-                else ("#e74c3c" if "🔻" in str(r["변동"]) else "#adb5bd")
-                for _, r in top_rank.iterrows()
-            ]
-            fig_rank.add_trace(go.Bar(
-                y=top_rank["타이틀명"].apply(lambda x: x[:30]),
-                x=top_rank["매출"],
-                orientation="h",
-                marker_color=colors_rank,
-                text=top_rank.apply(
-                    lambda r: f"{r['변동']}  {fmt_krw(r['매출'])}",axis=1
-                ),
-                textposition="outside",
-                hovertemplate="%{y}<br>매출: %{x:,}원<extra></extra>",
-            ))
-            fig_rank.update_layout(
-                height=max(350, top_n_ip * 36),
-                yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-                xaxis=dict(tickformat=",", title="매출 (KRW)"),
-                margin=dict(t=20, b=0, l=220, r=160),
-            )
-            st.plotly_chart(fig_rank, use_container_width=True)
-
-            # 상세 테이블 (접기)
-            with st.expander("📋 순위 상세 테이블"):
-                tbl_rank = top_rank[["타이틀명","매출","건수","변동"]].copy()
-                tbl_rank["매출"] = tbl_rank["매출"].apply(fmt_krw)
-                tbl_rank.columns = ["IP 이름","매출","결제건수","순위 변동"]
-                st.dataframe(tbl_rank, use_container_width=True, hide_index=False)
-
-            st.divider()
-
-            # ── Section 2: 급상승 / 급하락 ─────────────────────────
-            st.markdown('<div class="section-title">🔥 급상승 · 📉 급하락 (전기간 대비)</div>', unsafe_allow_html=True)
-
-            speed_df = pd.merge(
-                curr_agg[["타이틀명","매출"]].rename(columns={"매출":"이번"}),
-                prev_agg[["타이틀명","매출"]].rename(columns={"매출":"이전"}),
-                on="타이틀명", how="outer"
-            ).fillna(0)
-            speed_df = speed_df[(speed_df["이번"] > 0) | (speed_df["이전"] > 0)]
-            speed_df["증가율"] = speed_df.apply(
-                lambda r: (r["이번"] - r["이전"]) / r["이전"] * 100 if r["이전"] > 0 else 9999,
-                axis=1
-            )
-            # 새로 등장 IP (이전=0, 이번>0)
-            new_ips = speed_df[(speed_df["이전"] == 0) & (speed_df["이번"] > 0)].sort_values("이번", ascending=False)
-            rising  = speed_df[(speed_df["이전"] > 0) & (speed_df["이번"] > 0)].nlargest(5, "증가율")
-            falling = speed_df[(speed_df["이전"] > 0) & (speed_df["이번"] > 0)].nsmallest(5, "증가율")
-
-            col_r, col_f, col_n = st.columns([2, 2, 1])
-
-            with col_r:
-                st.markdown("**🔥 급상승 TOP 5**")
-                if rising.empty:
-                    st.caption("데이터 없음")
-                else:
-                    for _, row in rising.iterrows():
-                        st.metric(
-                            row["타이틀명"][:22],
-                            fmt_krw(row["이번"]),
-                            f"+{row['증가율']:.0f}%  (전기간 {fmt_krw(row['이전'])})",
-                            delta_color="normal",
-                        )
-
-            with col_f:
-                st.markdown("**📉 급하락 TOP 5**")
-                if falling.empty:
-                    st.caption("데이터 없음")
-                else:
-                    for _, row in falling.iterrows():
-                        st.metric(
-                            row["타이틀명"][:22],
-                            fmt_krw(row["이번"]),
-                            f"{row['증가율']:.0f}%  (전기간 {fmt_krw(row['이전'])})",
-                            delta_color="inverse",
-                        )
-
-            with col_n:
-                st.markdown("**🆕 신규 등장**")
-                if new_ips.empty:
-                    st.caption("없음")
-                else:
-                    for _, row in new_ips.head(5).iterrows():
-                        st.markdown(f"• {row['타이틀명'][:20]}  \n  `{fmt_krw(row['이번'])}`")
-
-            st.divider()
-
-            # ── Section 3: 국가별 인기 IP 히트맵 ──────────────────
-            st.markdown('<div class="section-title">🌏 국가별 IP 인기도 히트맵</div>', unsafe_allow_html=True)
-
-            top_ips_heat = curr_agg.head(15)["타이틀명"].tolist()
-            heat_src = curr_df[curr_df["타이틀명"].isin(top_ips_heat)]
-            pivot_heat = (
-                heat_src.groupby(["국가코드","타이틀명"])["KRW_총매출"]
-                .sum().reset_index()
-                .pivot(index="타이틀명", columns="국가코드", values="KRW_총매출")
-                .fillna(0)
-            )
-            # 정렬: 국가 = 합계 큰 순, IP = 합계 큰 순
-            pivot_heat = pivot_heat[pivot_heat.sum().sort_values(ascending=False).index]
-            pivot_heat = pivot_heat.loc[pivot_heat.sum(axis=1).sort_values(ascending=False).index]
-
-            fig_heat = px.imshow(
-                pivot_heat.values,
-                x=list(pivot_heat.columns),
-                y=[t[:25] for t in pivot_heat.index],
-                color_continuous_scale="Purples",
-                aspect="auto",
-                labels={"color":"매출(KRW)"},
-                text_auto=False,
-            )
-            fig_heat.update_traces(
-                hovertemplate="IP: %{y}<br>국가: %{x}<br>매출: %{z:,.0f}원<extra></extra>"
-            )
-            fig_heat.update_layout(
-                height=max(380, len(pivot_heat) * 32),
-                margin=dict(t=20, b=10, l=210, r=20),
-                coloraxis_colorbar=dict(title="KRW"),
-                xaxis=dict(tickfont=dict(size=11)),
-                yaxis=dict(tickfont=dict(size=11)),
-            )
-            st.plotly_chart(fig_heat, use_container_width=True)
-            st.caption("색이 진할수록 해당 국가에서 해당 IP 매출이 높음")
-
-            st.divider()
-
-            # ── Section 4: 매출 원인 분석 ──────────────────────────
-            st.markdown('<div class="section-title">💡 매출 구성 분석 — 순수 매출 / 쿠폰 기여 / 서비스코인 기여</div>', unsafe_allow_html=True)
-
-            cause_src = curr_df[curr_df["타이틀명"].isin(curr_agg.head(top_n_ip)["타이틀명"]) & (curr_df["타이틀명"] != "")]
-            cause_agg = (
-                cause_src.groupby("타이틀명")
-                .agg(순수=("KRW_순수","sum"), 쿠폰=("KRW_쿠폰","sum"), 코인=("KRW_코인","sum"))
-                .reset_index()
-            )
-            cause_agg["합계"] = cause_agg[["순수","쿠폰","코인"]].sum(axis=1)
-            cause_agg = cause_agg.sort_values("합계", ascending=False)
-            cause_agg["쿠폰비율"] = (cause_agg["쿠폰"] / cause_agg["합계"] * 100).round(1)
-            cause_agg["코인비율"] = (cause_agg["코인"] / cause_agg["합계"] * 100).round(1)
-
-            fig_cause = go.Figure()
-            short_names = cause_agg["타이틀명"].apply(lambda x: x[:22])
-            fig_cause.add_trace(go.Bar(x=short_names, y=cause_agg["순수"],
-                                        name="순수 매출", marker_color="#7209b7",
-                                        hovertemplate="%{x}<br>순수: %{y:,}원<extra></extra>"))
-            fig_cause.add_trace(go.Bar(x=short_names, y=cause_agg["쿠폰"],
-                                        name="쿠폰 기여", marker_color="#f72585",
-                                        hovertemplate="%{x}<br>쿠폰: %{y:,}원<extra></extra>"))
-            fig_cause.add_trace(go.Bar(x=short_names, y=cause_agg["코인"],
-                                        name="서비스코인", marker_color="#4cc9f0",
-                                        hovertemplate="%{x}<br>코인: %{y:,}원<extra></extra>"))
-            fig_cause.update_layout(
-                height=420, barmode="stack",
-                yaxis=dict(tickformat=",", title="금액 (KRW)"),
-                xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
-                legend=dict(orientation="h", y=1.08),
-                margin=dict(t=30, b=90),
-            )
-            st.plotly_chart(fig_cause, use_container_width=True)
-
-            # 쿠폰 의존도 경고
-            high_coupon = cause_agg[cause_agg["쿠폰비율"] > 30].sort_values("쿠폰비율", ascending=False)
-            if not high_coupon.empty:
-                names = ", ".join(
-                    f"**{r['타이틀명'][:15]}** ({r['쿠폰비율']:.0f}%)"
-                    for _, r in high_coupon.head(4).iterrows()
-                )
-                st.warning(f"⚠️ 쿠폰 의존도 30%↑ IP: {names}  — 쿠폰 없으면 실매출 하락 가능")
-
-            # 구성 비율 요약 테이블
-            with st.expander("📊 IP별 매출 구성 비율 테이블"):
-                tbl_cause = cause_agg[["타이틀명","합계","순수","쿠폰","코인","쿠폰비율","코인비율"]].copy()
-                for c in ["합계","순수","쿠폰","코인"]:
-                    tbl_cause[c] = tbl_cause[c].apply(fmt_krw)
-                tbl_cause["쿠폰비율"] = tbl_cause["쿠폰비율"].apply(lambda x: f"{x:.1f}%")
-                tbl_cause["코인비율"] = tbl_cause["코인비율"].apply(lambda x: f"{x:.1f}%")
-                tbl_cause.columns = ["IP","총매출","순수매출","쿠폰기여","코인기여","쿠폰%","코인%"]
-                tbl_cause.index = range(1, len(tbl_cause)+1)
-                st.dataframe(tbl_cause, use_container_width=True)
-
-            st.divider()
-
-            # ── Section 5: IP 상세 드릴다운 (테마/프레임별) ────────────
-            st.markdown('<div class="section-title">🔍 IP 상세 드릴다운 — 테마(프레임)별 매출</div>', unsafe_allow_html=True)
-
-            ip_list = curr_agg[curr_agg["타이틀명"] != ""]["타이틀명"].tolist()
-            if not ip_list:
-                st.info("선택 가능한 IP가 없습니다.")
-            else:
-                sel_ip = st.selectbox(
-                    "분석할 IP 선택",
-                    options=ip_list,
-                    format_func=lambda x: f"{x}  (이번기간 {fmt_krw(curr_agg.loc[curr_agg['타이틀명']==x,'매출'].values[0])})",
-                    key="drill_ip",
-                )
-
-                # 드릴다운: master_photoism.parquet에서 IP+날짜 필터 쿼리 (프레임 이름 포함)
-                drill_curr = load_ip_drilldown(sel_ip, curr_start, curr_end)
-                drill_prev = load_ip_drilldown(sel_ip, prev_start, prev_end)
-
-                if drill_curr.empty:
-                    st.info(f"선택 기간에 **{sel_ip}** 데이터가 없습니다.")
-                else:
-                    # 요약 KPI
-                    tot_curr  = drill_curr["KRW_총매출"].sum()
-                    tot_prev  = drill_prev["KRW_총매출"].sum() if not drill_prev.empty else 0
-                    wow_ip    = (tot_curr - tot_prev) / tot_prev * 100 if tot_prev > 0 else None
-                    frame_cnt = drill_curr["프레임 이름"].nunique()
-                    order_cnt = len(drill_curr)   # parquet 개별 거래 행 수
-
-                    kc1, kc2, kc3, kc4 = st.columns(4)
-                    kc1.metric(f"{sel_ip[:20]} 총 매출", fmt_krw(tot_curr),
-                               f"전기간 대비 {wow_ip:+.1f}%" if wow_ip is not None else "",
-                               delta_color="normal" if wow_ip and wow_ip >= 0 else "inverse")
-                    kc2.metric("전기간 매출", fmt_krw(tot_prev) if tot_prev > 0 else "—")
-                    kc3.metric("테마(프레임) 수", f"{frame_cnt}개")
-                    kc4.metric("결제 건수", f"{order_cnt:,}건")
-
-                    st.divider()
-
-                    # 프레임별 집계
-                    frame_agg = (
-                        drill_curr.groupby("프레임 이름")
-                        .agg(
-                            매출=("KRW_총매출", "sum"),
-                            건수=("KRW_총매출", "count"),
-                            쿠폰=("KRW_쿠폰", "sum"),
-                            코인=("KRW_코인", "sum"),
-                        )
-                        .reset_index()
-                        .sort_values("매출", ascending=False)
-                        .reset_index(drop=True)
-                    )
-                    frame_agg.index = range(1, len(frame_agg) + 1)
-
-                    # 전기간 프레임 매출 (변동 계산용)
-                    if not drill_prev.empty:
-                        prev_frame = (
-                            drill_prev.groupby("프레임 이름")["KRW_총매출"]
-                            .sum().reset_index().rename(columns={"KRW_총매출": "전매출"})
-                        )
-                        frame_agg = pd.merge(frame_agg, prev_frame, on="프레임 이름", how="left")
-                        frame_agg["전매출"] = frame_agg["전매출"].fillna(0)
-                        frame_agg["변동률"] = frame_agg.apply(
-                            lambda r: f"{(r['매출']-r['전매출'])/r['전매출']*100:+.0f}%"
-                            if r["전매출"] > 0 else "🆕",
-                            axis=1,
-                        )
-                    else:
-                        frame_agg["전매출"] = 0
-                        frame_agg["변동률"] = "—"
-
-                    frame_agg["비중"] = (frame_agg["매출"] / frame_agg["매출"].sum() * 100).round(1)
-                    frame_agg["쿠폰비율"] = (frame_agg["쿠폰"] / frame_agg["매출"] * 100).round(1).where(frame_agg["매출"] > 0, 0)
-
-                    col_bar, col_pie = st.columns([6, 4])
-
-                    with col_bar:
-                        st.markdown(f'<div class="section-title">{sel_ip[:25]} — 테마별 매출 순위</div>',
-                                    unsafe_allow_html=True)
-                        top_frames = frame_agg.head(20)
-                        fig_drill = go.Figure(go.Bar(
-                            y=top_frames["프레임 이름"].apply(lambda x: str(x)[:30]),
-                            x=top_frames["매출"],
-                            orientation="h",
-                            marker=dict(
-                                color=top_frames["매출"],
-                                colorscale="Purples",
-                                showscale=False,
-                            ),
-                            text=top_frames.apply(
-                                lambda r: f"{r['변동률']}  {fmt_krw(r['매출'])}  ({r['비중']:.1f}%)", axis=1
-                            ),
-                            textposition="outside",
-                            hovertemplate="%{y}<br>매출: %{x:,}원<extra></extra>",
-                        ))
-                        fig_drill.update_layout(
-                            height=max(350, len(top_frames) * 34),
-                            yaxis=dict(autorange="reversed", tickfont=dict(size=10)),
-                            xaxis=dict(tickformat=","),
-                            margin=dict(t=10, b=0, l=220, r=160),
-                        )
-                        st.plotly_chart(fig_drill, use_container_width=True)
-
-                    with col_pie:
-                        st.markdown(f'<div class="section-title">테마별 비중</div>', unsafe_allow_html=True)
-                        top5_pie   = frame_agg.head(7).copy()
-                        other_sales = frame_agg.iloc[7:]["매출"].sum() if len(frame_agg) > 7 else 0
-                        if other_sales > 0:
-                            other_row = pd.DataFrame([{"프레임 이름": "기타", "매출": other_sales}])
-                            top5_pie = pd.concat([top5_pie, other_row], ignore_index=True)
-                        fig_pie = go.Figure(go.Pie(
-                            labels=top5_pie["프레임 이름"].apply(lambda x: str(x)[:20]),
-                            values=top5_pie["매출"],
-                            hole=0.4,
-                            textinfo="label+percent",
-                            textfont=dict(size=11),
-                        ))
-                        fig_pie.update_layout(
-                            height=max(350, len(top_frames) * 34),
-                            margin=dict(t=10, b=0, l=0, r=0),
-                            showlegend=False,
-                        )
-                        st.plotly_chart(fig_pie, use_container_width=True)
-
-                    # 테마별 상세 테이블
-                    st.markdown(f'<div class="section-title">테마별 전체 상세 테이블</div>', unsafe_allow_html=True)
-                    tbl_drill = frame_agg.copy()
-                    tbl_drill["매출"]   = tbl_drill["매출"].apply(fmt_krw)
-                    tbl_drill["전매출"] = tbl_drill["전매출"].apply(lambda x: fmt_krw(x) if x > 0 else "—")
-                    tbl_drill["쿠폰"]   = tbl_drill["쿠폰"].apply(lambda x: fmt_krw(x) if x > 0 else "—")
-                    tbl_drill["비중"]   = tbl_drill["비중"].apply(lambda x: f"{x:.1f}%")
-                    tbl_drill["쿠폰비율"] = tbl_drill["쿠폰비율"].apply(lambda x: f"{x:.1f}%" if x > 0 else "—")
-                    tbl_drill = tbl_drill.rename(columns={
-                        "프레임 이름": "테마(프레임)", "건수": "결제건수",
-                        "전매출": "전기간 매출", "변동률": "전기간 대비",
-                        "비중": "매출 비중", "쿠폰비율": "쿠폰 비중",
-                    })
-                    show_cols = ["테마(프레임)", "매출", "결제건수", "전기간 매출", "전기간 대비", "매출 비중", "쿠폰", "쿠폰 비중"]
-                    st.dataframe(tbl_drill[show_cols], use_container_width=True,
-                                 height=min(600, len(tbl_drill) * 40 + 55))

@@ -1,0 +1,8 @@
+[theme]
+# OS 다크모드(특히 macOS)에서 커스텀 CSS의 진한 글자색이 어두운 배경에
+# 묻혀 안 보이는 문제 방지 — OS 설정과 무관하게 라이트 테마로 고정한다.
+base = "light"
+primaryColor = "#4361ee"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f5f8ff"
+textColor = "#1a1a2e"
