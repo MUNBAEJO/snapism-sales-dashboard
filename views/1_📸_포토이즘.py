@@ -300,7 +300,8 @@ def load_sales_detail(group_col, start_date, end_date,
                               AND TRY_CAST("상품총액" AS DOUBLE) > 0
                          THEN TRY_CAST("상품총액" AS DOUBLE)
                          ELSE COALESCE(TRY_CAST("서비스코인" AS DOUBLE), 0) END) AS "서비스코인",
-                COUNT(*) AS "건수"
+                COUNT(*) AS "건수",
+                SUM(CASE WHEN TRY_CAST("서비스코인" AS DOUBLE) > 0 THEN 1 ELSE 0 END) AS "코인건"
             FROM read_parquet('{parq}')
             WHERE {where_sql}
             GROUP BY 1, 2, 3
@@ -330,7 +331,7 @@ def load_sales_detail(group_col, start_date, end_date,
     ex = load_exchange_rates()
     df["결제 단위"] = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW")
     df["환율"] = df["결제 단위"].map(ex).fillna(1)
-    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인", "건수"]:
+    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인", "건수", "코인건"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     df["KRW_순수"] = (df["최종 결제 금액"] * df["환율"]).round(0)
     df["KRW_쿠폰"] = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
@@ -343,11 +344,12 @@ def load_sales_detail(group_col, start_date, end_date,
     )
     out = (
         df.groupby("항목", as_index=False)
-        .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
+        .agg(매출=("매출액", "sum"), 건수=("건수", "sum"), 코인건=("코인건", "sum"))
     )
     out = out[out["항목"].astype(str).str.strip() != ""]
     out["매출"] = out["매출"].astype("int64")
     out["건수"] = out["건수"].astype("int64")
+    out["코인건"] = out["코인건"].astype("int64")
     return out.sort_values("매출", ascending=False).reset_index(drop=True)
 
 
@@ -1025,7 +1027,19 @@ with tab_ip:
                     tbl["매출"]     = tbl["매출"].apply(fmt_krw)
                     tbl["평균단가"] = tbl["평균단가"].apply(fmt_krw)
                     tbl = tbl.rename(columns={"항목": sel_dim_label})
-                    st.dataframe(tbl, use_container_width=True, height=480, hide_index=True)
+                    st.dataframe(
+                        tbl, use_container_width=True, height=480, hide_index=True,
+                        column_config={"코인건": st.column_config.NumberColumn(
+                            "코인건",
+                            help="서비스코인으로 결제된 건수예요. 마카오처럼 코인을 매출에 "
+                                 "더하지 않는 나라는 이 건들의 매출이 0원이라, 평균단가가 "
+                                 "실제 단가보다 낮게 보일 수 있어요. (매출·건수 계산은 정확)",
+                            format="%d",
+                        )},
+                    )
+                    if int(detail_df["코인건"].sum()) > 0:
+                        st.caption("※ `코인건` = 서비스코인 결제 건수. 코인을 매출에 더하지 않는 "
+                                   "나라(예: 마카오)는 이 건들이 매출 0원이라 평균단가가 낮게 보일 수 있어요.")
 
                     csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
                         index=False, encoding="utf-8-sig").encode("utf-8-sig")
