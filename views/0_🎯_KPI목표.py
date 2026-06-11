@@ -1,16 +1,17 @@
 """
 KPI 목표 달성률 대시보드  (4탭 · 실적 모델)
   탭1 📊 전체     — A팀(아티스트)+C팀(캐릭터)+스내피즘 합산 실적·월별 추이
-  탭2 👥 팀별     — 세그먼트별 실적 카드·월별 추이·누적 요약
-  탭3 📅 주차별   — 최근 14주 세그먼트별 실적(월~일)
+  탭2 👥 팀별     — 팀/항목별 실적 카드·월별 추이·누적 요약
+  탭3 📅 주차별   — 최근 14주 팀/항목별 실적(월~일)
   탭4 📈 전년비   — 전사(포토이즘 TTL) 기준 25 vs 26 (엑셀 25년 vs CMS 26년).
                   ※ 앞 3탭(A/C/스내피즘)과 집계 범위가 다름 — 2025 CMS·스내피즘
                     데이터가 없어 전년비는 전사 TTL 기준으로만 가능.
 
 실적 산출(실시간):
   · A팀=포토이즘 CMS IP구분 '아티스트', C팀='캐릭터' (KRW 환산, 취소 제외)
+  · 픽=IP구분 'PICK' (A·C로 안 나뉘어 하나로 묶은 독립 팀/항목)
   · 스내피즘=master.csv 정산금액(KRW환산+쿠폰, 취소 제외)
-  ※ 렌탈·PICK·기획(P)·제외는 현재 미포함 (TEAM_GUBUN 확장 지점)
+  ※ 렌탈·기획(P)·제외는 미포함 (TEAM_GUBUN 확장 지점)
 
 파일 관리(소유자 전용): IPX MASTER DATA.xlsx 업로드 시 목표/실적/주차 CSV 파싱·저장.
   현재 화면은 실적만 표시 — 목표·달성률은 추후.
@@ -237,19 +238,21 @@ def load_yoy() -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════
-# 사업부 실적 (A팀=아티스트 · C팀=캐릭터 · 스내피즘) — 실시간 산출
+# 사업부 실적 (A팀=아티스트 · C팀=캐릭터 · 픽=PICK · 스내피즘) — 실시간 산출
 #   · A/C팀: 포토이즘 CMS의 IP구분으로 산출 (CMS엔 팀 컬럼이 없음)
+#   · 픽: IP구분 'PICK'. A·C로 안 나뉘어 하나(통합)로 묶은 독립 팀/항목
 #   · 스내피즘: master.csv 정산금액(KRW환산+쿠폰), 취소 제외
-#   ※ 렌탈·PICK·기획(P)·제외는 현재 미배정(일단 제외). 추후 구분이
+#   ※ 렌탈·기획(P)·제외는 미배정(일단 제외). 추후 구분이
 #     확정되면 TEAM_GUBUN 에 해당 IP구분을 추가하면 자동 편입된다.
 # ══════════════════════════════════════════════════════════════
 SNAP_MASTER = BASE_DIR / "data" / "master.csv"
 
-# 세그먼트 정의 — 확장 지점(렌탈/PICK/기획 편입 시 여기 수정)
-TEAM_GUBUN = {"A팀": ["아티스트"], "C팀": ["캐릭터"]}
-DIV_ORDER  = ["A팀", "C팀", "스내피즘"]
-DIV_COLORS = {"A팀": "#7209b7", "C팀": "#f72585", "스내피즘": "#4cc9f0"}
-DIV_LABEL  = {"A팀": "A팀 (아티스트)", "C팀": "C팀 (캐릭터)", "스내피즘": "스내피즘"}
+# 팀/항목 정의 — 확장 지점(렌탈/기획 편입 시 여기 수정)
+#   픽(PICK)은 A·C(아티스트/캐릭터)로 나뉘지 않아 하나로 묶은 독립 팀/항목.
+TEAM_GUBUN = {"A팀": ["아티스트"], "C팀": ["캐릭터"], "픽": ["PICK"]}
+DIV_ORDER  = ["A팀", "C팀", "픽", "스내피즘"]
+DIV_COLORS = {"A팀": "#7209b7", "C팀": "#f72585", "픽": "#f9a826", "스내피즘": "#4cc9f0"}
+DIV_LABEL  = {"A팀": "A팀 (아티스트)", "C팀": "C팀 (캐릭터)", "픽": "픽 (PICK)", "스내피즘": "스내피즘"}
 
 
 def _mtime(p) -> float:
@@ -335,45 +338,45 @@ def _seg_filter(df: pd.DataFrame, seg: str) -> pd.DataFrame:
 
 
 def _division_daily(seg: str = "TTL") -> pd.DataFrame:
-    """A팀(아티스트)·C팀(캐릭터)·스내피즘 일별 실적 long-form: 날짜, 세그먼트, 매출액."""
+    """A팀(아티스트)·C팀(캐릭터)·스내피즘 일별 실적 long-form: 날짜, 팀/항목, 매출액."""
     frames = []
     ip = _seg_filter(photoism_ip_daily(), seg)
     for team, gubuns in TEAM_GUBUN.items():
         sub = ip[ip["IP구분"].isin(gubuns)]
         g = sub.groupby("날짜", as_index=False)["매출액"].sum()
-        g["세그먼트"] = team
+        g["팀/항목"] = team
         frames.append(g)
     sp = _seg_filter(snapism_daily(), seg)
     gs = sp.groupby("날짜", as_index=False)["매출액"].sum()
-    gs["세그먼트"] = "스내피즘"
+    gs["팀/항목"] = "스내피즘"
     frames.append(gs)
     out = pd.concat(frames, ignore_index=True)
     if out.empty:
-        return pd.DataFrame(columns=["날짜", "세그먼트", "매출액"])
+        return pd.DataFrame(columns=["날짜", "팀/항목", "매출액"])
     out["날짜"] = pd.to_datetime(out["날짜"])
     return out
 
 
 def division_monthly(seg: str = "TTL") -> pd.DataFrame:
-    """월별 실적 long-form: 연도, 월, 세그먼트, 실적."""
+    """월별 실적 long-form: 연도, 월, 팀/항목, 실적."""
     d = _division_daily(seg)
     if d.empty:
-        return pd.DataFrame(columns=["연도", "월", "세그먼트", "실적"])
+        return pd.DataFrame(columns=["연도", "월", "팀/항목", "실적"])
     d["연도"] = d["날짜"].dt.year
     d["월"]   = d["날짜"].dt.month
-    out = d.groupby(["연도", "월", "세그먼트"], as_index=False)["매출액"].sum()
+    out = d.groupby(["연도", "월", "팀/항목"], as_index=False)["매출액"].sum()
     out = out.rename(columns={"매출액": "실적"})
     out["실적"] = pd.to_numeric(out["실적"], errors="coerce").fillna(0).astype("int64")
     return out[out["연도"] > 0]
 
 
 def division_weekly(seg: str = "TTL", weeks: int = 14) -> pd.DataFrame:
-    """주차별 실적 long-form(최근 weeks주): 주시작(월요일), 주차, 세그먼트, 실적."""
+    """주차별 실적 long-form(최근 weeks주): 주시작(월요일), 주차, 팀/항목, 실적."""
     d = _division_daily(seg)
     if d.empty:
-        return pd.DataFrame(columns=["주시작", "주차", "세그먼트", "실적"])
+        return pd.DataFrame(columns=["주시작", "주차", "팀/항목", "실적"])
     d["주시작"] = (d["날짜"] - pd.to_timedelta(d["날짜"].dt.weekday, unit="D")).dt.normalize()
-    out = d.groupby(["주시작", "세그먼트"], as_index=False)["매출액"].sum()
+    out = d.groupby(["주시작", "팀/항목"], as_index=False)["매출액"].sum()
     out = out.rename(columns={"매출액": "실적"})
     out["실적"] = pd.to_numeric(out["실적"], errors="coerce").fillna(0).astype("int64")
     recent = sorted(out["주시작"].unique())[-weeks:]
@@ -720,17 +723,17 @@ with tab_all:
         prev = div[(div["연도"] == prev_y) & (div["월"] == prev_m)]
 
         def _sv(d, s):
-            return int(d[d["세그먼트"] == s]["실적"].sum())
+            return int(d[d["팀/항목"] == s]["실적"].sum())
 
         tot_cur  = int(cur["실적"].sum())
         tot_prev = int(prev["실적"].sum())
 
-        c0, c1, c2, c3 = st.columns(4)
-        c0.metric(
+        kpi_cols = st.columns(1 + len(DIV_ORDER))
+        kpi_cols[0].metric(
             f"{today.month}월 합계 실적", fmt_krw(tot_cur),
             f"{(tot_cur-tot_prev)/tot_prev*100:+.1f}% 전월비" if tot_prev > 0 else "",
         )
-        for col, seg_name in zip([c1, c2, c3], DIV_ORDER):
+        for col, seg_name in zip(kpi_cols[1:], DIV_ORDER):
             cv, pv = _sv(cur, seg_name), _sv(prev, seg_name)
             col.metric(
                 DIV_LABEL[seg_name], fmt_krw(cv),
@@ -739,12 +742,12 @@ with tab_all:
 
         st.divider()
 
-        # ── 월별 실적 추이 (세그먼트 스택 + 합계 라인) ──
-        st.markdown('<div class="section-title">월별 실적 추이 (A팀·C팀·스내피즘)</div>', unsafe_allow_html=True)
+        # ── 월별 실적 추이 (팀/항목 스택 + 합계 라인) ──
+        st.markdown('<div class="section-title">월별 실적 추이 (A팀·C팀·픽·스내피즘)</div>', unsafe_allow_html=True)
         order_ym = sorted(div["연월"].unique())
         fig_m = go.Figure()
         for seg_name in DIV_ORDER:
-            d = (div[div["세그먼트"] == seg_name]
+            d = (div[div["팀/항목"] == seg_name]
                  .set_index("연월").reindex(order_ym)["실적"].fillna(0))
             fig_m.add_trace(go.Bar(
                 x=order_ym, y=d.values, name=DIV_LABEL[seg_name],
@@ -767,7 +770,7 @@ with tab_all:
 
         # ── 월별 요약 테이블 ──
         st.markdown('<div class="section-title">월별 실적 요약</div>', unsafe_allow_html=True)
-        piv = div.pivot_table(index="연월", columns="세그먼트", values="실적", aggfunc="sum").fillna(0)
+        piv = div.pivot_table(index="연월", columns="팀/항목", values="실적", aggfunc="sum").fillna(0)
         for s in DIV_ORDER:
             if s not in piv.columns:
                 piv[s] = 0
@@ -776,12 +779,12 @@ with tab_all:
         disp = piv.map(lambda x: fmt_krw(x) if x > 0 else "—")
         disp.columns = [DIV_LABEL.get(c, c) for c in piv.columns]
         st.dataframe(disp, use_container_width=True, height=min(480, len(disp)*40 + 55))
-        st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 스내피즘=정산금액(실시간). "
-                   "렌탈·PICK·기획(P)·제외는 현재 미포함.")
+        st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 픽=PICK · 스내피즘=정산금액(실시간). "
+                   "렌탈·기획(P)·제외는 미포함.")
 
 
     # ════════════════════════════════════════════════════════════
-    # TAB 2 — 팀별 (세그먼트별 실적 상세)
+    # TAB 2 — 팀별 (팀/항목별 실적 상세)
     # ════════════════════════════════════════════════════════════
 with tab_team:
     with st.container(border=True):
@@ -796,22 +799,22 @@ with tab_team:
             cur  = div[(div["연도"] == today.year) & (div["월"] == today.month)]
             prev = div[(div["연도"] == prev_y) & (div["월"] == prev_m)]
 
-            st.markdown(f"#### {today.year}년 {today.month}월 세그먼트별 실적")
+            st.markdown(f"#### {today.year}년 {today.month}월 팀/항목별 실적")
             cols = st.columns(len(DIV_ORDER))
             for i, seg_name in enumerate(DIV_ORDER):
-                cv = int(cur[cur["세그먼트"] == seg_name]["실적"].sum())
-                pv = int(prev[prev["세그먼트"] == seg_name]["실적"].sum())
+                cv = int(cur[cur["팀/항목"] == seg_name]["실적"].sum())
+                pv = int(prev[prev["팀/항목"] == seg_name]["실적"].sum())
                 cols[i].metric(
                     DIV_LABEL[seg_name], fmt_krw(cv),
                     f"{(cv-pv)/pv*100:+.1f}% 전월비" if pv > 0 else "",
                 )
             st.divider()
 
-            st.markdown('<div class="section-title">월별 세그먼트별 실적</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">월별 팀/항목별 실적</div>', unsafe_allow_html=True)
             order_ym = sorted(div["연월"].unique())
             fig_t = go.Figure()
             for seg_name in DIV_ORDER:
-                d = (div[div["세그먼트"] == seg_name]
+                d = (div[div["팀/항목"] == seg_name]
                      .set_index("연월").reindex(order_ym)["실적"].fillna(0))
                 fig_t.add_trace(go.Bar(
                     x=order_ym, y=d.values, name=DIV_LABEL[seg_name],
@@ -825,15 +828,15 @@ with tab_team:
                                 legend=dict(orientation="h", y=1.1), margin=dict(t=20, b=0))
             st.plotly_chart(fig_t, use_container_width=True)
 
-            st.markdown('<div class="section-title">세그먼트별 누적 요약</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">팀/항목별 누적 요약</div>', unsafe_allow_html=True)
             rows = []
             for seg_name in DIV_ORDER:
-                tot = int(div[div["세그먼트"] == seg_name]["실적"].sum())
-                rows.append({"세그먼트": DIV_LABEL[seg_name], "누적 실적": fmt_krw(tot)})
-            rows.append({"세그먼트": "합계", "누적 실적": fmt_krw(int(div["실적"].sum()))})
-            st.dataframe(pd.DataFrame(rows).set_index("세그먼트"), use_container_width=True, height=210)
-            st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 스내피즘=정산금액(실시간). "
-                       "렌탈·PICK·기획(P)·제외는 현재 미포함.")
+                tot = int(div[div["팀/항목"] == seg_name]["실적"].sum())
+                rows.append({"팀/항목": DIV_LABEL[seg_name], "누적 실적": fmt_krw(tot)})
+            rows.append({"팀/항목": "합계", "누적 실적": fmt_krw(int(div["실적"].sum()))})
+            st.dataframe(pd.DataFrame(rows).set_index("팀/항목"), use_container_width=True, height=210)
+            st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 픽=PICK · 스내피즘=정산금액(실시간). "
+                       "렌탈·기획(P)·제외는 미포함.")
 
 
     # ════════════════════════════════════════════════════════════
@@ -847,7 +850,7 @@ with tab_weekly:
             st.info("아직 주차별 실적이 없어요. 데이터가 쌓이면 주차별 추이가 보여요.")
         else:
             st.caption(f"주차 = 월~일 기준  ·  지역: **{_seg}**  ·  "
-                       "세그먼트: A팀(아티스트)·C팀(캐릭터)·스내피즘 합산")
+                       "팀/항목: A팀(아티스트)·C팀(캐릭터)·픽(PICK)·스내피즘 합산")
             tot_wk = (wk.groupby(["주시작", "주차"], as_index=False)["실적"].sum()
                         .sort_values("주시작"))
             order_w = tot_wk["주차"].tolist()
@@ -868,11 +871,11 @@ with tab_weekly:
                 c4.metric("최근 14주 합계", fmt_krw(int(tot_wk["실적"].sum())))
                 st.divider()
 
-            # 주차별 세그먼트 스택 바 + 합계 3주 이동평균
-            st.markdown('<div class="section-title">주차별 실적 추이 (세그먼트 스택)</div>', unsafe_allow_html=True)
+            # 주차별 팀/항목 스택 바 + 합계 3주 이동평균
+            st.markdown('<div class="section-title">주차별 실적 추이 (팀/항목 스택)</div>', unsafe_allow_html=True)
             fig_w = go.Figure()
             for seg_name in DIV_ORDER:
-                d = (wk[wk["세그먼트"] == seg_name]
+                d = (wk[wk["팀/항목"] == seg_name]
                      .set_index("주차").reindex(order_w)["실적"].fillna(0))
                 fig_w.add_trace(go.Bar(
                     x=order_w, y=d.values, name=DIV_LABEL[seg_name],
@@ -895,9 +898,9 @@ with tab_weekly:
             )
             st.plotly_chart(fig_w, use_container_width=True)
 
-            # 주차별 상세 (세그먼트 피벗)
+            # 주차별 상세 (팀/항목 피벗)
             st.markdown('<div class="section-title">주차별 상세</div>', unsafe_allow_html=True)
-            piv_w = (wk.pivot_table(index="주차", columns="세그먼트", values="실적", aggfunc="sum")
+            piv_w = (wk.pivot_table(index="주차", columns="팀/항목", values="실적", aggfunc="sum")
                        .reindex(order_w).fillna(0))
             for s in DIV_ORDER:
                 if s not in piv_w.columns:
