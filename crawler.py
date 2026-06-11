@@ -176,7 +176,28 @@ def crawl_site(browser, site_key, config, start_str, end_str):
     return success
 
 
+def _refresh_rates():
+    """일일 크롤 전에 환율을 갱신(update_rates.py)한다.
+    환율 갱신을 scheduler.py 데몬에만 두면 데몬이 죽었을 때 환율이 묵는다
+    (실제로 2026-06-08 데몬 중단으로 환율이 3일 묵음). 그래서 매일 도는
+    Windows 작업이 실행하는 이 크롤러가 직접 호출한다. 실패해도 크롤은 계속한다."""
+    try:
+        log("환율 갱신 중 (update_rates.py)...")
+        r = subprocess.run(
+            [sys.executable, str(BASE_DIR / "update_rates.py")],
+            cwd=str(BASE_DIR), capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode == 0:
+            tail = [x for x in (r.stdout or "").strip().splitlines() if x.strip()]
+            log("환율 갱신 완료" + (f" — {tail[-1].strip()}" if tail else ""))
+        else:
+            log(f"[경고] 환율 갱신 실패(크롤은 계속): {(r.stderr or '')[:160]}")
+    except Exception as e:
+        log(f"[경고] 환율 갱신 오류(크롤은 계속): {e}")
+
+
 def main():
+    _refresh_rates()    # 데몬에 의존하지 않고 크롤마다 환율 최신화
     # 날짜 결정
     # 사용법:
     #   python crawler.py              → 어제 하루치
