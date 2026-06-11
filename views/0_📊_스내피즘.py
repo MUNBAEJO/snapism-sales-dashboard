@@ -211,7 +211,7 @@ st.title("📊 스내피즘 매출 대시보드")
 render_guide("snapism")
 
 if df_all.empty:
-    st.warning("데이터가 없습니다. `raw` 폴더에 CSV를 넣고 `데이터추가.bat`을 실행하세요.")
+    st.warning("아직 불러온 매출 데이터가 없어요. 새 CSV를 추가한 뒤 새로고침해 주세요.\n\n`raw` 폴더에 CSV를 넣고 `데이터추가.bat`을 실행하면 돼요.")
     st.stop()
 
 last_date = df_all["날짜"].max()
@@ -220,7 +220,7 @@ _cfg = load_config()
 _updated = _cfg.get("rates_updated", "")
 st.caption(
     f"📆 데이터 범위 **{first_date} ~ {last_date}**  ·  "
-    f"총 **{len(df_all):,}건**  ·  새로고침 F5"
+    f"총 **{len(df_all):,}건**  ·  최신 데이터로 새로고침하려면 F5"
 )
 
 # ── 사이드바 필터 ────────────────────────────────────────────
@@ -295,8 +295,8 @@ period_amt = int(sales["KRW환산금액"].sum()) + int(coupon_amt)
 coupon_cnt = len(coupons) + len(sales[sales["쿠폰 할인 금액"] > 0])
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("오늘 매출+쿠폰", fmt_krw(today_amt), f"{delta_pct:+.1f}% vs 어제")
-c2.metric("어제 매출+쿠폰", fmt_krw(yest_amt), f"{len(yest_sales):,}건")
+c1.metric("오늘 매출(쿠폰 포함)", fmt_krw(today_amt), f"{delta_pct:+.1f}% vs 어제")
+c2.metric("어제 매출(쿠폰 포함)", fmt_krw(yest_amt), f"{len(yest_sales):,}건")
 c3.metric("이번 달 누적", fmt_krw(month_amt), f"{month_start.strftime('%m/%d')}~오늘")
 c4.metric("쿠폰 할인 총액", fmt_krw(coupon_amt), f"{coupon_cnt:,}건 사용")
 c5.metric("조회기간 합계", fmt_krw(period_amt), f"취소 {fmt_krw(cancelled_amt)}")
@@ -343,7 +343,7 @@ with tab_ov:
 
             trend = pd.concat([s_paid, s_coupon], axis=1).fillna(0).sort_index()
             if trend.empty:
-                st.info("해당 조건의 데이터가 없습니다.")
+                st.info("선택한 조건에 맞는 데이터가 없어요. 날짜 범위나 필터를 바꿔 보세요.")
             else:
                 trend["합계"] = trend["실결제"] + trend["쿠폰할인"]
                 win = {"월": 3, "주": 4, "일": 7}[gran]
@@ -517,7 +517,7 @@ with tab_nat:
                 total_cpn = all_coupon["쿠폰KRW"].sum()
                 st.info(f"쿠폰 총 할인 **{fmt_krw(total_cpn)}**  ·  {len(all_coupon):,}건")
             else:
-                st.info("조회 기간 내 쿠폰 사용 없음")
+                st.info("이 기간에는 사용된 쿠폰이 없어요. 날짜 범위를 바꿔 확인해 보세요.")
 
 # ════════════ 탭 3: 상품 카테고리 ════════════
 with tab_cat:
@@ -581,7 +581,7 @@ with tab_cat:
                            .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
                            .reset_index().sort_values("매출", ascending=False))
                     if _fr.empty:
-                        st.info("해당 카테고리의 프레임 데이터가 없습니다.")
+                        st.info("이 카테고리에는 프레임 데이터가 없어요. 다른 카테고리를 선택해 보세요.")
                         continue
                     fm1, fm2, fm3 = st.columns(3)
                     fm1.metric("매출", fmt_krw(int(_fr["매출"].sum())))
@@ -680,7 +680,7 @@ with tab_cat:
             )
 
             if prod_rank_df.empty:
-                st.info("해당 카테고리의 데이터가 없습니다.")
+                st.info("이 카테고리에는 데이터가 없어요. 다른 카테고리를 선택해 보세요.")
             else:
                 col_pr_chart, col_pr_tbl = st.columns([6, 4])
                 with col_pr_chart:
@@ -734,7 +734,7 @@ with tab_cat:
                 key="ip_detail_select", label_visibility="collapsed")
         ip_data = frame_src if ip_pick == "전체" else frame_src[frame_src["프레임 이름"] == ip_pick]
         if ip_data.empty:
-            st.info("해당 기간에 데이터가 없습니다.")
+            st.info("이 기간에는 데이터가 없어요. 날짜 범위를 넓혀 보세요.")
         else:
             ip_cat = (
                 ip_data.groupby("상품 카테고리")

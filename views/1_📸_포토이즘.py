@@ -124,10 +124,10 @@ def _load_data(_agg_mtime, _cfg_mtime):
             table = pq.read_table(str(AGG_FILE))
             df = table.to_pandas(strings_to_categorical=True)
         except Exception as e:
-            st.warning(f"집계 파일 로드 실패: {e}")
+            st.warning(f"집계 파일을 불러오지 못했어요. 파일을 다시 만든 뒤 새로고침해 주세요. (원인: {e})")
             return pd.DataFrame()
     else:
-        st.error("집계 파일 없음. `python build_photoism_agg.py` 를 먼저 실행하세요.")
+        st.error("집계 데이터가 아직 없어요. 아래 명령으로 집계 파일을 먼저 만들어 주세요.")
         return pd.DataFrame()
 
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
@@ -360,7 +360,7 @@ st.title("📸 포토이즘 매출 대시보드")
 render_guide("photoism")
 
 if df_all.empty:
-    st.warning("데이터가 없습니다. 집계 파일을 먼저 생성하세요.")
+    st.warning("표시할 데이터가 아직 없어요. 아래 명령으로 집계 파일을 먼저 만들어 주세요.")
     st.code("python build_photoism_agg.py")
     st.stop()
 
@@ -397,7 +397,7 @@ IPGUBUN_OPTIONS = ["IP 전체"] + ip_classify.IP_GUBUN_ORDER + ["전체 (기본 
 selected_ipgubun = st.sidebar.selectbox(
     "IP 구분", IPGUBUN_OPTIONS,
     help="아티스트 / 캐릭터 / 렌탈 / PICK(이벤트) / 기획(P). "
-         "'IP 전체'=IP 있는 매출만, '전체'=IP 없는 기본 프레임까지 포함.",
+         "'IP 전체'는 IP가 있는 매출만, '전체'는 기본 프레임까지 모두 봐요.",
 )
 
 selected_brand = st.sidebar.selectbox("상품 카테고리 (브랜드)", ["전체"] + _opts["brands"])
@@ -408,7 +408,8 @@ _ip_all = _opts["ip_by_gubun"].get(
 selected_ips = st.sidebar.multiselect(
     "IP명 선택", options=_ip_all,
     placeholder="전체 (선택 없음 = 전체)",
-    help="정규화·한·영 통합된 IP명. 위 'IP 구분'에 따라 후보가 좁혀집니다.",
+    help="정규화·한·영 통합된 IP명. 위 'IP 구분'에 따라 후보가 좁혀집니다. "
+             "선택하지 않으면 전체 IP를 봐요.",
 )
 
 # 필터 적용 — scope = 날짜 외 모든 필터, df = scope + 날짜 (KPI 오늘/어제/이번달은 scope 기준)
@@ -479,7 +480,7 @@ def _gubun_title_table(sub, color):
     m2.metric("건수", f"{cnt:,}건")
     m3.metric("타이틀 수", f"{len(t):,}개")
     if t.empty:
-        st.info("해당 조건의 타이틀 데이터가 없습니다.")
+        st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
         return
     topn = t.head(15).sort_values("매출")
     figt = px.bar(topn, x="매출", y="타이틀", orientation="h",
@@ -558,7 +559,7 @@ with tab_ov:
                 .rename("매출").reset_index().sort_values("_p")
             )
             if trend.empty:
-                st.info("해당 조건의 데이터가 없습니다.")
+                st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
             else:
                 win = {"월": 3, "주": 4, "일": 7}[gran]
                 ma_unit = {"월": "개월", "주": "주", "일": "일"}[gran]
@@ -730,7 +731,7 @@ with tab_nat:
         ip_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()].copy()
 
         if ip_src.empty:
-            st.info("해당 기간 IP 데이터가 없습니다.")
+            st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
         else:
             nat_order = (
                 ip_src.groupby("국가", observed=True)["매출액"].sum()
@@ -799,7 +800,7 @@ with tab_ip:
 
             ip_detail = sales[sales["IP명"].isin(selected_ips)]
             if ip_detail.empty:
-                st.info("선택된 기간에 해당 IP 데이터가 없습니다.")
+                st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
             else:
                 tot_rev = int(ip_detail["매출액"].sum())
                 tot_cnt = tx_count(ip_detail)
@@ -910,8 +911,8 @@ with tab_ip:
                 ip_nat_tbl["매출"] = ip_nat_tbl["매출"].apply(fmt_krw)
                 st.dataframe(ip_nat_tbl, use_container_width=True, height=min(400, len(ip_nat_tbl) * 40 + 55))
         else:
-            st.info("👈 사이드바에서 **프레임 (IP)** 를 선택하면 IP 상세 분석이 여기에 표시됩니다. "
-                    "여러 개 선택 시 합산·비교 분석도 제공됩니다.")
+            st.info("👈 사이드바에서 **IP명**을 선택하면 IP 상세 분석이 여기 표시돼요. "
+                    "여러 개를 고르면 합산·비교 분석도 볼 수 있어요.")
 
     st.divider()
 
@@ -923,8 +924,8 @@ with tab_ip:
         with st.container(border=True):
             st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 테마)</div>',
                         unsafe_allow_html=True)
-            st.caption("전체 거래 데이터에서 프레임·테마 등 세부 항목을 분류별로 집계합니다. "
-                       "현재 사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용됩니다.")
+            st.caption("전체 거래에서 프레임·테마 등 세부 항목을 분류별로 모아 보여줘요. "
+                       "사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용돼요.")
 
             dcol1, dcol2 = st.columns([1, 2])
             with dcol1:
@@ -945,14 +946,14 @@ with tab_ip:
                 detail_df = pd.DataFrame()
 
             if detail_df.empty:
-                st.info("해당 조건의 세부 항목 데이터가 없습니다.")
+                st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
             else:
                 if search_kw.strip():
                     detail_df = detail_df[
                         detail_df["항목"].astype(str).str.contains(search_kw.strip(), case=False, na=False)
                     ]
                 if detail_df.empty:
-                    st.warning(f"'{search_kw}' 검색 결과가 없습니다.")
+                    st.warning(f"'{search_kw}'에 대한 검색 결과가 없어요. 다른 검색어로 다시 찾아보세요.")
                 else:
                     d_rev = int(detail_df["매출"].sum())
                     d_cnt = int(detail_df["건수"].sum())
@@ -1001,7 +1002,7 @@ with tab_etc:
                 & (~df_hourly["취소 여부"])
             ]
         if df_hourly.empty:
-            st.info("시간대 데이터가 없습니다.")
+            st.info("선택한 기간에 시간대 데이터가 없어요. 날짜 범위를 넓혀 보세요.")
         else:
             hourly = (
                 df_hourly[df_hourly["시간대"] >= 0]
@@ -1035,4 +1036,4 @@ with tab_etc:
             st.download_button("CSV 다운로드 (전체)", csv_export,
                                "photoism_filtered.csv", "text/csv")
         else:
-            st.caption("체크하면 현재 필터 기준 집계 데이터를 표로 불러옵니다.")
+            st.caption("체크하면 현재 필터 기준 집계 데이터를 표로 불러와요.")

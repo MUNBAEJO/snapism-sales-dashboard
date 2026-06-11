@@ -84,7 +84,7 @@ with st.sidebar:
     )
     if st.button("💾 키 저장", use_container_width=True):
         save_gemini_key(key_input)
-        st.success("저장 완료!")
+        st.success("API 키를 저장했어요. 이제 리포트를 생성할 수 있어요.")
         st.rerun()
 
     st.divider()
@@ -98,13 +98,13 @@ with st.sidebar:
     st.divider()
     st.subheader("🔧 필터")
     ip_only = st.checkbox(
-        "🎭 IP/캐릭터만",
+        "🎭 IP/캐릭터 매출만 보기",
         value=True,
         help="스내피즘: 포토카드(커스텀)·스티커(커스텀) 제외\n포토이즘: 타이틀명 없는 건 제외",
     )
 
     st.divider()
-    st.caption("💡 Gemini 2.5 Flash + Google Search Grounding\n검색+분석 약 30초~2분 소요")
+    st.caption("💡 검색과 AI 분석에 약 30초~2분 걸려요.")
 
 # ─────────────────────────────────────────────
 # 날짜 범위
@@ -212,7 +212,7 @@ if gen_btn:
 # 리포트가 없는 경우
 # ─────────────────────────────────────────────
 if not insight:
-    st.info("👆 '리포트 생성' 버튼을 눌러 주간 회의 자료를 만들어 보세요.")
+    st.info("👆 '리포트 생성' 버튼을 누르면 주간 회의 자료를 만들 수 있어요.")
     st.stop()
 
 snap_data  = insight.get("snap",  {})
@@ -310,7 +310,7 @@ with st.container(border=True):
                     )
 
             if not rising and not falling:
-                st.caption("급등/급락 IP 없음")
+                st.caption("이번 주에는 급등·급락한 IP가 없어요.")
 
     render_brand(col_snap,  "🟦 스내피즘",  "brand-header-snap",  snap_data)
     with col_div:
@@ -335,18 +335,18 @@ with st.container(border=True):
     elif ai_text:
         model_used = ai.get("model", "gemini-2.5-flash")
         if model_used != "gemini-2.5-flash":
-            st.info(f"ℹ️ {model_used} 로 생성됨 (fallback)")
+            st.info(f"ℹ️ 기본 모델 대신 {model_used} 모델로 생성했어요.")
 
         st.markdown(f'<div class="report-box">{ai_text}</div>', unsafe_allow_html=True)
 
         st.download_button(
-            label="📄 텍스트 저장 (회의 준비용)",
+            label="📄 텍스트로 내려받기",
             data=ai_text,
             file_name=f"주간리포트_{insight.get('period',str(this_start)).replace(' ','')}.txt",
             mime="text/plain",
         )
     else:
-        st.warning("AI 리포트가 없습니다. 리포트 생성 버튼을 눌러주세요.")
+        st.warning("아직 생성된 AI 리포트가 없어요. 위 '리포트 생성' 버튼을 누르면 만들 수 있어요.")
 
 
 # ─────────────────────────────────────────────
@@ -367,7 +367,7 @@ with st.expander("🔍 원본 분석 데이터", expanded=False):
                     seen.add(ip)
                     unique.append(r)
             if not unique:
-                st.caption("데이터 없음")
+                st.caption("표시할 분석 데이터가 없어요. 리포트를 다시 생성해 주세요.")
                 return
             ddf = pd.DataFrame(unique)
             show_cols = [c for c in ["IP","이번주","지난주","변동","변동률","이번주_건수"] if c in ddf.columns]

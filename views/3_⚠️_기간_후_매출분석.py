@@ -159,13 +159,14 @@ def load_photo():
 # ── 헤더 ──────────────────────────────────────────────────────
 st.title("⚠️ 종료일 이후 매출 분석")
 render_guide("expired")
-st.caption("Jira WBS 타이틀명의 종료일(duedate) 이후 실제 매출 발생 건을 탐지합니다.")
+st.caption("Jira에 등록된 타이틀 종료일이 지난 뒤에도 매출이 발생한 건을 찾아요.")
 
 # ── 사이드바 ──────────────────────────────────────────────────
 st.sidebar.header("🔍 필터")
 brand_filter  = st.sidebar.radio("분석 대상", ["전체", "포토이즘만", "스내피즘만"])
-min_amount    = st.sidebar.number_input("최소 기한후 금액 (KRW)", value=0, step=10000)
-exclude_far   = st.sidebar.checkbox("기한 2099년 이상 제외 (무기한)", value=True)
+min_amount    = st.sidebar.number_input("최소 기한 초과 금액 (KRW)", value=0, step=10000)
+exclude_far   = st.sidebar.checkbox("무기한 타이틀 제외", value=True,
+                                    help="종료일이 2099년 이후인 타이틀은 분석에서 빼요.")
 
 with st.sidebar:
     if st.button("🔄 Jira 새로고침"):
@@ -188,7 +189,7 @@ else:
     frames = [df for df in [snap_df, photo_df] if not df.empty]
 
 if not frames:
-    st.warning("매출 데이터가 없습니다.")
+    st.warning("불러올 매출 데이터가 없어요. 사이드바에서 분석 대상을 바꾸거나 데이터를 업로드해 주세요.")
     st.stop()
 
 all_sales = pd.concat(frames, ignore_index=True)
@@ -249,7 +250,7 @@ with st.spinner("기한 초과 분석 중..."):
 st.divider()
 
 if not rows:
-    st.success("✅ 기한 초과 매출이 없습니다!")
+    st.success("✅ 기한을 넘긴 매출이 없어요.")
     st.stop()
 
 result_df = pd.DataFrame(rows).sort_values("기한후 금액", ascending=False).reset_index(drop=True)
@@ -308,7 +309,7 @@ with st.container(border=True):
 st.divider()
 with st.container(border=True):
     st.markdown('<div class="section-title">🔍 상세 거래 내역</div>', unsafe_allow_html=True)
-    st.caption("포토이즘은 일·타이틀·매장 단위 집계 행, 스내피즘은 개별 거래 행으로 표시됩니다. (건수 = 실거래 수)")
+    st.caption("포토이즘은 일·타이틀·매장 단위로 묶어서, 스내피즘은 거래 건별로 보여줘요. (건수 = 실거래 수)")
 
     sel = st.selectbox(
         "타이틀 선택",
@@ -350,4 +351,4 @@ with st.container(border=True):
         csv = detail[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button("CSV 다운로드", csv, "기한초과매출.csv", "text/csv")
     else:
-        st.info("상세 데이터 없음")
+        st.info("이 타이틀에는 기한 초과 거래가 없어요.")

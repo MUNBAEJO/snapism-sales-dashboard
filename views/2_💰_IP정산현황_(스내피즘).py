@@ -164,12 +164,12 @@ df_all   = load_sales()
 jira_raw = load_jira()
 
 if df_all.empty:
-    st.warning("매출 데이터가 없습니다.")
+    st.warning("아직 불러올 매출 데이터가 없어요. 어드민에서 매출 CSV를 먼저 올려 주세요.")
     st.stop()
 
 if "_error" in jira_raw:
     st.error(f"Jira 연결 오류: {jira_raw['_error']}")
-    st.info("config.json의 jira 설정을 확인하세요.")
+    st.info("Jira 연결 설정을 확인해 주세요.")
     jira_raw = {}
 
 # ── 프레임 목록 및 저장 매핑 ───────────────────────────────────
@@ -213,7 +213,7 @@ date_range    = st.sidebar.date_input(
 st.sidebar.divider()
 
 if not matched_jira:
-    st.warning("어드민 데이터와 매칭되는 Snapism Jira IP가 없습니다.")
+    st.warning("매출과 연결할 Snapism Jira IP가 아직 없어요. Jira 티켓 이름과 어드민 프레임 이름을 맞춰 주세요.")
     st.stop()
 
 # ── 선택된 프레임 → Jira IP 자동 탐지 ───────────────────────────
@@ -274,12 +274,12 @@ for _k in ["_rs_a_input", "_rs_m_input"]:
 _rs_a_pct = st.sidebar.number_input(
     "소속사 RS (%)", min_value=0.0, max_value=100.0,
     step=0.1, format="%.2f", key="_rs_a_input",
-    help="선택된 프레임의 Jira IP 값이 자동으로 채워집니다. 직접 수정 가능합니다.",
+    help="선택한 프레임의 Jira IP 값이 자동으로 채워져요. 필요하면 직접 고칠 수 있어요.",
 )
 _rs_m_pct = st.sidebar.number_input(
     "대행사 RS (%)", min_value=0.0, max_value=100.0,
     step=0.1, format="%.2f", key="_rs_m_input",
-    help="선택된 프레임의 Jira IP 값이 자동으로 채워집니다. 직접 수정 가능합니다.",
+    help="선택한 프레임의 Jira IP 값이 자동으로 채워져요. 필요하면 직접 고칠 수 있어요.",
 )
 if _jira_rs_a > 0 or _jira_rs_m > 0:
     st.sidebar.caption(f"Jira 원본: 소속사 {_jira_rs_a:.2f}% / 대행사 {_jira_rs_m:.2f}%")
@@ -323,7 +323,7 @@ with col_map2:
         "어드민 프레임 선택 (매출 데이터 출처)",
         options=all_frames,
         key="frames_multiselect",
-        help="여러 프레임을 선택하면 합산 정산됩니다. '매핑 저장'을 누르면 다음번에 자동 적용됩니다.",
+        help="여러 프레임을 선택하면 합산해서 정산해요. '매핑 저장'을 누르면 다음번에 자동으로 적용돼요.",
     )
 
 with col_map3:
@@ -331,13 +331,13 @@ with col_map3:
     st.write("")
     if st.button("💾 매핑 저장", use_container_width=True):
         save_mapping(selected_ip, selected_frames)
-        st.success("저장됐습니다!")
+        st.success("매핑을 저장했어요. 다음번 정산에 자동으로 적용돼요.")
         st.cache_data.clear()
 
 st.divider()
 
 if not selected_frames:
-    st.info("위에서 정산할 프레임을 선택하세요.")
+    st.info("위에서 정산할 프레임을 선택해 주세요.")
     st.stop()
 
 # ── 매출 필터링 ───────────────────────────────────────────────
@@ -390,7 +390,7 @@ with st.container(border=True):
     st.markdown('<div class="section-title">🌏 국가별 정산 내역</div>', unsafe_allow_html=True)
 
     if paid.empty and coupons.empty:
-        st.warning("해당 기간에 해당 프레임의 매출이 없습니다.")
+        st.warning("이 기간에는 선택한 프레임의 매출이 없어요. 정산 기간이나 프레임을 바꿔 보세요.")
     else:
         if not paid.empty:
             nat_paid = (
@@ -552,7 +552,7 @@ with st.container(border=True):
                               xaxis_tickformat=",", yaxis_title="", margin=dict(t=10,b=0))
         st.plotly_chart(fig_cat, use_container_width=True)
     else:
-        st.caption("상품 카테고리 데이터 없음")
+        st.caption("이 기간에는 상품 카테고리별 매출이 없어요.")
 
     # ── 상품 이름별 정산 ────────────────────────────────────────────
 st.divider()
@@ -597,7 +597,7 @@ with st.container(border=True):
             st.caption("매출 TOP 5")
             st.plotly_chart(fig_pie, use_container_width=True)
     else:
-        st.caption("상품 이름 데이터 없음")
+        st.caption("이 기간에는 상품 이름별 매출이 없어요.")
 
     # ── 일별 추이 ─────────────────────────────────────────────────
     with st.expander("📅 일별 매출 추이"):
@@ -636,7 +636,7 @@ with st.container(border=True):
         with st.expander(f"⚠️ Jira 미매칭 어드민 프레임 ({len(unmatched_frames)}개) — 클릭해서 확인"):
             st.caption(
                 "어드민에 매출이 있지만 Snapism Jira 티켓과 자동 매칭되지 않은 프레임입니다. "
-                "위에서 IP를 선택한 뒤 프레임을 직접 추가하고 '💾 매핑 저장'을 눌러두면 다음번에 자동 적용됩니다."
+                "위에서 IP를 선택한 뒤 프레임을 직접 추가하고 '💾 매핑 저장'을 눌러두면 다음번에 자동으로 적용돼요."
             )
             st.dataframe(
                 pd.DataFrame({"프레임 이름": unmatched_frames}),
