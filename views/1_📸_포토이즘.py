@@ -225,6 +225,7 @@ DETAIL_DIMS = {
     "프레임 이름": "프레임 이름",
     "테마 (구좌: BASIC/WITH/EVENT)": "구좌",
     "타이틀 (원본 그대로)": "타이틀명",
+    "타이틀 (이름+단가별)": "타이틀_단가",
     "상품 카테고리 (브랜드)": "브랜드",
     "채널 (중분류)": "중분류",
     "사업형태 (소분류)": "소분류",
@@ -235,6 +236,16 @@ _DETAIL_EXPR = {
     "타이틀": ip_classify.IP_TITLE_RAW_SQL,   # 날짜+이름(접두어제거) → python에서 별칭통합
     "IP명":  ip_classify.IP_NAMECORE_SQL,     # 이름토큰 → python 별칭통합
     "IP구분": ip_classify.IP_GUBUN_SQL,
+    # 같은 타이틀명이 단가만 다르게 여러 개 등록된 경우(예: 마카오) 단가로 분리.
+    # 라벨: "타이틀명 · 단가 결제단위"  (예: 260518 N.Flying · 99 MOP)
+    "타이틀_단가": (
+        "CONCAT("
+        "COALESCE(NULLIF(TRIM(CAST(\"타이틀명\" AS VARCHAR)), ''), '(타이틀명 없음)'),"
+        "' · ',"
+        "CAST(CAST(ROUND(COALESCE(TRY_CAST(\"상품 단가\" AS DOUBLE), 0)) AS BIGINT) AS VARCHAR),"
+        "' ', COALESCE(NULLIF(TRIM(CAST(\"결제 단위\" AS VARCHAR)), ''), 'KRW')"
+        ")"
+    ),
 }
 
 
@@ -308,7 +319,7 @@ def load_sales_detail(group_col, start_date, end_date,
     # 선택된 IP명(사이드바 멀티셀렉트)으로 좁히기 — 타이틀 차원이면 IP명 포함 여부로 필터
     if ip_list:
         ipset = [str(x) for x in ip_list]
-        if group_col == "타이틀":
+        if group_col in ("타이틀", "타이틀_단가"):
             df = df[df["항목"].astype(str).apply(
                 lambda t: any(name in t for name in ipset))]
         else:
@@ -958,7 +969,9 @@ with tab_ip:
             st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 테마)</div>',
                         unsafe_allow_html=True)
             st.caption("전체 거래에서 프레임·테마 등 세부 항목을 분류별로 모아 보여줘요. "
-                       "사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용돼요.")
+                       "사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용돼요.  "
+                       "※ 같은 타이틀명이 단가만 다르게 등록된 경우(예: 마카오)는 "
+                       "**「타이틀 (이름+단가별)」** 을 고르면 단가별로 나눠서 볼 수 있어요.")
 
             dcol1, dcol2 = st.columns([1, 2])
             with dcol1:
