@@ -154,11 +154,10 @@ def _load_data(_agg_mtime, _cfg_mtime):
         df["국가코드"].astype(str).str.lower().str.strip().replace("nan", "")
         if "국가코드" in df.columns else pd.Series("", index=df.index)
     )
-    df["매출액"] = (
-        df["KRW환산금액"]
-        + df["쿠폰KRW"]       * _cc.isin(_COUPON_CC).astype(int)
-        + df["서비스코인KRW"] * _cc.isin(_COIN_CC).astype(int)
-    )
+    # 매출 구성: 실결제(순수) + 쿠폰기여 + 코인기여 (지정 국가만 쿠폰·코인 가산)
+    df["쿠폰기여"] = (df["쿠폰KRW"]       * _cc.isin(_COUPON_CC).astype(int)).astype(int)
+    df["코인기여"] = (df["서비스코인KRW"] * _cc.isin(_COIN_CC).astype(int)).astype(int)
+    df["매출액"]   = df["KRW환산금액"] + df["쿠폰기여"] + df["코인기여"]
     return df
 
 
@@ -459,6 +458,32 @@ c2.metric("어제 매출 (KRW)", fmt_krw(yest_amt), f"{yest_cnt:,}건")
 c3.metric("이번 달 누적", fmt_krw(month_amt), f"{month_start.strftime('%m/%d')}~오늘")
 c4.metric("조회기간 합계", fmt_krw(period_amt), f"{tx_count(sales):,}건")
 
+# ── 매출 정의 + 구성(실결제·쿠폰·서비스코인) ──────────────────────────────
+st.caption("💡 매출 = 실결제 + 쿠폰 + 서비스코인 (정산 기준) — "
+           "지정 국가는 쿠폰·서비스코인도 실제 정산되는 실매출이에요.")
+_pure = int(sales["KRW환산금액"].sum())
+_cpn  = int(sales["쿠폰기여"].sum())
+_coin = int(sales["코인기여"].sum())
+_comp_tot = _pure + _cpn + _coin
+if _comp_tot > 0:
+    fig_comp = go.Figure()
+    for _lbl, _val, _clr in [("실결제", _pure, PRIMARY),
+                             ("쿠폰", _cpn, "#EF9F27"),
+                             ("서비스코인", _coin, SECONDARY)]:
+        _pct = _val / _comp_tot * 100
+        fig_comp.add_trace(go.Bar(
+            y=["매출 구성"], x=[_val], name=f"{_lbl} {_pct:.0f}%", orientation="h",
+            marker_color=_clr,
+            hovertemplate=f"{_lbl}: ₩%{{x:,}} ({_pct:.1f}%)<extra></extra>",
+        ))
+    fig_comp.update_layout(
+        barmode="stack", height=104, bargap=0.05,
+        legend=dict(orientation="h", y=-0.55, x=0, font=dict(size=12)),
+        margin=dict(t=4, b=0, l=0, r=0),
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+    )
+    st.plotly_chart(fig_comp, use_container_width=True)
+
 # ── IP 구분별 매출 (탭: 전체 + 구분별 → 각 탭 안에 타이틀 상세) ────────────────
 _GUB_COLORS = {"아티스트": PRIMARY, "캐릭터": SECONDARY, "렌탈": "#4cc9f0",
                "PICK": PINK, "기획(P)": "#3a0ca3"}
@@ -677,17 +702,22 @@ with tab_nat:
 
         nat = (
             sales.groupby(["국가", "결제 단위"], observed=True)
-            .agg(건수=("건수", "sum"), 현지통화=("최종 결제 금액", "sum"), 매출=("매출액", "sum"))
+            .agg(건수=("건수", "sum"), 현지통화=("최종 결제 금액", "sum"), 매출=("매출액", "sum"),
+                 _쿠폰=("쿠폰기여", "sum"), _코인=("코인기여", "sum"))
             .reset_index().sort_values("매출", ascending=False)
         )
         nat["국기"] = nat["국가"].astype(str).apply(flag_url)
         nat["현지 통화 금액"] = nat.apply(lambda r: fmt_orig(r["현지통화"], r["결제 단위"]), axis=1)
         _tot = nat["매출"].sum()
         nat["비중"] = (nat["매출"] / _tot) if _tot else 0
+        # 매출 중 쿠폰·서비스코인 비중 (높을수록 쿠폰 기반 시장)
+        nat["쿠폰·코인"] = (
+            (nat["_쿠폰"] + nat["_코인"]) / nat["매출"].where(nat["매출"] != 0, 1)
+        ).fillna(0).clip(0, 1)
 
         with col_nat_tbl:
             st.dataframe(
-                nat[["국기", "국가", "결제 단위", "건수", "현지 통화 금액", "매출", "비중"]],
+                nat[["국기", "국가", "결제 단위", "건수", "현지 통화 금액", "매출", "쿠폰·코인", "비중"]],
                 use_container_width=True, hide_index=True, height=460,
                 column_config={
                     "국기": st.column_config.ImageColumn(" ", width="small"),
@@ -696,12 +726,15 @@ with tab_nat:
                     "건수": st.column_config.NumberColumn("건수", format="localized"),
                     "현지 통화 금액": st.column_config.TextColumn("현지 통화 금액"),
                     "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
+                    "쿠폰·코인": st.column_config.NumberColumn(
+                        "쿠폰·코인", format="percent",
+                        help="매출 중 쿠폰·서비스코인이 차지하는 비중. 높을수록 쿠폰 기반 시장이에요."),
                     "비중": st.column_config.ProgressColumn(
                         "비중", format="percent", min_value=0,
                         max_value=float(nat["비중"].max()) if len(nat) else 1.0),
                 },
             )
-            st.caption(f"전체 {len(nat)}개국 · 표 헤더를 클릭하면 정렬됩니다.")
+            st.caption("전체 {}개국 · 표 헤더를 클릭하면 정렬돼요. ‘쿠폰·코인’이 높은 국가는 매출 대부분이 쿠폰 정산분이에요.".format(len(nat)))
 
         with col_nat_bar:
             TOPN = 10
