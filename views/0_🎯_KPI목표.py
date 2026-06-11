@@ -695,6 +695,105 @@ render_guide("kpi")
 _seg  = SEG_MAP[seg_choice]
 today = date.today()
 
+# ── 상단 벤토 요약 (이번 달 실적 한눈에) ────────────────────────
+#   합계(히어로 + 구성 막대) + 팀/항목 4타일. 상세 차트·표는 아래 탭에서.
+#   진행 중인 달이라 전월 '같은 기간(1일~오늘)'과 비교해 착시를 없앤다.
+#   요약이 실패해도 본 화면은 떠야 하므로 통째로 try/except 로 감싼다.
+try:
+    _dd = _division_daily(_seg)
+    if not _dd.empty:
+        _dd = _dd.copy()
+        _dd["_y"] = _dd["날짜"].dt.year
+        _dd["_m"] = _dd["날짜"].dt.month
+        _dd["_d"] = _dd["날짜"].dt.day
+        _pm = today.month - 1 if today.month > 1 else 12
+        _py = today.year if today.month > 1 else today.year - 1
+        _curm  = _dd[(_dd["_y"] == today.year) & (_dd["_m"] == today.month)]
+        _prevm = _dd[(_dd["_y"] == _py) & (_dd["_m"] == _pm) & (_dd["_d"] <= today.day)]
+
+        def _bv(d, s):
+            return int(d[d["팀/항목"] == s]["매출액"].sum())
+
+        def _eok(v):
+            return f"{v/1e8:,.1f}"
+
+        def _delta(cur, prev, big=False):
+            fs = "13px" if big else "11px"
+            if prev <= 0:
+                return f'<span style="font-size:{fs};color:#9aa0aa;">전월 같은 기간 비교 없음</span>'
+            pct = (cur - prev) / prev * 100
+            up = pct >= 0
+            color = "#1d8a4e" if up else "#c0392b"
+            return (f'<span style="font-size:{fs};color:{color};font-weight:600;">'
+                    f'{"▲" if up else "▼"} 전월 같은 기간 {pct:+.1f}%</span>')
+
+        _vals  = {s: _bv(_curm, s) for s in DIV_ORDER}
+        _tot_c = sum(_vals.values())
+        _tot_p = int(_prevm["매출액"].sum())
+
+        _segbar = "".join(
+            f'<div style="width:{(_vals[s]/_tot_c*100) if _tot_c else 0:.2f}%;'
+            f'background:{DIV_COLORS.get(s, "#888")};"></div>' for s in DIV_ORDER
+        )
+        _legend = "".join(
+            f'<span><span class="kbz-dot" style="background:{DIV_COLORS.get(s, "#888")};"></span>'
+            f'{DIV_LABEL.get(s, s).split(" ")[0]} {((_vals[s]/_tot_c*100) if _tot_c else 0):.0f}%</span>'
+            for s in DIV_ORDER
+        )
+
+        _areas = {"A팀": "a", "C팀": "c", "픽": "pick", "스내피즘": "snap"}
+        _tiles = ""
+        for _s in DIV_ORDER:
+            _cv, _pv = _vals[_s], _bv(_prevm, _s)
+            _tiles += (
+                f'<div class="kbz-tile" style="grid-area:{_areas.get(_s, "")};'
+                f'border-left:6px solid {DIV_COLORS.get(_s, "#888")};">'
+                f'<div class="kbz-row"><span class="kbz-dot" style="background:{DIV_COLORS.get(_s, "#888")};"></span>'
+                f'<span class="kbz-lbl">{DIV_LABEL.get(_s, _s)}</span></div>'
+                f'<div class="kbz-val">{fmt_krw(_cv)}</div>'
+                f'{_delta(_cv, _pv)}</div>'
+            )
+        _seg_note = "" if _seg == "TTL" else f" · {_seg}"
+        st.markdown(f"""
+<style>
+#kpi-bento .kbz-grid{{display:grid;grid-template-columns:1.7fr 1fr 1fr;gap:14px;
+  grid-template-areas:"hero a c" "hero pick snap";margin:4px 0 6px;}}
+#kpi-bento .kbz-tile{{background:#ffffff;border:1px solid #e7ecf7;border-radius:18px;
+  padding:18px 20px;box-shadow:0 3px 14px rgba(67,97,238,0.07);min-height:108px;
+  display:flex;flex-direction:column;justify-content:center;}}
+#kpi-bento .kbz-hero{{grid-area:hero;background:#eef2fe;border:none;padding:24px 28px;
+  justify-content:center;}}
+#kpi-bento .kbz-row{{display:flex;align-items:center;gap:6px;margin-bottom:7px;}}
+#kpi-bento .kbz-dot{{width:10px;height:10px;border-radius:50%;display:inline-block;}}
+#kpi-bento .kbz-lbl{{font-size:12.5px;color:#6b7280;}}
+#kpi-bento .kbz-val{{font-size:1.25rem;font-weight:800;color:#1a1a2e;
+  letter-spacing:-0.3px;line-height:1.1;margin-bottom:5px;}}
+#kpi-bento .kbz-bar{{display:flex;height:14px;border-radius:7px;overflow:hidden;
+  gap:2px;margin-top:16px;}}
+#kpi-bento .kbz-bar>div{{height:100%;}}
+#kpi-bento .kbz-leg{{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px;}}
+#kpi-bento .kbz-leg span{{font-size:12px;color:#6b7280;display:flex;align-items:center;gap:6px;}}
+@media (max-width:760px){{#kpi-bento .kbz-grid{{grid-template-columns:1fr 1fr;
+  grid-template-areas:"hero hero" "a c" "pick snap";}}}}
+</style>
+<div id="kpi-bento"><div class="kbz-grid">
+  <div class="kbz-tile kbz-hero">
+    <div style="font-size:12.5px;color:#185FA5;">{today.month}월 합계 실적
+      <span style="color:#85B7EB;">(1일~{today.day}일 · 진행 중){_seg_note}</span></div>
+    <div style="font-size:2.1rem;font-weight:800;color:#1a1a2e;letter-spacing:-0.8px;line-height:1.05;margin:7px 0 6px;">
+      {fmt_krw(_tot_c)}</div>
+    {_delta(_tot_c, _tot_p, big=True)}
+    <div class="kbz-bar">{_segbar}</div>
+    <div class="kbz-leg">{_legend}</div>
+  </div>
+  {_tiles}
+</div></div>
+""", unsafe_allow_html=True)
+        st.caption("※ 진행 중인 달이라 ‘전월 같은 기간(1일~오늘)’과 비교해요. "
+                   "정밀 숫자·월별 추이는 아래 탭에서 보세요.")
+except Exception:
+    pass
+
 tab_all, tab_team, tab_weekly, tab_yoy = st.tabs([
     "📊 전체", "👥 팀별", "📅 주차별", "📈 전년비 (전사)"
 ])
@@ -717,30 +816,8 @@ with tab_all:
 
         div["연월"] = div["연도"].astype(str) + "-" + div["월"].apply(lambda x: f"{x:02d}")
 
-        prev_m = today.month - 1 if today.month > 1 else 12
-        prev_y = today.year if today.month > 1 else today.year - 1
-        cur  = div[(div["연도"] == today.year) & (div["월"] == today.month)]
-        prev = div[(div["연도"] == prev_y) & (div["월"] == prev_m)]
-
-        def _sv(d, s):
-            return int(d[d["팀/항목"] == s]["실적"].sum())
-
-        tot_cur  = int(cur["실적"].sum())
-        tot_prev = int(prev["실적"].sum())
-
-        kpi_cols = st.columns(1 + len(DIV_ORDER))
-        kpi_cols[0].metric(
-            f"{today.month}월 합계 실적", fmt_krw(tot_cur),
-            f"{(tot_cur-tot_prev)/tot_prev*100:+.1f}% 전월비" if tot_prev > 0 else "",
-        )
-        for col, seg_name in zip(kpi_cols[1:], DIV_ORDER):
-            cv, pv = _sv(cur, seg_name), _sv(prev, seg_name)
-            col.metric(
-                DIV_LABEL[seg_name], fmt_krw(cv),
-                f"{(cv-pv)/pv*100:+.1f}% 전월비" if pv > 0 else "",
-            )
-
-        st.divider()
+        # 이번 달 합계·팀/항목 스냅샷은 화면 맨 위 '벤토 요약'으로 일원화(중복 제거).
+        # 이 탭은 추이·요약표에 집중한다.
 
         # ── 월별 실적 추이 (팀/항목 스택 + 합계 라인) ──
         st.markdown('<div class="section-title">월별 실적 추이 (A팀·C팀·픽·스내피즘)</div>', unsafe_allow_html=True)
