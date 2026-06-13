@@ -115,7 +115,7 @@ def _file_mtime(p):
         return 0.0
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _load_data(_agg_mtime, _cfg_mtime):
     """집계 parquet 로드 (category 인코딩). 캐시 키 = 집계·환율 파일 mtime →
     파일이 바뀔 때만 재계산(매일 ingest/환율 갱신 시). 평소엔 즉시 캐시 히트."""
@@ -166,7 +166,7 @@ def load_data():
     return _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _sidebar_options(_agg_mtime):
     """사이드바 드롭다운 옵션을 데이터 버전당 한 번만 계산(캐시).
     매 렌더마다 2.9M행 unique 스캔을 피함."""
@@ -197,7 +197,7 @@ def _sidebar_options(_agg_mtime):
     }
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _load_hourly(_mtime):
     """시간대 집계 parquet 로드 (시간대 차트 전용). 캐시 키 = 파일 mtime."""
     if not HOURLY_FILE.exists():
