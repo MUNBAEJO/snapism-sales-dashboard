@@ -731,6 +731,39 @@ try:
         _tot_c = sum(_vals.values())
         _tot_p = int(_prevm["매출액"].sum())
 
+        # ── 월말 예상(run-rate) + 목표 달성률 ──
+        #   월말 예상 = 현재 누적 ÷ 경과일 × 당월 일수 (단순 선형 추정)
+        #   목표는 A팀·C팀만 구분(스코프)이 일치 → 그 둘만, 그리고 지역=TTL일 때만 표시.
+        #   (TTL 목표=포토이즘 전사 범위라 벤토 합계와 스코프가 달라 전체 달성률은 두지 않음)
+        _dim     = pd.Period(f"{today.year}-{today.month:02d}", freq="M").days_in_month
+        _elapsed = max(today.day, 1)
+
+        def _runrate(cur):
+            return int(cur / _elapsed * _dim)
+
+        _TGT_SEG = {"A팀": "A팀", "C팀": "C팀"}
+
+        def _tgt(s):
+            g = _TGT_SEG.get(s)
+            if not g or _seg != "TTL":
+                return None
+            t = load_targets(g)
+            r = t[(t["연도"] == today.year) & (t["월"] == today.month)]
+            if r.empty:
+                return None
+            v = int(r["매출목표"].iloc[0])
+            return v if v > 0 else None
+
+        def _goal_line(cur, s):
+            tg = _tgt(s)
+            if tg is None:
+                return '<div class="kbz-goal muted">🎯 목표 미설정</div>'
+            mtd  = cur / tg * 100
+            proj = _runrate(cur) / tg * 100
+            pc   = "#1d8a4e" if proj >= 100 else ("#c77700" if proj >= 85 else "#c0392b")
+            return (f'<div class="kbz-goal">🎯 목표 {mtd:.0f}% '
+                    f'<span style="color:{pc};">· 예상 {proj:.0f}%</span></div>')
+
         _segbar = "".join(
             f'<div style="width:{(_vals[s]/_tot_c*100) if _tot_c else 0:.2f}%;'
             f'background:{DIV_COLORS.get(s, "#888")};"></div>' for s in DIV_ORDER
@@ -751,7 +784,8 @@ try:
                 f'<div class="kbz-row"><span class="kbz-dot" style="background:{DIV_COLORS.get(_s, "#888")};"></span>'
                 f'<span class="kbz-lbl">{DIV_LABEL.get(_s, _s)}</span></div>'
                 f'<div class="kbz-val">{fmt_krw(_cv)}</div>'
-                f'{_delta(_cv, _pv)}</div>'
+                f'{_delta(_cv, _pv)}'
+                f'{_goal_line(_cv, _s)}</div>'
             )
         _seg_note = "" if _seg == "TTL" else f" · {_seg}"
         st.markdown(f"""
@@ -773,6 +807,10 @@ try:
 #kpi-bento .kbz-bar>div{{height:100%;}}
 #kpi-bento .kbz-leg{{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px;}}
 #kpi-bento .kbz-leg span{{font-size:12px;color:#6b7280;display:flex;align-items:center;gap:6px;}}
+#kpi-bento .kbz-goal{{font-size:11px;color:#5b6470;font-weight:600;margin-top:5px;}}
+#kpi-bento .kbz-goal.muted{{color:#b3b9c4;font-weight:500;}}
+#kpi-bento .kbz-rr{{font-size:13px;color:#185FA5;font-weight:700;margin-top:9px;}}
+#kpi-bento .kbz-rr span{{font-weight:500;opacity:.7;}}
 @media (max-width:760px){{#kpi-bento .kbz-grid{{grid-template-columns:1fr 1fr;
   grid-template-areas:"hero hero" "a c" "pick snap";}}}}
 </style>
@@ -783,6 +821,8 @@ try:
     <div style="font-size:2.1rem;font-weight:800;color:#1a1a2e;letter-spacing:-0.8px;line-height:1.05;margin:7px 0 6px;">
       {fmt_krw(_tot_c)}</div>
     {_delta(_tot_c, _tot_p, big=True)}
+    <div class="kbz-rr">🎯 월말 예상 {fmt_krw(_runrate(_tot_c))}
+      <span>· 경과 {today.day}일 평균 기준</span></div>
     <div class="kbz-bar">{_segbar}</div>
     <div class="kbz-leg">{_legend}</div>
   </div>
@@ -790,6 +830,8 @@ try:
 </div></div>
 """, unsafe_allow_html=True)
         st.caption("※ 진행 중인 달이라 ‘전월 같은 기간(1일~오늘)’과 비교해요. "
+                   "‘월말 예상’은 현재 일평균 × 당월 일수로 단순 추정한 값이에요. "
+                   "목표 달성률은 목표가 같은 범위로 잡힌 A팀·C팀만 표시해요(픽·스내피즘은 목표 미설정). "
                    "정밀 숫자·월별 추이는 아래 탭에서 보세요.")
 except Exception:
     pass
