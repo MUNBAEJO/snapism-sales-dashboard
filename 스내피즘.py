@@ -87,6 +87,30 @@ h1 {{ font-weight: 700 !important; }}
     border-left: 3px solid #c7d0ee !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab-panel"] {{ padding-top: 8px !important; }}
+
+/* ── 모바일(좁은 화면) 최적화 ── 데스크탑 레이아웃은 그대로 두고 640px 이하만 조정 */
+@media (max-width: 640px) {{
+    /* 본문 좌우 여백 축소 — 좁은 화면 폭을 최대한 활용 */
+    [data-testid="stMainBlockContainer"], .block-container {{
+        padding-left: 0.7rem !important;
+        padding-right: 0.7rem !important;
+        padding-top: 3.2rem !important;
+    }}
+    /* 제목·지표 글자 한 단계 축소(가로 넘침 방지) */
+    h1 {{ font-size: 1.5rem !important; line-height: 1.25 !important; }}
+    h2 {{ font-size: 1.2rem !important; }}
+    [data-testid="stMetricValue"] {{ font-size: 1.4rem !important; }}
+    [data-testid="stMetricLabel"] p {{ font-size: 0.8rem !important; }}
+    /* 탭 목록이 많아도 가로 스크롤로 모두 접근 가능하게 */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {{
+        overflow-x: auto !important; flex-wrap: nowrap !important;
+    }}
+    [data-testid="stTabs"] [data-baseweb="tab"] {{ white-space: nowrap !important; }}
+    /* 섹션 카드 안쪽 여백 축소 */
+    [data-testid="stVerticalBlockBorderWrapper"] {{ padding: 2px 11px 10px !important; }}
+    /* 사이드바를 화면 대부분 폭으로 펼쳐 필터 조작 편하게 */
+    [data-testid="stSidebar"] {{ min-width: 84vw !important; }}
+}}
 </style>
 """, unsafe_allow_html=True)
 

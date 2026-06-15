@@ -302,8 +302,12 @@ def render_account_bar() -> None:
             white-space: nowrap; transition: background .12s;
         }}
         .account-bar a.logout:hover {{ background:#fff5f5; }}
-        /* 모바일 좁은 화면에선 이메일 숨기고 로그아웃만 */
-        @media (max-width: 640px) {{ .account-bar .who {{ display:none; }} }}
+        /* 모바일: 상단 메뉴(햄버거·⋮)와 겹치지 않게 우하단으로, 이메일 숨김 */
+        @media (max-width: 640px) {{
+            .account-bar {{ top: auto; bottom: 12px; right: 12px; }}
+            .account-bar .who {{ display: none; }}
+            .account-bar a.logout {{ box-shadow: 0 2px 8px rgba(0,0,0,0.12); }}
+        }}
         </style>
         <div class="account-bar">
           <span class="who">👤 <b>{email}</b>{role}</span>
