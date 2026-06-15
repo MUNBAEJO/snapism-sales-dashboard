@@ -80,6 +80,7 @@ BRAND_FILE    = BASE_DIR / "data" / "kpi_brand.csv"
 WEEKLY_FILE   = BASE_DIR / "data" / "kpi_weekly.csv"
 ALIAS_FILE    = BASE_DIR / "data" / "frame_alias.json"
 CONFIG_FILE   = BASE_DIR / "config.json"
+JIRA_CACHE    = BASE_DIR / "data" / "jira_ip_dates_cache.json"   # 타이틀명→종료일(로컬 캐시)
 
 _COUPON_CC = {"la", "gb", "de", "th", "lv", "mx"}
 _COIN_CC   = {"cl", "la", "pe", "gb", "de", "lv", "mx"}
@@ -295,6 +296,87 @@ def _photoism_ip_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
 
 def photoism_ip_daily() -> pd.DataFrame:
     return _photoism_ip_daily(_mtime(AGG_FILE), _mtime(CONFIG_FILE))
+
+
+@st.cache_data(show_spinner=False)
+def _photoism_ipname_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
+    """포토이즘 agg → 날짜·IP구분·IP명·국내여부별 KRW 매출액 (취소 제외).
+    개별 IP 증감(무버) 산출용. 매출 산식은 _photoism_ip_daily 와 100% 동일."""
+    cols = ["날짜", "IP구분", "IP명", "_kr", "매출액"]
+    if not AGG_FILE.exists():
+        return pd.DataFrame(columns=cols)
+    df = pq.read_table(str(AGG_FILE)).to_pandas(strings_to_categorical=True)
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+    df = df[df["날짜"].notna()]
+    df = df[~df["취소 여부"].astype(bool)]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    ex   = load_exchange_rates()
+    unit = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW")
+    rate = unit.map(ex).fillna(1)
+    cc   = df["국가코드"].astype(str).str.lower().str.strip()
+    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    base = pd.DataFrame({
+        "날짜":   df["날짜"].dt.normalize().values,
+        "IP구분":  df["IP구분"].astype(str).values,
+        "IP명":    df["IP명"].astype(str).values,
+        "_kr":    cc.eq("kr").values,
+        "매출액": (
+            (df["최종 결제 금액"] * rate).round(0)
+            + (df["쿠폰 할인 금액"] * rate).round(0) * cc.isin(_COUPON_CC)
+            + (df["서비스코인"]     * rate).round(0) * cc.isin(_COIN_CC)
+        ).values,
+    })
+    return base.groupby(["날짜", "IP구분", "IP명", "_kr"], as_index=False)["매출액"].sum()
+
+
+def photoism_ipname_daily() -> pd.DataFrame:
+    return _photoism_ipname_daily(_mtime(AGG_FILE), _mtime(CONFIG_FILE))
+
+
+@st.cache_data(show_spinner=False)
+def _jira_due_map(_cache_mtime) -> dict:
+    """타이틀명 → 종료일(YYYY-MM-DD). 로컬 Jira 캐시에서만 읽음(네트워크 X).
+    2099년 이후(무기한)·미설정은 제외."""
+    if not JIRA_CACHE.exists():
+        return {}
+    try:
+        with open(JIRA_CACHE, encoding="utf-8") as f:
+            c = json.load(f)
+        data = c.get("ip_dates_all", {}).get("data", {})
+    except Exception:
+        return {}
+    out = {}
+    for title, v in data.items():
+        dd = v.get("duedate") if isinstance(v, dict) else None
+        if dd and str(dd) < "2099-01-01":
+            out[str(title)] = str(dd)
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
+    """IP명 → 종료상태. 포토이즘 A·C·픽 한정.
+    그 IP의 (종료일이 등록된) 모든 타이틀이 이번 달 전에 끝났으면 '🔚 종료',
+    하나라도 이번 달 이후까지 살아있으면 '🔴 판매중'. 종료일 정보가 없으면 키 없음(→'—')."""
+    due = _jira_due_map(_cache_mtime)
+    if not due or not AGG_FILE.exists():
+        return {}
+    try:
+        df = pq.read_table(str(AGG_FILE), columns=["IP구분", "IP명", "타이틀명"]).to_pandas()
+    except Exception:
+        return {}
+    df = df[df["IP구분"].astype(str).isin(["아티스트", "캐릭터", "PICK"])]
+    df = df[["IP명", "타이틀명"]].astype(str).drop_duplicates()
+    first_this = f"{_ym}-01"
+    by_ip: dict = {}
+    for ipn, ttl in zip(df["IP명"], df["타이틀명"]):
+        d = due.get(ttl)
+        if d:
+            by_ip.setdefault(ipn, []).append(d)
+    return {ipn: ("🔚 종료" if max(ds) < first_this else "🔴 판매중")
+            for ipn, ds in by_ip.items()}
 
 
 @st.cache_data(show_spinner=False)
@@ -685,6 +767,48 @@ if _is_owner:
         "kpi_targets.csv", "text/csv",
     )
 
+    # ── 목표 직접 수정 (엑셀 재업로드 없이 인라인 편집) ──
+    with st.sidebar.expander("🎯 목표 직접 수정", expanded=False):
+        st.caption("구분·연도를 고르고 월별 목표를 고쳐 저장해요. 모든 탭·요약에 바로 반영돼요.")
+        _es = st.selectbox("구분", ["TTL", "국내", "해외", "A팀", "C팀", "오리지널"], key="tgt_edit_seg")
+        _ey = st.number_input("연도", min_value=2024, max_value=2030,
+                              value=int(target_year), step=1, key="tgt_edit_yr")
+        if KPI_FILE.exists():
+            _full_t = pd.read_csv(KPI_FILE, encoding="utf-8-sig")
+        else:
+            _full_t = pd.DataFrame(columns=["연도", "월", "매출목표", "구분"])
+        if "구분" not in _full_t.columns:
+            _full_t["구분"] = "TTL"
+        for _c in ["연도", "월", "매출목표"]:
+            _full_t[_c] = pd.to_numeric(_full_t.get(_c), errors="coerce")
+        _cur_t  = _full_t[(_full_t["구분"] == _es) & (_full_t["연도"] == _ey)][["월", "매출목표"]]
+        _edit_t = pd.DataFrame({"월": list(range(1, 13))}).merge(_cur_t, on="월", how="left")
+        _edit_t["매출목표"] = _edit_t["매출목표"].fillna(0).astype("int64")
+        _edited_t = st.data_editor(
+            _edit_t, hide_index=True, use_container_width=True, key="tgt_editor",
+            column_config={
+                "월": st.column_config.NumberColumn("월", disabled=True),
+                "매출목표": st.column_config.NumberColumn("매출목표(원)", min_value=0, step=1_000_000, format="%d"),
+            },
+        )
+        if st.button("💾 목표 저장", key="tgt_save", use_container_width=True):
+            _save = _edited_t.copy()
+            _save["연도"], _save["구분"] = int(_ey), _es
+            _save["매출목표"] = pd.to_numeric(_save["매출목표"], errors="coerce").fillna(0).astype("int64")
+            _save = _save[["연도", "월", "매출목표", "구분"]]
+            _keep_t = (_full_t[~((_full_t["구분"] == _es) & (_full_t["연도"] == _ey))]
+                       if not _full_t.empty else _full_t)
+            _out_t = pd.concat([_keep_t.reindex(columns=["연도", "월", "매출목표", "구분"]), _save],
+                               ignore_index=True).dropna(subset=["연도", "월"])
+            _out_t["연도"] = _out_t["연도"].astype("int64")
+            _out_t["월"]   = _out_t["월"].astype("int64")
+            _out_t["매출목표"] = pd.to_numeric(_out_t["매출목표"], errors="coerce").fillna(0).astype("int64")
+            _out_t = _out_t.sort_values(["구분", "연도", "월"])
+            _out_t.to_csv(KPI_FILE, index=False, encoding="utf-8-sig")
+            st.cache_data.clear()
+            st.toast(f"✅ {int(_ey)}년 {_es} 목표를 저장했어요.")
+            st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════
 # 메인 대시보드
@@ -833,6 +957,82 @@ try:
                    "‘월말 예상’은 현재 일평균 × 당월 일수로 단순 추정한 값이에요. "
                    "목표 달성률은 목표가 같은 범위로 잡힌 A팀·C팀만 표시해요(픽·스내피즘은 목표 미설정). "
                    "정밀 숫자·월별 추이는 아래 탭에서 보세요.")
+except Exception:
+    pass
+
+# ══ 이번 달 IP 무버 (Top/Bottom) ════════════════════════════════
+#   팀 합계로는 안 보이는 '어느 IP가 올리고 빠졌나'를 IP 단위로 — 회의 원인 분석용.
+#   포토이즘(A팀=아티스트·C팀=캐릭터·픽=PICK) 한정, 전월 같은 기간(1일~오늘) 대비 증감액 기준.
+#   요약이 실패해도 본 화면은 떠야 하므로 통째로 try/except 로 감싼다.
+try:
+    _PG  = {"아티스트": "A팀", "캐릭터": "C팀", "PICK": "픽"}
+    _ipn = _seg_filter(photoism_ipname_daily(), _seg)
+    _ipn = _ipn[_ipn["IP구분"].isin(_PG.keys())].copy()
+    if not _ipn.empty:
+        _pm2 = today.month - 1 if today.month > 1 else 12
+        _py2 = today.year if today.month > 1 else today.year - 1
+        _ipn["_y"] = _ipn["날짜"].dt.year
+        _ipn["_m"] = _ipn["날짜"].dt.month
+        _ipn["_d"] = _ipn["날짜"].dt.day
+        _c = (_ipn[(_ipn["_y"] == today.year) & (_ipn["_m"] == today.month)]
+              .groupby(["IP명", "IP구분"], as_index=False, observed=True)["매출액"].sum()
+              .rename(columns={"매출액": "이번달"}))
+        _p = (_ipn[(_ipn["_y"] == _py2) & (_ipn["_m"] == _pm2) & (_ipn["_d"] <= today.day)]
+              .groupby(["IP명", "IP구분"], as_index=False, observed=True)["매출액"].sum()
+              .rename(columns={"매출액": "전월동기"}))
+        # 같은 IP명이 구좌에 따라 여러 IP구분에 걸칠 수 있어 IP명+IP구분으로 매칭(중복 합산 방지)
+        _mv = _c.merge(_p, on=["IP명", "IP구분"], how="outer")
+        _mv["이번달"]   = _mv["이번달"].fillna(0)
+        _mv["전월동기"] = _mv["전월동기"].fillna(0)
+        _mv["IP구분"]   = _mv["IP구분"].fillna("")
+        _mv["증감"]     = _mv["이번달"] - _mv["전월동기"]
+        # 신규: 데이터 전체에서 해당 IP명 첫 등장이 이번 달
+        _fm  = _ipn.groupby("IP명", observed=True)["날짜"].min()
+        _new = set(_fm[(_fm.dt.year == today.year) & (_fm.dt.month == today.month)].index)
+        # IP 종료상태(Jira 종료일) — '빠진 IP'가 판매기간 종료 때문인지 vs 아직 파는데 빠진 건지 구분
+        _status = _ip_end_status(_mtime(AGG_FILE), _mtime(JIRA_CACHE),
+                                 f"{today.year}-{today.month:02d}")
+
+        def _eok2(v):
+            return f"{v/1e8:,.1f}억"
+
+        def _mv_table(d, status=False):
+            out = pd.DataFrame()
+            out["IP"]   = [("🆕 " if n in _new else "") + str(n) for n in d["IP명"]]
+            out["팀"]   = [_PG.get(g, "—") if g else "—" for g in d["IP구분"]]
+            if status:
+                out["상태"] = [_status.get(str(n), "—") for n in d["IP명"]]
+            out["이번달"] = [_eok2(v) for v in d["이번달"]]
+            out["증감"]   = [f"{v/1e8:+,.1f}억" for v in d["증감"]]
+            out["증감률"] = [
+                ("—" if pv <= 0 else f"{(cv-pv)/pv*100:+.0f}%")
+                for cv, pv in zip(d["이번달"], d["전월동기"])
+            ]
+            return out
+
+        _N  = 7
+        _up = _mv[_mv["증감"] > 0].sort_values("증감", ascending=False).head(_N)
+        _dn = _mv[_mv["증감"] < 0].sort_values("증감", ascending=True).head(_N)
+
+        st.markdown('<div class="section-title">이번 달 IP 무버 — 어디서 오르고 빠졌나</div>',
+                    unsafe_allow_html=True)
+        _mc1, _mc2 = st.columns(2)
+        with _mc1:
+            st.markdown("**📈 가장 많이 오른 IP**")
+            if _up.empty:
+                st.caption("증가한 IP가 없어요.")
+            else:
+                st.dataframe(_mv_table(_up), hide_index=True, use_container_width=True)
+        with _mc2:
+            st.markdown("**📉 가장 많이 빠진 IP**")
+            if _dn.empty:
+                st.caption("감소한 IP가 없어요.")
+            else:
+                st.dataframe(_mv_table(_dn, status=True), hide_index=True, use_container_width=True)
+        st.caption("※ 전월 같은 기간(1일~오늘) 대비 증감액 순 · 포토이즘 A·C·픽 IP만 · 🆕=이번 달 첫 등장 · "
+                   "‘—’(증감률)=전월 같은 기간 매출 없음. "
+                   "상태: 🔚 종료=판매기간이 끝난 IP(예정된 하락) · 🔴 판매중=아직 파는데 빠짐(점검 필요) · —=종료일 미확인. "
+                   "IP별 일자/국가/단가 세부는 📸 포토이즘 페이지에서 보세요.")
 except Exception:
     pass
 
