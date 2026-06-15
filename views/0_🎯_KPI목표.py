@@ -415,6 +415,55 @@ def _postperiod_mtd(_agg_mtime, _cfg_mtime, _cache_mtime, _ym: str) -> int:
     return int(rev.sum())
 
 
+def _region_daily() -> pd.DataFrame:
+    """일별 국내/해외 매출 (포토이즘 A·C·픽 + 스내피즘 합산). 날짜·_kr·매출액.
+    지역 필터와 무관하게 항상 전체(국내+해외)를 담는다 — 국내/해외 비교가 목적."""
+    frames = []
+    ip = photoism_ip_daily()
+    ip = ip[ip["IP구분"].isin(["아티스트", "캐릭터", "PICK"])]
+    if not ip.empty:
+        frames.append(ip[["날짜", "_kr", "매출액"]])
+    sp = snapism_daily()
+    if not sp.empty:
+        frames.append(sp[["날짜", "_kr", "매출액"]])
+    if not frames:
+        return pd.DataFrame(columns=["날짜", "_kr", "매출액"])
+    out = pd.concat(frames, ignore_index=True)
+    out["날짜"] = pd.to_datetime(out["날짜"])
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame:
+    """포토이즘(A·C·픽) 국가별 매출액 — _since(YYYY-MM-DD) 이후. 매출 산식은 벤토와 동일."""
+    cols = ["국가", "매출액"]
+    if not AGG_FILE.exists():
+        return pd.DataFrame(columns=cols)
+    try:
+        df = pq.read_table(str(AGG_FILE), columns=[
+            "날짜", "IP구분", "국가", "국가코드", "취소 여부", "결제 단위",
+            "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]).to_pandas()
+    except Exception:
+        return pd.DataFrame(columns=cols)
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+    df = df[df["날짜"].notna() & ~df["취소 여부"].astype(bool)]
+    df = df[df["날짜"] >= pd.Timestamp(_since)]
+    df = df[df["IP구분"].astype(str).isin(["아티스트", "캐릭터", "PICK"])]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    ex   = load_exchange_rates()
+    rate = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW").map(ex).fillna(1)
+    cc   = df["국가코드"].astype(str).str.lower().str.strip()
+    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    df["매출액"] = ((df["최종 결제 금액"] * rate).round(0)
+        + (df["쿠폰 할인 금액"] * rate).round(0) * cc.isin(_COUPON_CC)
+        + (df["서비스코인"]     * rate).round(0) * cc.isin(_COIN_CC))
+    out = df.groupby("국가", as_index=False, observed=True)["매출액"].sum()
+    out["매출액"] = out["매출액"].astype("int64")
+    return out.sort_values("매출액", ascending=False)
+
+
 @st.cache_data(show_spinner=False)
 def _snapism_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
     """스내피즘 master → 날짜·국내여부별 정산금액(KRW환산+쿠폰, 취소 제외, 일 단위)."""
@@ -1376,6 +1425,69 @@ with tab_weekly:
                 margin=dict(t=30, b=70),
             )
             st.plotly_chart(fig_w, use_container_width=True)
+
+            # ── 지역(국내/해외) 보기 + 국가별 비중 (전체 기준, 최근 14주) ──
+            try:
+                _rd = _region_daily()
+                if not _rd.empty:
+                    _rd = _rd.copy()
+                    _rd["주시작"] = (_rd["날짜"] - pd.to_timedelta(_rd["날짜"].dt.weekday, unit="D")).dt.normalize()
+                    _recent = sorted(_rd["주시작"].unique())[-14:]
+                    _rd = _rd[_rd["주시작"].isin(_recent)]
+
+                    def _wlbl(ws):
+                        ws = pd.Timestamp(ws); we = ws + pd.Timedelta(days=6)
+                        return f"{ws.month}/{ws.day}~{we.month}/{we.day}"
+
+                    _ow = [_wlbl(w) for w in _recent]
+                    st.markdown('<div class="section-title">주차별 국내·해외 + 국가별 비중 '
+                                '<span style="font-weight:500;color:#8a8aa0;font-size:.85rem">(전체 기준 · 최근 14주)</span></div>',
+                                unsafe_allow_html=True)
+                    _gc1, _gc2 = st.columns([1.4, 1])
+                    with _gc1:
+                        _rg = _rd.groupby(["주시작", "_kr"], as_index=False)["매출액"].sum()
+                        _wm = {w: _wlbl(w) for w in _recent}
+                        _rg["주차"] = _rg["주시작"].map(_wm)
+                        fig_r = go.Figure()
+                        for _kr, _lbl, _col in [(True, "국내", "#4361ee"), (False, "해외", "#f9a826")]:
+                            _d = (_rg[_rg["_kr"] == _kr].set_index("주차").reindex(_ow)["매출액"].fillna(0))
+                            fig_r.add_trace(go.Bar(
+                                x=_ow, y=_d.values, name=_lbl, marker_color=_col,
+                                hovertemplate=f"{_lbl} %{{x}}<br>%{{y:,}}원<extra></extra>"))
+                        fig_r.update_layout(
+                            height=420, barmode="stack",
+                            yaxis=dict(tickformat=",", title="실적 (KRW)"),
+                            xaxis=dict(title="", tickangle=-45, tickfont=dict(size=10)),
+                            legend=dict(orientation="h", y=1.08), margin=dict(t=30, b=70))
+                        st.plotly_chart(fig_r, use_container_width=True)
+                        st.caption("주차별 국내·해외 매출 (포토이즘 A·C·픽 + 스내피즘 합산)")
+                    with _gc2:
+                        _since = pd.Timestamp(min(_recent)).strftime("%Y-%m-%d")
+                        _nat = _photoism_country_since(_mtime(AGG_FILE), _mtime(CONFIG_FILE), _since)
+                        if _nat.empty:
+                            st.caption("국가별 데이터가 없어요.")
+                        else:
+                            _TN = 7
+                            if len(_nat) > _TN:
+                                _np = pd.concat([
+                                    _nat.head(_TN),
+                                    pd.DataFrame([{"국가": f"기타 {len(_nat)-_TN}개국",
+                                                   "매출액": int(_nat.iloc[_TN:]["매출액"].sum())}]),
+                                ], ignore_index=True)
+                            else:
+                                _np = _nat
+                            fig_n = go.Figure(go.Pie(
+                                labels=_np["국가"], values=_np["매출액"], hole=0.5, sort=False,
+                                marker=dict(colors=["#4361ee", "#7209b7", "#f72585", "#f9a826",
+                                                    "#3a0ca3", "#4895ef", "#f8961e", "#ced4da"]),
+                                texttemplate="%{percent}", textposition="inside",
+                                hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>"))
+                            fig_n.update_layout(height=420, margin=dict(t=10, b=0),
+                                                legend=dict(orientation="v", y=0.5, x=1.0, font_size=11))
+                            st.plotly_chart(fig_n, use_container_width=True)
+                            st.caption("국가별 매출 비중 (포토이즘 · 상위 7개국 + 기타)")
+            except Exception:
+                pass
 
             # 주차별 상세 (팀/항목 피벗)
             st.markdown('<div class="section-title">주차별 상세</div>', unsafe_allow_html=True)
