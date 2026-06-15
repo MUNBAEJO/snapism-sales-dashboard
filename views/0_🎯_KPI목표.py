@@ -380,6 +380,42 @@ def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
 
 
 @st.cache_data(show_spinner=False)
+def _postperiod_mtd(_agg_mtime, _cfg_mtime, _cache_mtime, _ym: str) -> int:
+    """이번 달 포토이즘(A·C·픽) 매출 중 'Jira 종료일 지난 뒤 발생'분 합계(KRW).
+    매출 산식은 벤토와 동일(쿠폰·코인 포함). 종료일 매칭은 타이틀명 직접 비교."""
+    due = _jira_due_map(_cache_mtime)
+    if not due or not AGG_FILE.exists():
+        return 0
+    try:
+        df = pq.read_table(str(AGG_FILE), columns=[
+            "날짜", "IP구분", "타이틀명", "취소 여부", "결제 단위", "국가코드",
+            "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]).to_pandas()
+    except Exception:
+        return 0
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+    df = df[df["날짜"].notna() & ~df["취소 여부"].astype(bool)]
+    y, m = int(_ym[:4]), int(_ym[5:7])
+    df = df[(df["날짜"].dt.year == y) & (df["날짜"].dt.month == m)]
+    df = df[df["IP구분"].astype(str).isin(["아티스트", "캐릭터", "PICK"])]
+    if df.empty:
+        return 0
+    _duemap = {t: pd.Timestamp(d) for t, d in due.items()}
+    _dd = df["타이틀명"].astype(str).map(_duemap)
+    df = df[_dd.notna() & (df["날짜"] > _dd)]
+    if df.empty:
+        return 0
+    ex   = load_exchange_rates()
+    rate = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW").map(ex).fillna(1)
+    cc   = df["국가코드"].astype(str).str.lower().str.strip()
+    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    rev = ((df["최종 결제 금액"] * rate).round(0)
+           + (df["쿠폰 할인 금액"] * rate).round(0) * cc.isin(_COUPON_CC)
+           + (df["서비스코인"]     * rate).round(0) * cc.isin(_COIN_CC))
+    return int(rev.sum())
+
+
+@st.cache_data(show_spinner=False)
 def _snapism_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
     """스내피즘 master → 날짜·국내여부별 정산금액(KRW환산+쿠폰, 취소 제외, 일 단위)."""
     import data_io
@@ -819,6 +855,28 @@ render_guide("kpi")
 _seg  = SEG_MAP[seg_choice]
 today = date.today()
 
+# ── 데이터 기준일 (신선도) ──────────────────────────────────────
+#   "이 숫자가 며칠까지냐" — 모든 수치 신뢰의 전제. 마지막 매출일 + 집계 갱신시각.
+try:
+    import datetime as _dtm
+    _pho_d = photoism_ip_daily()
+    _snp_d = snapism_daily()
+
+    def _d10(s):
+        return pd.to_datetime(s).strftime("%Y-%m-%d") if s is not None and pd.notna(s) else "—"
+
+    _pho_last = _pho_d["날짜"].max() if not _pho_d.empty else None
+    _snp_last = _snp_d["날짜"].max() if not _snp_d.empty else None
+    _agg_mt   = _mtime(AGG_FILE)
+    _refresh  = _dtm.datetime.fromtimestamp(_agg_mt).strftime("%m/%d %H:%M") if _agg_mt else "—"
+    _stale    = (_pho_last is not None and pd.notna(_pho_last)
+                 and (today - pd.to_datetime(_pho_last).date()).days >= 2)
+    _warn     = "  ⚠️ 데이터가 2일 이상 밀렸어요" if _stale else ""
+    st.caption(f"🗂 데이터 기준 · 포토이즘 ~**{_d10(_pho_last)}** (집계 갱신 {_refresh}) · "
+               f"스내피즘 ~**{_d10(_snp_last)}**{_warn}")
+except Exception:
+    pass
+
 # ── 상단 벤토 요약 (이번 달 실적 한눈에) ────────────────────────
 #   합계(히어로 + 구성 막대) + 팀/항목 4타일. 상세 차트·표는 아래 탭에서.
 #   진행 중인 달이라 전월 '같은 기간(1일~오늘)'과 비교해 착시를 없앤다.
@@ -957,6 +1015,35 @@ try:
                    "‘월말 예상’은 현재 일평균 × 당월 일수로 단순 추정한 값이에요. "
                    "목표 달성률은 목표가 같은 범위로 잡힌 A팀·C팀만 표시해요(픽·스내피즘은 목표 미설정). "
                    "정밀 숫자·월별 추이는 아래 탭에서 보세요.")
+except Exception:
+    pass
+
+# ── 재무 정합성 한 줄 (전체 기준) ───────────────────────────────
+#   합계의 성격(명목/혼합)·해외 비중·기간 후 매출 리스크를 한 줄로.
+#   실수령(RS 차감)은 IP정산현황 페이지 영역이라 여기선 안내만 한다.
+try:
+    _ym  = f"{today.year}-{today.month:02d}"
+    _pif = photoism_ip_daily()
+    _pif = _pif[_pif["IP구분"].isin(["아티스트", "캐릭터", "PICK"])]
+    _spf = snapism_daily()
+    _dom = _ext = 0
+    for _d in (_pif, _spf):
+        if _d.empty:
+            continue
+        _dm = _d[(_d["날짜"].dt.year == today.year) & (_d["날짜"].dt.month == today.month)]
+        _dom += int(_dm[_dm["_kr"]]["매출액"].sum())
+        _ext += int(_dm[~_dm["_kr"]]["매출액"].sum())
+    _tot_fin  = _dom + _ext
+    _ext_pct  = (_ext / _tot_fin * 100) if _tot_fin else 0
+    _post     = _postperiod_mtd(_mtime(AGG_FILE), _mtime(CONFIG_FILE), _mtime(JIRA_CACHE), _ym)
+    _post_pct = (_post / _tot_fin * 100) if _tot_fin else 0
+    _post_txt = (f" · ⚠️ 이 중 기간 후 매출 {fmt_krw(_post)}({_post_pct:.1f}%) 포함"
+                 if _post > 0 else "")
+    st.caption(
+        f"💰 재무 관점(전체 기준) · 합계는 **명목 거래액**(쿠폰·서비스코인 포함, "
+        f"A·C·픽=매출·스내피즘=정산금액 혼합) · 해외 {_ext_pct:.0f}%{_post_txt} · "
+        f"실수령(정산 후 자사 귀속)은 💰 IP정산현황, 기간 후 매출 상세는 ⚠️ 기간 후 매출분석에서 보세요."
+    )
 except Exception:
     pass
 
