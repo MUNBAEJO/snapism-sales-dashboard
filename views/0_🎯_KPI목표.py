@@ -1219,25 +1219,24 @@ try:
         _up = _mv[_mv["증감"] > 0].sort_values("증감", ascending=False).head(_N)
         _dn = _mv[_mv["증감"] < 0].sort_values("증감", ascending=True).head(_N)
 
-        st.markdown('<div class="section-title">이번 달 IP 무버 — 어디서 오르고 빠졌나</div>',
-                    unsafe_allow_html=True)
-        _mc1, _mc2 = st.columns(2)
-        with _mc1:
-            st.markdown("**📈 가장 많이 오른 IP**")
-            if _up.empty:
-                st.caption("증가한 IP가 없어요.")
-            else:
-                st.dataframe(_mv_table(_up), hide_index=True, use_container_width=True)
-        with _mc2:
-            st.markdown("**📉 가장 많이 빠진 IP**")
-            if _dn.empty:
-                st.caption("감소한 IP가 없어요.")
-            else:
-                st.dataframe(_mv_table(_dn, status=True), hide_index=True, use_container_width=True)
-        st.caption("※ 전월 같은 기간(1일~오늘) 대비 증감액 순 · 포토이즘 A·C·픽 IP만 · 🆕=이번 달 첫 등장 · "
-                   "‘—’(증감률)=전월 같은 기간 매출 없음. "
-                   "상태: 🔚 종료=판매기간이 끝난 IP(예정된 하락) · 🔴 판매중=아직 파는데 빠짐(점검 필요) · —=종료일 미확인. "
-                   "IP별 일자/국가/단가 세부는 📸 포토이즘 페이지에서 보세요.")
+        with st.expander("📊 이번 달 IP 무버 — 어디서 오르고 빠졌나 (펼치기)", expanded=False):
+            _mc1, _mc2 = st.columns(2)
+            with _mc1:
+                st.markdown("**📈 가장 많이 오른 IP**")
+                if _up.empty:
+                    st.caption("증가한 IP가 없어요.")
+                else:
+                    st.dataframe(_mv_table(_up), hide_index=True, use_container_width=True)
+            with _mc2:
+                st.markdown("**📉 가장 많이 빠진 IP**")
+                if _dn.empty:
+                    st.caption("감소한 IP가 없어요.")
+                else:
+                    st.dataframe(_mv_table(_dn, status=True), hide_index=True, use_container_width=True)
+            st.caption("※ 전월 같은 기간(1일~오늘) 대비 증감액 순 · 포토이즘 A·C·픽 IP만 · 🆕=이번 달 첫 등장 · "
+                       "‘—’(증감률)=전월 같은 기간 매출 없음. "
+                       "상태: 🔚 종료=판매기간이 끝난 IP(예정된 하락) · 🔴 판매중=아직 파는데 빠짐(점검 필요) · —=종료일 미확인. "
+                       "IP별 일자/국가/단가 세부는 📸 포토이즘 페이지에서 보세요.")
 except Exception:
     pass
 
