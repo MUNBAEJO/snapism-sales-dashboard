@@ -1157,11 +1157,12 @@ try:
     _post_pct = (_post / _tot_fin * 100) if _tot_fin else 0
     _post_txt = (f" · ⚠️ 이 중 기간 후 매출 {fmt_krw(_post)}({_post_pct:.1f}%) 포함"
                  if _post > 0 else "")
-    st.caption(
-        f"💰 재무 관점(전체 기준) · 합계는 **명목 거래액**(쿠폰·서비스코인 포함, "
-        f"A·C·픽=매출·스내피즘=정산금액 혼합) · 해외 {_ext_pct:.0f}%{_post_txt} · "
-        f"실수령(정산 후 자사 귀속)은 💰 IP정산현황, 기간 후 매출 상세는 ⚠️ 기간 후 매출분석에서 보세요."
-    )
+    with st.expander(f"💰 재무 관점 — 해외 {_ext_pct:.0f}% · 명목 거래액 기준 (펼치기)", expanded=False):
+        st.caption(
+            f"합계는 **명목 거래액**(쿠폰·서비스코인 포함, A·C·픽=매출·스내피즘=정산금액 혼합) · "
+            f"해외 {_ext_pct:.0f}%{_post_txt} · "
+            f"실수령(정산 후 자사 귀속)은 💰 IP정산현황, 기간 후 매출 상세는 ⚠️ 기간 후 매출분석에서 보세요."
+        )
 except Exception:
     pass
 
