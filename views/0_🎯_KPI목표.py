@@ -943,7 +943,7 @@ try:
             mtd  = cur / tg * 100
             proj = _runrate(cur) / tg * 100
             pc   = "#1d8a4e" if proj >= 100 else ("#c77700" if proj >= 85 else "#c0392b")
-            return (f'<div class="kbz-goal">🎯 목표 {mtd:.0f}% '
+            return (f'<div class="kbz-goal">🎯 목표 {fmt_krw(tg)} · 달성 {mtd:.0f}% '
                     f'<span style="color:{pc};">· 예상 {proj:.0f}%</span></div>')
 
         _segbar = "".join(
@@ -960,14 +960,17 @@ try:
         _tiles = ""
         for _s in DIV_ORDER:
             _cv, _pv = _vals[_s], _bv(_prevm, _s)
+            # 타일 전체를 링크로 — 클릭 시 ?focus=<area> 로 그 팀/항목 상세를 연다
             _tiles += (
-                f'<div class="kbz-tile" style="grid-area:{_areas.get(_s, "")};'
+                f'<a href="?focus={_areas.get(_s, "")}" target="_self" class="kbz-tile" '
+                f'style="grid-area:{_areas.get(_s, "")};'
                 f'border-left:6px solid {DIV_COLORS.get(_s, "#888")};">'
                 f'<div class="kbz-row"><span class="kbz-dot" style="background:{DIV_COLORS.get(_s, "#888")};"></span>'
-                f'<span class="kbz-lbl">{DIV_LABEL.get(_s, _s)}</span></div>'
+                f'<span class="kbz-lbl">{DIV_LABEL.get(_s, _s)}</span>'
+                f'<span class="kbz-go">상세 ›</span></div>'
                 f'<div class="kbz-val">{fmt_krw(_cv)}</div>'
                 f'{_delta(_cv, _pv)}'
-                f'{_goal_line(_cv, _s)}</div>'
+                f'{_goal_line(_cv, _s)}</a>'
             )
         _seg_note = "" if _seg == "TTL" else f" · {_seg}"
         st.markdown(f"""
@@ -993,6 +996,12 @@ try:
 #kpi-bento .kbz-goal.muted{{color:#b3b9c4;font-weight:500;}}
 #kpi-bento .kbz-rr{{font-size:13px;color:#185FA5;font-weight:700;margin-top:9px;}}
 #kpi-bento .kbz-rr span{{font-weight:500;opacity:.7;}}
+#kpi-bento a.kbz-tile{{text-decoration:none;color:inherit;cursor:pointer;
+  transition:transform .08s ease, box-shadow .08s ease;}}
+#kpi-bento a.kbz-tile:hover{{transform:translateY(-2px);
+  box-shadow:0 7px 22px rgba(67,97,238,0.17);}}
+#kpi-bento .kbz-go{{font-size:11px;color:#9aa3b2;font-weight:600;margin-left:auto;}}
+#kpi-bento a.kbz-tile:hover .kbz-go{{color:#4361ee;}}
 @media (max-width:760px){{#kpi-bento .kbz-grid{{grid-template-columns:1fr 1fr;
   grid-template-areas:"hero hero" "a c" "pick snap";}}}}
 </style>
@@ -1011,12 +1020,72 @@ try:
   {_tiles}
 </div></div>
 """, unsafe_allow_html=True)
-        st.caption("※ 진행 중인 달이라 ‘전월 같은 기간(1일~오늘)’과 비교해요. "
+        st.caption("👆 카드를 클릭하면 그 팀/항목의 이번 달 IP가 아래에 펼쳐져요. "
+                   "※ 진행 중인 달이라 ‘전월 같은 기간(1일~오늘)’과 비교해요. "
                    "‘월말 예상’은 현재 일평균 × 당월 일수로 단순 추정한 값이에요. "
                    "목표 달성률은 목표가 같은 범위로 잡힌 A팀·C팀만 표시해요(픽·스내피즘은 목표 미설정). "
                    "정밀 숫자·월별 추이는 아래 탭에서 보세요.")
 except Exception:
     pass
+
+# ── 카드 클릭 시 상세: 그 팀/항목의 이번 달 IP (?focus=<area>) ──────
+_AREA2SEG = {"a": "A팀", "c": "C팀", "pick": "픽", "snap": "스내피즘"}
+try:
+    _focus = _AREA2SEG.get(str(st.query_params.get("focus", "")))
+except Exception:
+    _focus = None
+if _focus:
+    try:
+        with st.container(border=True):
+            _fc1, _fc2 = st.columns([6, 1])
+            _fc1.markdown(f"#### 🔎 {DIV_LABEL.get(_focus, _focus)} · 이번 달 상세")
+            if _fc2.button("✕ 닫기", key="focus_close", use_container_width=True):
+                st.query_params.clear()
+                st.rerun()
+            if _focus == "스내피즘":
+                st.info("스내피즘은 IP별 분해가 없어요. 일자·정산 상세는 "
+                        "📊 스내피즘 / 💰 IP정산현황 페이지에서 보세요.")
+            else:
+                _fg  = {"A팀": "아티스트", "C팀": "캐릭터", "픽": "PICK"}[_focus]
+                _fi  = _seg_filter(photoism_ipname_daily(), _seg)
+                _fi  = _fi[_fi["IP구분"].astype(str) == _fg].copy()
+                if _fi.empty:
+                    st.caption("이번 달 매출이 있는 IP가 없어요.")
+                else:
+                    _fi["_y"] = _fi["날짜"].dt.year
+                    _fi["_m"] = _fi["날짜"].dt.month
+                    _fi["_d"] = _fi["날짜"].dt.day
+                    _pmf = today.month - 1 if today.month > 1 else 12
+                    _pyf = today.year if today.month > 1 else today.year - 1
+                    _fcur = (_fi[(_fi["_y"] == today.year) & (_fi["_m"] == today.month)]
+                             .groupby("IP명", as_index=False, observed=True)["매출액"].sum()
+                             .rename(columns={"매출액": "이번달"}))
+                    _fprv = (_fi[(_fi["_y"] == _pyf) & (_fi["_m"] == _pmf) & (_fi["_d"] <= today.day)]
+                             .groupby("IP명", as_index=False, observed=True)["매출액"].sum()
+                             .rename(columns={"매출액": "전월동기"}))
+                    _fmv = _fcur.merge(_fprv, on="IP명", how="outer")
+                    _fmv["이번달"]   = _fmv["이번달"].fillna(0)
+                    _fmv["전월동기"] = _fmv["전월동기"].fillna(0)
+                    _fmv["증감"]     = _fmv["이번달"] - _fmv["전월동기"]
+                    _fmv = _fmv[_fmv["이번달"] > 0].sort_values("이번달", ascending=False)
+                    if _fmv.empty:
+                        st.caption("이번 달 매출이 있는 IP가 없어요.")
+                    else:
+                        _stt = _ip_end_status(_mtime(AGG_FILE), _mtime(JIRA_CACHE),
+                                              f"{today.year}-{today.month:02d}")
+                        _ft = pd.DataFrame()
+                        _ft["IP"]     = list(_fmv["IP명"].astype(str))
+                        _ft["상태"]   = [_stt.get(n, "—") for n in _fmv["IP명"].astype(str)]
+                        _ft["이번달"] = [fmt_krw(v) for v in _fmv["이번달"]]
+                        _ft["전월동기"] = [fmt_krw(v) for v in _fmv["전월동기"]]
+                        _ft["증감"]   = [f"{v/1e8:+,.1f}억" for v in _fmv["증감"]]
+                        st.dataframe(_ft, hide_index=True, use_container_width=True,
+                                     height=min(460, len(_ft) * 36 + 45))
+                        st.caption(f"{DIV_LABEL.get(_focus, _focus)} 이번 달 IP {len(_ft)}개 · 매출 내림차순 · "
+                                   "상태 🔚 종료 / 🔴 판매중 / — 미확인 · "
+                                   "일자·국가·단가 세부는 📸 포토이즘 페이지에서 보세요.")
+    except Exception:
+        pass
 
 # ── 재무 정합성 한 줄 (전체 기준) ───────────────────────────────
 #   합계의 성격(명목/혼합)·해외 비중·기간 후 매출 리스크를 한 줄로.
@@ -1182,9 +1251,13 @@ with tab_all:
                 piv[s] = 0
         piv = piv[DIV_ORDER]
         piv["합계"] = piv.sum(axis=1)
-        disp = piv.map(lambda x: fmt_krw(x) if x > 0 else "—")
-        disp.columns = [DIV_LABEL.get(c, c) for c in piv.columns]
-        st.dataframe(disp, use_container_width=True, height=min(480, len(disp)*40 + 55))
+        # 맨 아래에 표시 기간 전체의 누적 합계 행 추가
+        _piv_tot = piv.sum(axis=0)
+        _piv_tot.name = "누적 합계"
+        piv_all = pd.concat([piv, _piv_tot.to_frame().T])
+        disp = piv_all.map(lambda x: fmt_krw(x) if x > 0 else "—")
+        disp.columns = [DIV_LABEL.get(c, c) for c in piv_all.columns]
+        st.dataframe(disp, use_container_width=True, height=min(520, len(disp)*40 + 55))
         st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 픽=PICK · 스내피즘=정산금액(실시간). "
                    "렌탈·기획(P)·제외는 미포함.")
 
