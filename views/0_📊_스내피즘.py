@@ -109,10 +109,17 @@ COUNTRY_ISO = {
 
 
 def flag_url(name):
-    """국가명 → 국기 이미지 URL (flagcdn). 미매핑 시 빈 문자열.
-    표(ImageColumn)는 행 높이에 맞춰 렌더하므로 선명하도록 고해상도(40×30) 사용."""
+    """국가명 → 국기 이미지 URL (flagcdn, 고해상도 40×30 → 작게 표시해도 선명)."""
     iso = COUNTRY_ISO.get(str(name).strip())
     return f"https://flagcdn.com/40x30/{iso}.png" if iso else ""
+
+
+def flag_img(name, h=14):
+    """국가명 → 국기 <img> 인라인 태그 (국가명과 같은 칸에 붙여 표시)."""
+    u = flag_url(name)
+    return (f'<img src="{u}" height="{h}" '
+            f'style="vertical-align:middle;margin-right:7px;border:1px solid #eee;border-radius:2px;">'
+            if u else "")
 
 
 def load_config():
@@ -452,21 +459,31 @@ with tab_nat:
             tot_krw = nat["KRW환산"].sum()
             nat["비중"] = (nat["KRW환산"] / tot_krw) if tot_krw else 0
 
-            # ── 국가별 표 (정렬 가능 · 국기는 작은 별도 칸) ──
-            st.dataframe(
-                nat[["국기", "국가", "결제 단위", "건수", "현지 통화 금액", "KRW환산", "비중"]],
-                use_container_width=True, hide_index=True, height=420,
-                column_config={
-                    "국기": st.column_config.ImageColumn(" ", width="small"),
-                    "국가": st.column_config.TextColumn("국가"),
-                    "결제 단위": st.column_config.TextColumn("통화", width="small"),
-                    "건수": st.column_config.NumberColumn("건수", format="localized"),
-                    "현지 통화 금액": st.column_config.TextColumn("현지 통화 금액"),
-                    "KRW환산": st.column_config.NumberColumn("KRW 환산 (₩)", format="localized"),
-                    "비중": st.column_config.ProgressColumn(
-                        "비중", format="percent", min_value=0,
-                        max_value=float(nat["비중"].max()) if len(nat) else 1.0),
-                },
+            # ── 국가별 표 (국기를 국가명 칸에 붙여 표시) ──
+            _rows = "".join(
+                "<tr>"
+                f'<td>{flag_img(r["국가"])}{r["국가"]}</td>'
+                f'<td class="c">{r["결제 단위"]}</td>'
+                f'<td class="r">{int(r["건수"]):,}</td>'
+                f'<td class="r">{r["현지 통화 금액"]}</td>'
+                f'<td class="r">{fmt_krw(r["KRW환산"])}</td>'
+                f'<td class="r">{r["비중"]*100:.1f}%</td>'
+                "</tr>"
+                for _, r in nat.iterrows()
+            )
+            st.markdown(
+                "<style>.natbl{width:100%;border-collapse:collapse;font-size:13px;"
+                "font-family:'Pretendard','Malgun Gothic',sans-serif;margin-bottom:8px;}"
+                ".natbl th,.natbl td{padding:7px 10px;border-bottom:1px solid #eef1f6;white-space:nowrap;}"
+                ".natbl th{color:#6b7280;font-weight:700;border-bottom:2px solid #e6eaf2;text-align:left;}"
+                ".natbl td.r{text-align:right;} .natbl td.c{text-align:center;color:#6b7280;}"
+                ".natbl tr:hover td{background:#f7f9fc;}</style>"
+                '<table class="natbl"><thead><tr>'
+                '<th>국가</th><th style="text-align:center;">통화</th><th style="text-align:right;">건수</th>'
+                '<th style="text-align:right;">현지 통화 금액</th><th style="text-align:right;">KRW 환산</th>'
+                '<th style="text-align:right;">비중</th></tr></thead><tbody>'
+                + _rows + "</tbody></table>",
+                unsafe_allow_html=True,
             )
 
             # ── 비중 분포 도넛 (상위 7개국 + 기타) ──
@@ -522,18 +539,22 @@ with tab_nat:
                          할인KRW=("쿠폰KRW", "sum"))
                     .reset_index().sort_values("할인KRW", ascending=False)
                 )
-                cpn["국기"] = cpn["국가"].apply(flag_url)
                 cpn["할인금액(현지)"] = cpn.apply(lambda r: fmt_orig(r["할인금액"], r["결제 단위"]), axis=1)
-                st.dataframe(
-                    cpn[["국기", "국가", "쿠폰건수", "할인금액(현지)", "할인KRW"]],
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "국기": st.column_config.ImageColumn(" ", width="small"),
-                        "국가": st.column_config.TextColumn("국가"),
-                        "쿠폰건수": st.column_config.NumberColumn("쿠폰건수", format="localized"),
-                        "할인금액(현지)": st.column_config.TextColumn("할인(현지)"),
-                        "할인KRW": st.column_config.NumberColumn("할인 (₩)", format="localized"),
-                    },
+                _crows = "".join(
+                    "<tr>"
+                    f'<td>{flag_img(r["국가"])}{r["국가"]}</td>'
+                    f'<td class="r">{int(r["쿠폰건수"]):,}</td>'
+                    f'<td class="r">{r["할인금액(현지)"]}</td>'
+                    f'<td class="r">{fmt_krw(r["할인KRW"])}</td>'
+                    "</tr>"
+                    for _, r in cpn.iterrows()
+                )
+                st.markdown(
+                    '<table class="natbl"><thead><tr>'
+                    '<th>국가</th><th style="text-align:right;">쿠폰건수</th>'
+                    '<th style="text-align:right;">할인(현지)</th><th style="text-align:right;">할인 (₩)</th>'
+                    '</tr></thead><tbody>' + _crows + "</tbody></table>",
+                    unsafe_allow_html=True,
                 )
                 total_cpn = all_coupon["쿠폰KRW"].sum()
                 st.info(f"쿠폰 총 할인 **{fmt_krw(total_cpn)}**  ·  {len(all_coupon):,}건")
