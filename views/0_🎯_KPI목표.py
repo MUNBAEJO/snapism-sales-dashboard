@@ -1,8 +1,10 @@
 """
-KPI 목표 달성률 대시보드  (4탭 · 실적 모델)
-  탭1 📊 전체     — A팀(아티스트)+C팀(캐릭터)+스내피즘 합산 실적·월별 추이
-  탭2 👥 팀별     — 팀/항목별 실적 카드·월별 추이·누적 요약
-  탭3 📅 주차별   — 최근 14주 팀/항목별 실적(월~일)
+KPI 목표 달성률 대시보드  (상단 요약 + 4탭)
+  상단 요약(벤토)— 합계·팀/항목 카드(목표 달성률·월말 예상), 카드 클릭 시 IP 상세,
+                  재무 한 줄·이번 달 IP 무버(둘 다 접기)
+  탭1 📊 전체     — A팀+C팀+픽+스내피즘 합산 월별 추이·요약표(누적 합계 행)
+  탭2 👥 팀별     — 팀/항목별 월별 추이·누적 요약
+  탭3 📅 주차별   — 최근 14주(월~일) + 국내·해외 분리·국가별 매출 비중
   탭4 📈 전년비   — 전사(포토이즘 TTL) 기준 25 vs 26 (엑셀 25년 vs CMS 26년).
                   ※ 앞 3탭(A/C/스내피즘)과 집계 범위가 다름 — 2025 CMS·스내피즘
                     데이터가 없어 전년비는 전사 TTL 기준으로만 가능.
@@ -14,7 +16,7 @@ KPI 목표 달성률 대시보드  (4탭 · 실적 모델)
   ※ 렌탈·기획(P)·제외는 미포함 (TEAM_GUBUN 확장 지점)
 
 파일 관리(소유자 전용): IPX MASTER DATA.xlsx 업로드 시 목표/실적/주차 CSV 파싱·저장.
-  현재 화면은 실적만 표시 — 목표·달성률은 추후.
+  사이드바 '목표 직접 수정'으로 화면에서 월별 목표 편집 가능. 목표 달성률은 A·C팀만(스코프 일치).
 """
 import io, json, re
 import streamlit as st
@@ -945,9 +947,6 @@ try:
         def _bv(d, s):
             return int(d[d["팀/항목"] == s]["매출액"].sum())
 
-        def _eok(v):
-            return f"{v/1e8:,.1f}"
-
         def _delta(cur, prev, big=False):
             fs = "13px" if big else "11px"
             if prev <= 0:
@@ -1254,7 +1253,7 @@ with tab_all:
         div = division_monthly(_seg)
         st.caption(
             f"실적 기준: **포토이즘 CMS(IP구분) + 스내피즘 실시간**  ·  "
-            f"지역: **{_seg}**  ·  목표·달성률은 준비 중이라 지금은 실적만 보여요. (새로고침 F5)"
+            f"지역: **{_seg}**  ·  목표 달성률·월말 예상은 맨 위 요약 카드에서 봐요. (새로고침 F5)"
         )
 
         if div.empty:
@@ -1322,21 +1321,7 @@ with tab_team:
             st.info("아직 표시할 실적이 없어요. 데이터가 들어오면 팀별 실적이 보여요.")
         else:
             div["연월"] = div["연도"].astype(str) + "-" + div["월"].apply(lambda x: f"{x:02d}")
-            prev_m = today.month - 1 if today.month > 1 else 12
-            prev_y = today.year if today.month > 1 else today.year - 1
-            cur  = div[(div["연도"] == today.year) & (div["월"] == today.month)]
-            prev = div[(div["연도"] == prev_y) & (div["월"] == prev_m)]
-
-            st.markdown(f"#### {today.year}년 {today.month}월 팀/항목별 실적")
-            cols = st.columns(len(DIV_ORDER))
-            for i, seg_name in enumerate(DIV_ORDER):
-                cv = int(cur[cur["팀/항목"] == seg_name]["실적"].sum())
-                pv = int(prev[prev["팀/항목"] == seg_name]["실적"].sum())
-                cols[i].metric(
-                    DIV_LABEL[seg_name], fmt_krw(cv),
-                    f"{(cv-pv)/pv*100:+.1f}% 전월비" if pv > 0 else "",
-                )
-            st.divider()
+            # 이번 달 팀/항목 스냅샷은 맨 위 벤토 요약으로 일원화(중복 제거) — 이 탭은 추이·누적에 집중.
 
             st.markdown('<div class="section-title">월별 팀/항목별 실적</div>', unsafe_allow_html=True)
             order_ym = sorted(div["연월"].unique())
