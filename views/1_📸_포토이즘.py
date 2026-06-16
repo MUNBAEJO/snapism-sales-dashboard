@@ -412,11 +412,12 @@ _opts = _sidebar_options(_file_mtime(AGG_FILE))
 selected_country = st.sidebar.selectbox("국가", ["전체"] + _opts["countries"])
 selected_store = st.sidebar.selectbox("매장", ["전체"] + _opts["stores"])
 
-# IP 구분 (아티스트/캐릭터/렌탈/PICK/기획) — 기존 '대분류(매장유형)' 오라벨 필터를 교체
-IPGUBUN_OPTIONS = ["IP 전체"] + ip_classify.IP_GUBUN_ORDER + ["전체 (기본 프레임 포함)"]
+# IP 구분 (아티스트/캐릭터/렌탈/PICK) — 기획(P)는 화면에서 제외(전처럼)
+IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g != "기획(P)"]
+IPGUBUN_OPTIONS = ["IP 전체"] + IP_GUBUN_VIEW + ["전체 (기본 프레임 포함)"]
 selected_ipgubun = st.sidebar.selectbox(
     "IP 구분", IPGUBUN_OPTIONS,
-    help="아티스트 / 캐릭터 / 렌탈 / PICK(이벤트) / 기획(P). "
+    help="아티스트 / 캐릭터 / 렌탈 / PICK(이벤트). "
          "'IP 전체'는 IP가 있는 매출만, '전체'는 기본 프레임까지 모두 봐요.",
 )
 
@@ -579,7 +580,7 @@ if "IP구분" in sales.columns:
         gub["_o"] = gub["IP구분"].astype(str).map(
             {g: i for i, g in enumerate(ip_classify.IP_GUBUN_ORDER)}).fillna(99)
         gub = gub.sort_values("_o")
-        present = [g for g in ip_classify.IP_GUBUN_ORDER
+        present = [g for g in IP_GUBUN_VIEW
                    if g in set(gub["IP구분"].astype(str))]
 
 st.divider()
@@ -616,42 +617,58 @@ with tab_ov:
                     return d.dt.to_period("W")
                 return d.dt.date
 
-            trend = (
-                sales.assign(_p=_pkey(sales["날짜"], gran))
-                .groupby("_p", observed=True)["매출액"].sum()
-                .rename("매출").reset_index().sort_values("_p")
-            )
-            if trend.empty:
-                st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+            # 보기 선택(커스텀): 체크한 IP구분만 표시 (범례 클릭으로도 토글 가능)
+            _pick = st.multiselect(
+                "구분 선택", IP_GUBUN_VIEW, default=IP_GUBUN_VIEW,
+                key="ph_trend_gub", label_visibility="collapsed",
+                help="보고 싶은 구분만 선택하세요. 막대 위 범례를 눌러도 켜고 끌 수 있어요.")
+            _sel = _pick if _pick else IP_GUBUN_VIEW
+
+            _tsrc = sales[sales["IP구분"].astype(str).isin(_sel)].copy()
+            _tsrc["_p"] = _pkey(_tsrc["날짜"], gran)
+            g2 = (_tsrc.groupby(["_p", "IP구분"], observed=True)["매출액"].sum()
+                  .rename("매출").reset_index())
+            if g2.empty:
+                st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·구분 선택을 넓혀 보세요.")
             else:
+                periods = sorted(g2["_p"].unique())
+
+                def _lbl(p):
+                    if gran == "월":
+                        return f"{p.year}.{p.month:02d}"
+                    if gran == "주":
+                        return p.start_time.strftime("%m/%d") + "주"
+                    return str(p)
+
+                labels = [_lbl(p) for p in periods]
+                fig = go.Figure()
+                for _g in _sel:
+                    _gs = g2[g2["IP구분"].astype(str) == _g]
+                    if _gs.empty:
+                        continue
+                    _y = _gs.set_index("_p")["매출"].reindex(periods).fillna(0)
+                    fig.add_trace(go.Bar(
+                        x=labels, y=_y.values, name=_g,
+                        marker_color=_GUB_COLORS.get(_g, "#888888"),
+                        hovertemplate=f"{_g} %{{x}}<br>%{{y:,}}원<extra></extra>"))
+                # 합계 이동평균 (선택된 구분 합)
                 win = {"월": 3, "주": 4, "일": 7}[gran]
                 ma_unit = {"월": "개월", "주": "주", "일": "일"}[gran]
-                trend["평균"] = trend["매출"].rolling(win, min_periods=1).mean().round(0)
-                if gran == "월":
-                    trend["label"] = trend["_p"].apply(lambda p: f"{p.year}.{p.month:02d}")
-                elif gran == "주":
-                    trend["label"] = trend["_p"].apply(lambda p: p.start_time.strftime("%m/%d") + "주")
-                else:
-                    trend["label"] = trend["_p"].astype(str)
-
-                fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=trend["label"], y=trend["매출"], name="매출",
-                    marker_color=SECONDARY, opacity=0.9,
-                    hovertemplate="%{x}<br>%{y:,}원<extra></extra>",
-                ))
-                if len(trend) >= 2:
+                _tot = g2.groupby("_p")["매출"].sum().reindex(periods).fillna(0)
+                if len(periods) >= 2:
+                    _ma = _tot.rolling(win, min_periods=1).mean().round(0)
                     fig.add_trace(go.Scatter(
-                        x=trend["label"], y=trend["평균"], name=f"{win}{ma_unit} 평균",
-                        line=dict(color=PINK, width=2.5),
-                        hovertemplate="%{x}<br>평균 %{y:,.0f}원<extra></extra>",
-                    ))
+                        x=labels, y=_ma.values, name=f"{win}{ma_unit} 평균(합계)",
+                        line=dict(color="#1a1a2e", width=2.5, dash="dot"),
+                        hovertemplate="%{x}<br>평균 %{y:,.0f}원<extra></extra>"))
                 fig.update_layout(
-                    height=320, yaxis_tickformat=",",
-                    legend=dict(orientation="h", y=1.1, x=0), margin=dict(t=24, b=4),
+                    height=340, barmode="stack", yaxis_tickformat=",",
+                    legend=dict(orientation="h", y=1.12, x=0), margin=dict(t=24, b=4),
                 )
                 fig.update_xaxes(type="category")
                 st.plotly_chart(fig, use_container_width=True)
+                st.caption("막대는 IP구분(아티스트·캐릭터·렌탈·PICK)별로 쌓았어요. "
+                           "위 ‘구분 선택’이나 범례 클릭으로 원하는 구분만 볼 수 있어요.")
 
         with col_right:
             st.markdown('<div class="section-title purple">🌏 국가별 매출 비중</div>', unsafe_allow_html=True)
