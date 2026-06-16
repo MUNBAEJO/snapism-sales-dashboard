@@ -486,47 +486,51 @@ with tab_nat:
                 unsafe_allow_html=True,
             )
 
-            # ── 비중 분포 도넛 (상위 7개국 + 기타) ──
-            _TN = 7
-            _pie = nat[["국가", "KRW환산"]].copy()
-            if len(_pie) > _TN:
-                _pie = pd.concat([
-                    _pie.head(_TN),
-                    pd.DataFrame([{"국가": f"기타 {len(nat) - _TN}개국",
-                                   "KRW환산": int(nat.iloc[_TN:]["KRW환산"].sum())}]),
-                ], ignore_index=True)
-            fig_pie = px.pie(
-                _pie, values="KRW환산", names="국가", hole=0.5,
-                color_discrete_sequence=[PRIMARY, SECONDARY, ACCENT, PINK,
-                                         "#3a0ca3", "#4895ef", "#f8961e", "#ced4da"])
-            fig_pie.update_traces(sort=False, textposition="inside", texttemplate="%{percent}",
-                                  hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
-            style_fig(fig_pie, 340, legend=True)
-            fig_pie.update_layout(legend=dict(orientation="v", y=0.5, x=1.0, font_size=11))
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-            # ── KRW 환산 막대 (TOP10 + 기타) — 유지 ──
-            TOPN = 10
-            nat_bar = nat.copy()
-            if len(nat_bar) > TOPN:
-                top = nat_bar.head(TOPN)
-                rest = nat_bar.iloc[TOPN:]
-                others = pd.DataFrame([{
-                    "국가": f"기타 ({len(rest)}개국)", "결제 단위": "-",
-                    "건수": int(rest["건수"].sum()), "현지 통화 금액": "-",
-                    "KRW환산": int(rest["KRW환산"].sum()), "비중": 0,
-                }])
-                nat_bar = pd.concat([top, others], ignore_index=True)
-            fig_nat = px.bar(
-                nat_bar.sort_values("KRW환산"),
-                x="KRW환산", y="국가", orientation="h",
-                color="KRW환산", color_continuous_scale="Teal",
-                custom_data=["현지 통화 금액", "결제 단위", "건수"])
-            fig_nat.update_traces(
-                hovertemplate="%{y}<br>정산기준 %{x:,}원<br>현지 %{customdata[0]} · %{customdata[2]:,}건<extra></extra>")
-            fig_nat.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
-            style_fig(fig_nat, 320, legend=False)
-            st.plotly_chart(fig_nat, use_container_width=True)
+            # ── 비중 도넛 | KRW 막대 (병렬) ──
+            _gc1, _gc2 = st.columns(2)
+            with _gc1:
+                st.markdown('<div class="sub-label">비중 분포</div>', unsafe_allow_html=True)
+                _TN = 7
+                _pie = nat[["국가", "KRW환산"]].copy()
+                if len(_pie) > _TN:
+                    _pie = pd.concat([
+                        _pie.head(_TN),
+                        pd.DataFrame([{"국가": f"기타 {len(nat) - _TN}개국",
+                                       "KRW환산": int(nat.iloc[_TN:]["KRW환산"].sum())}]),
+                    ], ignore_index=True)
+                fig_pie = px.pie(
+                    _pie, values="KRW환산", names="국가", hole=0.5,
+                    color_discrete_sequence=[PRIMARY, SECONDARY, ACCENT, PINK,
+                                             "#3a0ca3", "#4895ef", "#f8961e", "#ced4da"])
+                fig_pie.update_traces(sort=False, textposition="inside", texttemplate="%{percent}",
+                                      hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
+                style_fig(fig_pie, 340, legend=True)
+                fig_pie.update_layout(legend=dict(orientation="h", y=-0.05, x=0.5,
+                                                  xanchor="center", font_size=10))
+                st.plotly_chart(fig_pie, use_container_width=True)
+            with _gc2:
+                st.markdown('<div class="sub-label">KRW 환산 매출</div>', unsafe_allow_html=True)
+                TOPN = 10
+                nat_bar = nat.copy()
+                if len(nat_bar) > TOPN:
+                    top = nat_bar.head(TOPN)
+                    rest = nat_bar.iloc[TOPN:]
+                    others = pd.DataFrame([{
+                        "국가": f"기타 ({len(rest)}개국)", "결제 단위": "-",
+                        "건수": int(rest["건수"].sum()), "현지 통화 금액": "-",
+                        "KRW환산": int(rest["KRW환산"].sum()), "비중": 0,
+                    }])
+                    nat_bar = pd.concat([top, others], ignore_index=True)
+                fig_nat = px.bar(
+                    nat_bar.sort_values("KRW환산"),
+                    x="KRW환산", y="국가", orientation="h",
+                    color="KRW환산", color_continuous_scale="Teal",
+                    custom_data=["현지 통화 금액", "결제 단위", "건수"])
+                fig_nat.update_traces(
+                    hovertemplate="%{y}<br>정산기준 %{x:,}원<br>현지 %{customdata[0]} · %{customdata[2]:,}건<extra></extra>")
+                fig_nat.update_layout(coloraxis_showscale=False, xaxis_tickformat=",", yaxis_title="")
+                style_fig(fig_nat, 340, legend=False)
+                st.plotly_chart(fig_nat, use_container_width=True)
 
         with col_coupon:
             st.markdown('<div class="sub-label">🎟 쿠폰 할인 현황</div>', unsafe_allow_html=True)

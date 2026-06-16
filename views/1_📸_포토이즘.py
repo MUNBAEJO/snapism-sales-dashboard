@@ -80,7 +80,15 @@ COUNTRY_ISO = {
 
 def flag_url(name):
     iso = COUNTRY_ISO.get(str(name).strip())
-    return f"https://flagcdn.com/32x24/{iso}.png" if iso else ""
+    return f"https://flagcdn.com/40x30/{iso}.png" if iso else ""
+
+
+def flag_img(name, h=14):
+    """국가명 → 국기 <img> 인라인 태그 (국가명과 같은 칸에 붙여 표시)."""
+    u = flag_url(name)
+    return (f'<img src="{u}" height="{h}" '
+            f'style="vertical-align:middle;margin-right:7px;border:1px solid #eee;border-radius:2px;">'
+            if u else "")
 
 
 CURRENCY_SYMBOLS = {
@@ -729,25 +737,35 @@ with tab_nat:
         ).fillna(0).clip(0, 1)
 
         with col_nat_tbl:
-            st.dataframe(
-                nat[["국기", "국가", "결제 단위", "건수", "현지 통화 금액", "매출", "쿠폰·코인", "비중"]],
-                use_container_width=True, hide_index=True, height=460,
-                column_config={
-                    "국기": st.column_config.ImageColumn(" ", width="small"),
-                    "국가": st.column_config.TextColumn("국가"),
-                    "결제 단위": st.column_config.TextColumn("통화", width="small"),
-                    "건수": st.column_config.NumberColumn("건수", format="localized"),
-                    "현지 통화 금액": st.column_config.TextColumn("현지 통화 금액"),
-                    "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
-                    "쿠폰·코인": st.column_config.NumberColumn(
-                        "쿠폰·코인", format="percent",
-                        help="매출 중 쿠폰·서비스코인이 차지하는 비중. 높을수록 쿠폰 기반 시장이에요."),
-                    "비중": st.column_config.ProgressColumn(
-                        "비중", format="percent", min_value=0,
-                        max_value=float(nat["비중"].max()) if len(nat) else 1.0),
-                },
+            _rows = "".join(
+                "<tr>"
+                f'<td>{flag_img(r["국가"])}{r["국가"]}</td>'
+                f'<td class="c">{r["결제 단위"]}</td>'
+                f'<td class="r">{int(r["건수"]):,}</td>'
+                f'<td class="r">{r["현지 통화 금액"]}</td>'
+                f'<td class="r">₩{int(r["매출"]):,}</td>'
+                f'<td class="r">{r["쿠폰·코인"]*100:.0f}%</td>'
+                f'<td class="r">{r["비중"]*100:.1f}%</td>'
+                "</tr>"
+                for _, r in nat.iterrows()
             )
-            st.caption("전체 {}개국 · 표 헤더를 클릭하면 정렬돼요. ‘쿠폰·코인’이 높은 국가는 매출 대부분이 쿠폰 정산분이에요.".format(len(nat)))
+            st.markdown(
+                "<style>.natbl{width:100%;border-collapse:collapse;font-size:13px;"
+                "font-family:'Pretendard','Malgun Gothic',sans-serif;}"
+                ".natbl th,.natbl td{padding:7px 10px;border-bottom:1px solid #eef1f6;white-space:nowrap;}"
+                ".natbl th{color:#6b7280;font-weight:700;border-bottom:2px solid #e6eaf2;text-align:left;"
+                "position:sticky;top:0;background:#fff;}"
+                ".natbl td.r{text-align:right;} .natbl td.c{text-align:center;color:#6b7280;}"
+                ".natbl tr:hover td{background:#f7f9fc;}</style>"
+                '<div style="max-height:460px;overflow:auto;">'
+                '<table class="natbl"><thead><tr>'
+                '<th>국가</th><th style="text-align:center;">통화</th><th style="text-align:right;">건수</th>'
+                '<th style="text-align:right;">현지 통화 금액</th><th style="text-align:right;">매출 (₩)</th>'
+                '<th style="text-align:right;">쿠폰·코인</th><th style="text-align:right;">비중</th>'
+                '</tr></thead><tbody>' + _rows + "</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption("전체 {}개국 · 매출 내림차순. ‘쿠폰·코인’이 높은 국가는 매출 대부분이 쿠폰 정산분이에요.".format(len(nat)))
 
         with col_nat_bar:
             TOPN = 10
