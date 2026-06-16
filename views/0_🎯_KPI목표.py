@@ -3,7 +3,7 @@ KPI 목표 달성률 대시보드  (상단 요약 + 4탭)
   상단 요약(벤토)— 합계·팀/항목 카드(목표 달성률·월말 예상), 카드 클릭 시 IP 상세,
                   재무 한 줄·이번 달 IP 무버(둘 다 접기)
   탭1 📊 전체     — A팀+C팀+픽+스내피즘 합산 월별 추이·요약표(누적 합계 행)
-  탭2 👥 팀별     — 팀/항목별 월별 추이·누적 요약
+  탭2 👥 팀별     — A/C팀=포토이즘+스내피즘(카테고리) 합산·월별 목표 점선, 픽 별도
   탭3 📅 주차별   — 최근 14주(월~일) + 국내·해외 분리·국가별 매출 비중
   탭4 📈 전년비   — 전사(포토이즘 TTL) 기준 25 vs 26 (엑셀 25년 vs CMS 26년).
                   ※ 앞 3탭(A/C/스내피즘)과 집계 범위가 다름 — 2025 CMS·스내피즘
@@ -462,6 +462,43 @@ def snapism_daily() -> pd.DataFrame:
     )
 
 
+@st.cache_data(show_spinner=False)
+def _snapism_team_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
+    """스내피즘 master → 날짜·국내여부·팀별 정산금액. 카테고리로 팀 배정:
+    아티스트·기타 → A팀, 캐릭터 → C팀. (산식은 _snapism_daily 와 동일)"""
+    import data_io
+    cols = ["날짜", "_kr", "팀", "매출액"]
+    df = data_io.read_master(SNAP_MASTER)
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+    df = df[df["날짜"].notna()]
+    cancel = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
+    for c in ["최종 결제 금액", "쿠폰 할인 금액"]:
+        df[c] = pd.to_numeric(df.get(c, 0), errors="coerce").fillna(0)
+    ex   = load_exchange_rates()
+    unit = df["결제 단위"].fillna("KRW").astype(str).str.strip()
+    rate = unit.map(ex).fillna(1)
+    amt  = (df["최종 결제 금액"] * rate).round(0) + (df["쿠폰 할인 금액"] * rate).round(0)
+    keep = (~cancel) & ((df["최종 결제 금액"] > 0) | (df["쿠폰 할인 금액"] > 0))
+    cat  = df.get("카테고리", "").astype(str).str.strip()
+    team = pd.Series("A팀", index=df.index)
+    team[cat == "캐릭터"] = "C팀"
+    base = pd.DataFrame({
+        "날짜":   df["날짜"].dt.normalize().values,
+        "_kr":   df.get("소스", "").astype(str).str.strip().eq("한국").values,
+        "팀":    team.values,
+        "매출액": amt.values,
+    })[keep.values]
+    return base.groupby(["날짜", "_kr", "팀"], as_index=False)["매출액"].sum()
+
+
+def snapism_team_daily() -> pd.DataFrame:
+    return _snapism_team_daily(
+        _mtime(SNAP_MASTER), _mtime(SNAP_MASTER.with_suffix(".parquet")), _mtime(CONFIG_FILE)
+    )
+
+
 def _seg_filter(df: pd.DataFrame, seg: str) -> pd.DataFrame:
     if seg == "국내":
         return df[df["_kr"]]
@@ -521,6 +558,34 @@ def division_weekly(seg: str = "TTL", weeks: int = 14) -> pd.DataFrame:
 
     out["주차"] = out["주시작"].apply(_wlabel)
     return out.sort_values("주시작")
+
+
+def team_monthly_src(seg: str = "TTL") -> pd.DataFrame:
+    """월별 팀(A/C/픽)·출처(포토이즘/스내피즘)별 실적.
+    A·C팀 = 포토이즘 IP구분 + 스내피즘(카테고리 기준) 합산. 픽 = 포토이즘 PICK만."""
+    frames = []
+    _pmap = {"아티스트": "A팀", "캐릭터": "C팀", "PICK": "픽"}
+    ip = _seg_filter(photoism_ip_daily(), seg)
+    ip = ip[ip["IP구분"].isin(_pmap)].copy()
+    if not ip.empty:
+        ip["팀"]  = ip["IP구분"].map(_pmap)
+        ip["출처"] = "포토이즘"
+        frames.append(ip[["날짜", "팀", "출처", "매출액"]])
+    sp = _seg_filter(snapism_team_daily(), seg)
+    if not sp.empty:
+        sp = sp.copy()
+        sp["출처"] = "스내피즘"
+        frames.append(sp[["날짜", "팀", "출처", "매출액"]])
+    if not frames:
+        return pd.DataFrame(columns=["연도", "월", "팀", "출처", "실적"])
+    out = pd.concat(frames, ignore_index=True)
+    out["날짜"] = pd.to_datetime(out["날짜"])
+    out["연도"] = out["날짜"].dt.year
+    out["월"]   = out["날짜"].dt.month
+    g = (out.groupby(["연도", "월", "팀", "출처"], as_index=False)["매출액"].sum()
+         .rename(columns={"매출액": "실적"}))
+    g["실적"] = pd.to_numeric(g["실적"], errors="coerce").fillna(0).astype("int64")
+    return g[g["연도"] > 0]
 
 
 def fmt_krw(n: float) -> str:
@@ -1249,41 +1314,72 @@ with tab_all:
     # ════════════════════════════════════════════════════════════
 with tab_team:
     with st.container(border=True):
-        div = division_monthly(_seg)
+        tms = team_monthly_src(_seg)
 
-        if div.empty:
+        if tms.empty:
             st.info("아직 표시할 실적이 없어요. 데이터가 들어오면 팀별 실적이 보여요.")
         else:
-            div["연월"] = div["연도"].astype(str) + "-" + div["월"].apply(lambda x: f"{x:02d}")
-            # 이번 달 팀/항목 스냅샷은 맨 위 벤토 요약으로 일원화(중복 제거) — 이 탭은 추이·누적에 집중.
+            tms["연월"] = tms["연도"].astype(str) + "-" + tms["월"].apply(lambda x: f"{x:02d}")
+            order_ym = sorted(tms["연월"].unique())
+            st.caption("A팀·C팀은 **포토이즘 + 스내피즘(카테고리 기준)** 합산이에요 "
+                       "(스내피즘: 아티스트·기타→A팀, 캐릭터→C팀). 막대는 포토이즘/스내피즘을 구분해 쌓았고, "
+                       "점선은 월별 목표(A·C팀만)예요.")
 
-            st.markdown('<div class="section-title">월별 팀/항목별 실적</div>', unsafe_allow_html=True)
-            order_ym = sorted(div["연월"].unique())
-            fig_t = go.Figure()
-            for seg_name in DIV_ORDER:
-                d = (div[div["팀/항목"] == seg_name]
-                     .set_index("연월").reindex(order_ym)["실적"].fillna(0))
-                fig_t.add_trace(go.Bar(
-                    x=order_ym, y=d.values, name=DIV_LABEL[seg_name],
-                    marker_color=DIV_COLORS[seg_name],
-                    text=[fmt_krw(v) if v > 0 else "" for v in d.values],
-                    textposition="outside", textfont=dict(size=9),
-                    hovertemplate=f"{DIV_LABEL[seg_name]}<br>%{{x}}<br>%{{y:,}}원<extra></extra>",
-                ))
-            fig_t.update_layout(height=420, barmode="group",
-                                yaxis=dict(tickformat=",", title="실적 (KRW)"),
-                                legend=dict(orientation="h", y=1.1), margin=dict(t=20, b=0))
-            st.plotly_chart(fig_t, use_container_width=True)
+            _SNAP_COLOR = {"A팀": "#c3aef0", "C팀": "#f9aecb"}  # 팀색 연한 톤
+            for team in ["A팀", "C팀", "픽"]:
+                sub = tms[tms["팀"] == team]
+                if sub.empty:
+                    continue
+                st.markdown(f'<div class="section-title">{DIV_LABEL.get(team, team)}</div>',
+                            unsafe_allow_html=True)
+                fig = go.Figure()
+                dp = sub[sub["출처"] == "포토이즘"].set_index("연월").reindex(order_ym)["실적"].fillna(0)
+                fig.add_trace(go.Bar(
+                    x=order_ym, y=dp.values, name="포토이즘",
+                    marker_color=DIV_COLORS.get(team, "#888888"),
+                    hovertemplate="포토이즘 %{x}<br>%{y:,}원<extra></extra>"))
+                ds = sub[sub["출처"] == "스내피즘"].set_index("연월").reindex(order_ym)["실적"].fillna(0)
+                if ds.sum() > 0:
+                    fig.add_trace(go.Bar(
+                        x=order_ym, y=ds.values, name="스내피즘",
+                        marker_color=_SNAP_COLOR.get(team, "#cccccc"),
+                        hovertemplate="스내피즘 %{x}<br>%{y:,}원<extra></extra>"))
+                if team in ("A팀", "C팀"):
+                    _tg  = load_targets(team)
+                    _tgm = {f"{int(r['연도'])}-{int(r['월']):02d}": int(r['매출목표'])
+                            for _, r in _tg.iterrows() if int(r['매출목표']) > 0}
+                    _tv  = [_tgm.get(ym) for ym in order_ym]
+                    if any(v for v in _tv):
+                        fig.add_trace(go.Scatter(
+                            x=order_ym, y=_tv, name="목표", mode="lines+markers",
+                            connectgaps=False, line=dict(color="#1a1a2e", width=2, dash="dot"),
+                            marker=dict(size=6),
+                            hovertemplate="목표 %{x}<br>%{y:,}원<extra></extra>"))
+                fig.update_layout(height=330, barmode="stack",
+                                  yaxis=dict(tickformat=",", title="실적 (KRW)"),
+                                  legend=dict(orientation="h", y=1.15), margin=dict(t=20, b=0))
+                st.plotly_chart(fig, use_container_width=True)
 
             st.markdown('<div class="section-title">팀/항목별 누적 요약</div>', unsafe_allow_html=True)
             rows = []
-            for seg_name in DIV_ORDER:
-                tot = int(div[div["팀/항목"] == seg_name]["실적"].sum())
-                rows.append({"팀/항목": DIV_LABEL[seg_name], "누적 실적": fmt_krw(tot)})
-            rows.append({"팀/항목": "합계", "누적 실적": fmt_krw(int(div["실적"].sum()))})
-            st.dataframe(pd.DataFrame(rows).set_index("팀/항목"), use_container_width=True, height=210)
-            st.caption("※ A팀=포토이즘 아티스트 IP · C팀=포토이즘 캐릭터 IP · 픽=PICK · 스내피즘=정산금액(실시간). "
-                       "렌탈·기획(P)·제외는 미포함.")
+            for team in ["A팀", "C팀", "픽"]:
+                sub = tms[tms["팀"] == team]
+                if sub.empty:
+                    continue
+                pho = int(sub[sub["출처"] == "포토이즘"]["실적"].sum())
+                snp = int(sub[sub["출처"] == "스내피즘"]["실적"].sum())
+                rows.append({"팀": DIV_LABEL.get(team, team),
+                             "포토이즘": fmt_krw(pho),
+                             "스내피즘": fmt_krw(snp) if snp > 0 else "—",
+                             "합계": fmt_krw(pho + snp)})
+            _tp = int(tms[tms["출처"] == "포토이즘"]["실적"].sum())
+            _ts = int(tms[tms["출처"] == "스내피즘"]["실적"].sum())
+            rows.append({"팀": "합계", "포토이즘": fmt_krw(_tp),
+                         "스내피즘": fmt_krw(_ts), "합계": fmt_krw(_tp + _ts)})
+            st.dataframe(pd.DataFrame(rows).set_index("팀"), use_container_width=True, height=210)
+            st.caption("※ A팀=포토이즘 아티스트 + 스내피즘(아티스트·기타) · C팀=포토이즘 캐릭터 + 스내피즘(캐릭터) · "
+                       "픽=포토이즘 PICK(스내피즘·목표 없음). 렌탈·기획(P)·제외 미포함. "
+                       "목표는 IPX 엑셀/직접수정 값이에요.")
 
 
     # ════════════════════════════════════════════════════════════
