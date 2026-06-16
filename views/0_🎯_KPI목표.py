@@ -1321,17 +1321,39 @@ with tab_team:
         else:
             tms["연월"] = tms["연도"].astype(str) + "-" + tms["월"].apply(lambda x: f"{x:02d}")
             order_ym = sorted(tms["연월"].unique())
-            st.caption("A팀·C팀은 **포토이즘 + 스내피즘(카테고리 기준)** 합산이에요 "
+            st.caption("아래 **하위 탭에서 팀별로** 봐요. A팀·C팀은 **포토이즘 + 스내피즘(카테고리 기준)** 합산이에요 "
                        "(스내피즘: 아티스트·기타→A팀, 캐릭터→C팀). 막대는 포토이즘/스내피즘을 구분해 쌓았고, "
                        "점선은 월별 목표(A·C팀만)예요.")
 
             _SNAP_COLOR = {"A팀": "#c3aef0", "C팀": "#f9aecb"}  # 팀색 연한 톤
-            for team in ["A팀", "C팀", "픽"]:
+
+            def _render_team(team):
                 sub = tms[tms["팀"] == team]
                 if sub.empty:
-                    continue
-                st.markdown(f'<div class="section-title">{DIV_LABEL.get(team, team)}</div>',
-                            unsafe_allow_html=True)
+                    st.info("이 팀/항목은 표시할 실적이 없어요.")
+                    return
+                _cur = sub[(sub["연도"] == today.year) & (sub["월"] == today.month)]
+                _cp  = int(_cur[_cur["출처"] == "포토이즘"]["실적"].sum())
+                _cs  = int(_cur[_cur["출처"] == "스내피즘"]["실적"].sum())
+                _ct  = _cp + _cs
+                _all = int(sub["실적"].sum())
+                _tgt = None
+                if team in ("A팀", "C팀"):
+                    _t = load_targets(team)
+                    _r = _t[(_t["연도"] == today.year) & (_t["월"] == today.month)]
+                    if not _r.empty and int(_r["매출목표"].iloc[0]) > 0:
+                        _tgt = int(_r["매출목표"].iloc[0])
+                # ── 요약 지표 ──
+                _mc = st.columns(4 if _tgt else 2)
+                _mc[0].metric(f"{today.month}월 합계", fmt_krw(_ct),
+                              f"스내피즘 {fmt_krw(_cs)} 포함" if _cs > 0 else None,
+                              delta_color="off")
+                _mc[1].metric("누적 합계", fmt_krw(_all))
+                if _tgt:
+                    _mc[2].metric(f"{today.month}월 목표", fmt_krw(_tgt))
+                    _mc[3].metric("달성률", f"{_ct/_tgt*100:.0f}%",
+                                  delta_color="off")
+                # ── 월별 차트 (포토이즘/스내피즘 스택 + 목표 점선) ──
                 fig = go.Figure()
                 dp = sub[sub["출처"] == "포토이즘"].set_index("연월").reindex(order_ym)["실적"].fillna(0)
                 fig.add_trace(go.Bar(
@@ -1355,10 +1377,18 @@ with tab_team:
                             connectgaps=False, line=dict(color="#1a1a2e", width=2, dash="dot"),
                             marker=dict(size=6),
                             hovertemplate="목표 %{x}<br>%{y:,}원<extra></extra>"))
-                fig.update_layout(height=330, barmode="stack",
+                fig.update_layout(height=400, barmode="stack",
                                   yaxis=dict(tickformat=",", title="실적 (KRW)"),
-                                  legend=dict(orientation="h", y=1.15), margin=dict(t=20, b=0))
+                                  legend=dict(orientation="h", y=1.12), margin=dict(t=20, b=0))
                 st.plotly_chart(fig, use_container_width=True)
+
+            _sub_a, _sub_c, _sub_p = st.tabs(["🟣 A팀 (아티스트)", "🔴 C팀 (캐릭터)", "🟠 픽 (PICK)"])
+            with _sub_a:
+                _render_team("A팀")
+            with _sub_c:
+                _render_team("C팀")
+            with _sub_p:
+                _render_team("픽")
 
             st.markdown('<div class="section-title">팀/항목별 누적 요약</div>', unsafe_allow_html=True)
             rows = []
