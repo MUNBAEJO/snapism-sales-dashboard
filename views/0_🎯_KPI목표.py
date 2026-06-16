@@ -381,42 +381,6 @@ def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
             for ipn, ds in by_ip.items()}
 
 
-@st.cache_data(show_spinner=False)
-def _postperiod_mtd(_agg_mtime, _cfg_mtime, _cache_mtime, _ym: str) -> int:
-    """이번 달 포토이즘(A·C·픽) 매출 중 'Jira 종료일 지난 뒤 발생'분 합계(KRW).
-    매출 산식은 벤토와 동일(쿠폰·코인 포함). 종료일 매칭은 타이틀명 직접 비교."""
-    due = _jira_due_map(_cache_mtime)
-    if not due or not AGG_FILE.exists():
-        return 0
-    try:
-        df = pq.read_table(str(AGG_FILE), columns=[
-            "날짜", "IP구분", "타이틀명", "취소 여부", "결제 단위", "국가코드",
-            "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]).to_pandas()
-    except Exception:
-        return 0
-    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
-    df = df[df["날짜"].notna() & ~df["취소 여부"].astype(bool)]
-    y, m = int(_ym[:4]), int(_ym[5:7])
-    df = df[(df["날짜"].dt.year == y) & (df["날짜"].dt.month == m)]
-    df = df[df["IP구분"].astype(str).isin(["아티스트", "캐릭터", "PICK"])]
-    if df.empty:
-        return 0
-    _duemap = {t: pd.Timestamp(d) for t, d in due.items()}
-    _dd = df["타이틀명"].astype(str).map(_duemap)
-    df = df[_dd.notna() & (df["날짜"] > _dd)]
-    if df.empty:
-        return 0
-    ex   = load_exchange_rates()
-    rate = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW").map(ex).fillna(1)
-    cc   = df["국가코드"].astype(str).str.lower().str.strip()
-    for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-    rev = ((df["최종 결제 금액"] * rate).round(0)
-           + (df["쿠폰 할인 금액"] * rate).round(0) * cc.isin(_COUPON_CC)
-           + (df["서비스코인"]     * rate).round(0) * cc.isin(_COIN_CC))
-    return int(rev.sum())
-
-
 def _region_daily() -> pd.DataFrame:
     """일별 국내/해외 매출 (포토이즘 A·C·픽 + 스내피즘 합산). 날짜·_kr·매출액.
     지역 필터와 무관하게 항상 전체(국내+해외)를 담는다 — 국내/해외 비교가 목적."""
@@ -1134,36 +1098,6 @@ if _focus:
                                    "일자·국가·단가 세부는 📸 포토이즘 페이지에서 보세요.")
     except Exception:
         pass
-
-# ── 재무 정합성 한 줄 (전체 기준) ───────────────────────────────
-#   합계의 성격(명목/혼합)·해외 비중·기간 후 매출 리스크를 한 줄로.
-#   실수령(RS 차감)은 IP정산현황 페이지 영역이라 여기선 안내만 한다.
-try:
-    _ym  = f"{today.year}-{today.month:02d}"
-    _pif = photoism_ip_daily()
-    _pif = _pif[_pif["IP구분"].isin(["아티스트", "캐릭터", "PICK"])]
-    _spf = snapism_daily()
-    _dom = _ext = 0
-    for _d in (_pif, _spf):
-        if _d.empty:
-            continue
-        _dm = _d[(_d["날짜"].dt.year == today.year) & (_d["날짜"].dt.month == today.month)]
-        _dom += int(_dm[_dm["_kr"]]["매출액"].sum())
-        _ext += int(_dm[~_dm["_kr"]]["매출액"].sum())
-    _tot_fin  = _dom + _ext
-    _ext_pct  = (_ext / _tot_fin * 100) if _tot_fin else 0
-    _post     = _postperiod_mtd(_mtime(AGG_FILE), _mtime(CONFIG_FILE), _mtime(JIRA_CACHE), _ym)
-    _post_pct = (_post / _tot_fin * 100) if _tot_fin else 0
-    _post_txt = (f" · ⚠️ 이 중 기간 후 매출 {fmt_krw(_post)}({_post_pct:.1f}%) 포함"
-                 if _post > 0 else "")
-    with st.expander(f"💰 재무 관점 — 해외 {_ext_pct:.0f}% · 명목 거래액 기준 (펼치기)", expanded=False):
-        st.caption(
-            f"합계는 **명목 거래액**(쿠폰·서비스코인 포함, A·C·픽=매출·스내피즘=정산금액 혼합) · "
-            f"해외 {_ext_pct:.0f}%{_post_txt} · "
-            f"실수령(정산 후 자사 귀속)은 💰 IP정산현황, 기간 후 매출 상세는 ⚠️ 기간 후 매출분석에서 보세요."
-        )
-except Exception:
-    pass
 
 # ══ 이번 달 IP 무버 (Top/Bottom) ════════════════════════════════
 #   팀 합계로는 안 보이는 '어느 IP가 올리고 빠졌나'를 IP 단위로 — 회의 원인 분석용.
