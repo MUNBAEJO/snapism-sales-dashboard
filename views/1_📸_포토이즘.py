@@ -460,24 +460,41 @@ sales = paid_sales(df)
 today      = date.today()
 yesterday  = today - timedelta(days=1)
 month_start = today.replace(day=1)
+# 지난달 범위 + 전월 같은 기간(1일~오늘)
+prev_y = today.year if today.month > 1 else today.year - 1
+prev_m = today.month - 1 if today.month > 1 else 12
+prev_month_start = date(prev_y, prev_m, 1)
+_prev_days = pd.Period(f"{prev_y}-{prev_m:02d}", freq="M").days_in_month
+prev_month_end = date(prev_y, prev_m, _prev_days)
+prev_same_end = date(prev_y, prev_m, min(today.day, _prev_days))
 
 
 def period_rev(d):
     return int(paid_sales(d)["매출액"].sum())
 
 
+# 상단 카드: 항상 현재 기준(날짜 필터 무관, 그 외 필터는 반영) — scope 사용
 today_amt  = period_rev(scope[scope["날짜"] == today])
 yest_amt   = period_rev(scope[scope["날짜"] == yesterday])
 month_amt  = period_rev(scope[scope["날짜"] >= month_start])
-period_amt = period_rev(df)
+month_prev_same = period_rev(scope[(scope["날짜"] >= prev_month_start) & (scope["날짜"] <= prev_same_end)])
+lastmonth_amt   = period_rev(scope[(scope["날짜"] >= prev_month_start) & (scope["날짜"] <= prev_month_end)])
 delta_pct  = ((today_amt - yest_amt) / yest_amt * 100) if yest_amt > 0 else 0
+mom_pct    = ((month_amt - month_prev_same) / month_prev_same * 100) if month_prev_same > 0 else None
 yest_cnt   = tx_count(paid_sales(scope[scope["날짜"] == yesterday]))
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("오늘 매출 (KRW)", fmt_krw(today_amt), f"{delta_pct:+.1f}% vs 어제")
 c2.metric("어제 매출 (KRW)", fmt_krw(yest_amt), f"{yest_cnt:,}건")
-c3.metric("이번 달 누적", fmt_krw(month_amt), f"{month_start.strftime('%m/%d')}~오늘")
-c4.metric("조회기간 합계", fmt_krw(period_amt), f"{tx_count(sales):,}건")
+c3.metric("이번 달 누적", fmt_krw(month_amt),
+          f"{mom_pct:+.1f}% vs 전월 동기" if mom_pct is not None else f"{month_start.strftime('%m/%d')}~오늘")
+c4.metric(f"지난달 매출 ({prev_m}월 전체)", fmt_krw(lastmonth_amt), "전월 전체", delta_color="off")
+
+# 조회 기간 요약: 날짜 필터에 반응
+period_amt = period_rev(df)
+_dr = (f"{date_range[0].strftime('%Y-%m-%d')} ~ {date_range[1].strftime('%Y-%m-%d')}"
+       if len(date_range) == 2 else "전체")
+st.caption(f"📅 **조회 기간 {_dr}** 요약  ·  합계 **{fmt_krw(period_amt)}**  ·  {tx_count(sales):,}건")
 
 # ── 매출 정의 + 구성(실결제·쿠폰·서비스코인) ──────────────────────────────
 st.caption("💡 매출 = 실결제 + 쿠폰 + 서비스코인 (정산 기준) — "
