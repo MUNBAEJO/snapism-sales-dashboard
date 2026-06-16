@@ -1333,24 +1333,29 @@ with tab_team:
                 if sub.empty:
                     st.info("이 팀/항목은 표시할 실적이 없어요.")
                     return
-                _cur  = sub[(sub["연도"] == today.year) & (sub["월"] == today.month)]
-                _ct   = int(_cur["실적"].sum())
-                _cdom = int(_cur[_cur["_kr"]]["실적"].sum())
-                _cext = int(_cur[~_cur["_kr"]]["실적"].sum())
-                _all  = int(sub["실적"].sum())
+                # ── 기준 월 선택 (카드 박스가 선택한 달로 바뀜) ──
+                _mon = st.selectbox(
+                    "기준 월", order_ym, index=len(order_ym) - 1, key=f"teammonth_{team}",
+                    format_func=lambda s: f"{int(s[:4])}년 {int(s[5:7])}월")
+                _y, _m = int(_mon[:4]), int(_mon[5:7])
+                _selm = sub[(sub["연도"] == _y) & (sub["월"] == _m)]
+                _ct   = int(_selm["실적"].sum())
+                _cdom = int(_selm[_selm["_kr"]]["실적"].sum())
+                _cext = int(_selm[~_selm["_kr"]]["실적"].sum())
+                _cum  = int(sub[sub["연월"] <= _mon]["실적"].sum())   # 선택 월까지 누적
                 _tgt = None
                 if team in ("A팀", "C팀"):
                     _t = load_targets(team)
-                    _r = _t[(_t["연도"] == today.year) & (_t["월"] == today.month)]
+                    _r = _t[(_t["연도"] == _y) & (_t["월"] == _m)]
                     if not _r.empty and int(_r["매출목표"].iloc[0]) > 0:
                         _tgt = int(_r["매출목표"].iloc[0])
-                # ── 요약 지표 ──
+                # ── 요약 지표 (선택 월 기준) ──
                 _mc = st.columns(4 if _tgt else 2)
-                _mc[0].metric(f"{today.month}월 합계", fmt_krw(_ct),
+                _mc[0].metric(f"{_m}월 합계", fmt_krw(_ct),
                               f"국내 {fmt_krw(_cdom)} · 해외 {fmt_krw(_cext)}", delta_color="off")
-                _mc[1].metric("누적 합계", fmt_krw(_all))
+                _mc[1].metric(f"누적 합계 (~{_m}월)", fmt_krw(_cum))
                 if _tgt:
-                    _mc[2].metric(f"{today.month}월 목표(팀 전체)", fmt_krw(_tgt))
+                    _mc[2].metric(f"{_m}월 목표(팀 전체)", fmt_krw(_tgt))
                     _mc[3].metric("달성률", f"{_ct/_tgt*100:.0f}%", delta_color="off")
                 # ── 보기 토글: 지역 / 출처 ──
                 _view = st.radio("막대 구분", ["지역 (국내·해외)", "출처 (포토이즘·스내피즘)"],
