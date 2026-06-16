@@ -472,12 +472,17 @@ with tab_nat:
                 for _, r in nat.iterrows()
             )
             st.markdown(
-                "<style>.natbl{width:100%;border-collapse:collapse;font-size:13px;"
-                "font-family:'Pretendard','Malgun Gothic',sans-serif;margin-bottom:8px;}"
-                ".natbl th,.natbl td{padding:7px 10px;border-bottom:1px solid #eef1f6;white-space:nowrap;}"
-                ".natbl th{color:#6b7280;font-weight:700;border-bottom:2px solid #e6eaf2;text-align:left;}"
-                ".natbl td.r{text-align:right;} .natbl td.c{text-align:center;color:#6b7280;}"
-                ".natbl tr:hover td{background:#f7f9fc;}</style>"
+                "<style>.natbl{width:100%;border-collapse:collapse;margin-bottom:8px;"
+                "font-family:'Pretendard','Malgun Gothic',sans-serif;font-size:13.5px;color:#1a1a2e;}"
+                ".natbl thead th{padding:8px 12px;border-bottom:1.5px solid #e6eaf2;text-align:left;"
+                "font-size:12px;font-weight:700;color:#8a90a2;letter-spacing:-0.2px;}"
+                ".natbl tbody td{padding:9px 12px;border-bottom:1px solid #f0f2f7;white-space:nowrap;"
+                "font-weight:500;letter-spacing:-0.2px;}"
+                ".natbl tbody td:first-child{font-weight:600;}"
+                ".natbl td.r{text-align:right;font-variant-numeric:tabular-nums;}"
+                ".natbl td.c{text-align:center;color:#8a90a2;font-weight:500;}"
+                ".natbl tbody tr:last-child td{border-bottom:none;}"
+                ".natbl tbody tr:hover td{background:#f6f8fc;}</style>"
                 '<table class="natbl"><thead><tr>'
                 '<th>국가</th><th style="text-align:center;">통화</th><th style="text-align:right;">건수</th>'
                 '<th style="text-align:right;">현지 통화 금액</th><th style="text-align:right;">KRW 환산</th>'
