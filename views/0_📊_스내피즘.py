@@ -109,9 +109,10 @@ COUNTRY_ISO = {
 
 
 def flag_url(name):
-    """국가명 → 국기 이미지 URL (flagcdn, 작은 20×15). 미매핑 시 빈 문자열."""
+    """국가명 → 국기 이미지 URL (flagcdn). 미매핑 시 빈 문자열.
+    표(ImageColumn)는 행 높이에 맞춰 렌더하므로 선명하도록 고해상도(40×30) 사용."""
     iso = COUNTRY_ISO.get(str(name).strip())
-    return f"https://flagcdn.com/20x15/{iso}.png" if iso else ""
+    return f"https://flagcdn.com/40x30/{iso}.png" if iso else ""
 
 
 def load_config():
