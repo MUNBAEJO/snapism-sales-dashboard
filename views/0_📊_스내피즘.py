@@ -290,24 +290,42 @@ all_txns = pd.concat([sales, coupons])
 today = date.today()
 yesterday = today - timedelta(days=1)
 month_start = today.replace(day=1)
+# 지난달 범위 + 전월 같은 기간(1일~오늘)
+prev_y = today.year if today.month > 1 else today.year - 1
+prev_m = today.month - 1 if today.month > 1 else 12
+prev_month_start = date(prev_y, prev_m, 1)
+_prev_days = pd.Period(f"{prev_y}-{prev_m:02d}", freq="M").days_in_month
+prev_month_end = date(prev_y, prev_m, _prev_days)
+prev_same_end = date(prev_y, prev_m, min(today.day, _prev_days))
 
-yest_sales = paid_sales(df_all[df_all["날짜"] == yesterday])
-today_amt = total_rev(df_all[df_all["날짜"] == today])
-yest_amt = total_rev(df_all[df_all["날짜"] == yesterday])
-month_amt = total_rev(df_all[df_all["날짜"] >= month_start])
+# ── 상단 카드: 항상 현재 기준(날짜 필터 무관) — df_all 사용 ──
+yest_sales  = paid_sales(df_all[df_all["날짜"] == yesterday])
+today_amt   = total_rev(df_all[df_all["날짜"] == today])
+yest_amt    = total_rev(df_all[df_all["날짜"] == yesterday])
+month_amt   = total_rev(df_all[df_all["날짜"] >= month_start])
+month_prev_same = total_rev(df_all[(df_all["날짜"] >= prev_month_start) & (df_all["날짜"] <= prev_same_end)])
+lastmonth_amt   = total_rev(df_all[(df_all["날짜"] >= prev_month_start) & (df_all["날짜"] <= prev_month_end)])
 delta_pct = ((today_amt - yest_amt) / yest_amt * 100) if yest_amt > 0 else 0
+mom_pct   = ((month_amt - month_prev_same) / month_prev_same * 100) if month_prev_same > 0 else None
 
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("오늘 매출(쿠폰 포함)", fmt_krw(today_amt), f"{delta_pct:+.1f}% vs 어제")
+c2.metric("어제 매출(쿠폰 포함)", fmt_krw(yest_amt), f"{len(yest_sales):,}건")
+c3.metric("이번 달 누적", fmt_krw(month_amt),
+          f"{mom_pct:+.1f}% vs 전월 동기" if mom_pct is not None else f"{month_start.strftime('%m/%d')}~오늘")
+c4.metric(f"지난달 매출 ({prev_m}월 전체)", fmt_krw(lastmonth_amt), "전월 전체", delta_color="off")
+
+# ── 조회 기간 요약: 날짜 필터에 반응 (쿠폰·합계·취소) ──
 cancelled_amt = df[df["취소 여부"]]["KRW환산금액"].sum()
 coupon_amt = coupons["쿠폰KRW"].sum() + sales["쿠폰KRW"].sum()
 period_amt = int(sales["KRW환산금액"].sum()) + int(coupon_amt)
 coupon_cnt = len(coupons) + len(sales[sales["쿠폰 할인 금액"] > 0])
-
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("오늘 매출(쿠폰 포함)", fmt_krw(today_amt), f"{delta_pct:+.1f}% vs 어제")
-c2.metric("어제 매출(쿠폰 포함)", fmt_krw(yest_amt), f"{len(yest_sales):,}건")
-c3.metric("이번 달 누적", fmt_krw(month_amt), f"{month_start.strftime('%m/%d')}~오늘")
-c4.metric("쿠폰 할인 총액", fmt_krw(coupon_amt), f"{coupon_cnt:,}건 사용")
-c5.metric("조회기간 합계", fmt_krw(period_amt), f"취소 {fmt_krw(cancelled_amt)}")
+_dr = (f"{date_range[0].strftime('%Y-%m-%d')} ~ {date_range[1].strftime('%Y-%m-%d')}"
+       if len(date_range) == 2 else "전체")
+st.caption(
+    f"📅 **조회 기간 {_dr}** 요약  ·  합계 **{fmt_krw(period_amt)}**  ·  "
+    f"쿠폰 할인 {fmt_krw(coupon_amt)}({coupon_cnt:,}건)  ·  취소 {fmt_krw(cancelled_amt)}"
+)
 
 st.divider()
 
