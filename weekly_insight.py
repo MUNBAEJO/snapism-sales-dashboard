@@ -72,20 +72,20 @@ def get_week_range(offset: int = 0):
 # ─────────────────────────────────────────────
 
 def _apply_krw(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
+    """KRW 환산 — 벡터화(행단위 apply 금지: 1천만 행에서 사실상 멈춤)."""
     df["금액"] = pd.to_numeric(df["최종 결제 금액"], errors="coerce").fillna(0)
     df["결제 단위"] = df["결제 단위"].fillna("KRW").astype(str).str.strip()
 
-    def to_krw(row):
-        unit = row["결제 단위"]
-        if unit == "KRW":
-            return row["금액"]
-        rate = rates.get(unit, 1)
+    rate_map = {}
+    for k, v in (rates or {}).items():
         try:
-            return row["금액"] * float(rate)
-        except Exception:
-            return row["금액"]
+            rate_map[k] = float(v)
+        except (TypeError, ValueError):
+            continue
+    rate_map["KRW"] = 1.0  # KRW·미등록 통화는 1배(원본 로직 유지)
 
-    df["금액_KRW"] = df.apply(to_krw, axis=1)
+    rate = df["결제 단위"].map(rate_map).fillna(1.0)
+    df["금액_KRW"] = df["금액"] * rate
     return df
 
 
@@ -105,7 +105,9 @@ def load_snapism(ip_only: bool = True) -> pd.DataFrame:
     cfg   = load_config()
     rates = cfg.get("exchange_rates", {})
 
-    df = data_io.read_master(MASTER_SNAP)  # parquet 우선(없으면 csv)
+    # 필요한 컬럼만 읽어 메모리 절약
+    cols = ["프레임 이름", "상품 카테고리", "취소 여부", "최종 결제 금액", "결제 단위", "날짜"]
+    df = data_io.read_master(MASTER_SNAP, columns=cols)  # parquet 우선(없으면 csv)
 
     # 취소 제거
     df = df[df["취소 여부"].astype(str).str.lower() != "true"].copy()
@@ -155,16 +157,18 @@ def load_photoism(ip_only: bool = True) -> pd.DataFrame:
     rates = cfg.get("exchange_rates", {})
     alias = load_frame_alias()
 
-    ph = data_io.read_master(MASTER_PHOTO)  # 116MB parquet 우선(2GB csv 회피)
+    # 1천만+ 행 상세라 필요한 컬럼만 읽는다 (전체 24컬럼 로드 시 메모리 부족으로 멈춤)
+    cols = ["타이틀명", "취소 여부", "최종 결제 금액", "결제 단위", "날짜"]
+    ph = data_io.read_master(MASTER_PHOTO, columns=cols)  # 124MB parquet 우선(2GB csv 회피)
 
     # 취소 제거
     ph = ph[ph["취소 여부"].astype(str).str.lower() != "true"].copy()
 
-    # IP = 타이틀명 (날짜 prefix 제거 + alias 적용)
+    # IP = 타이틀명 (날짜 prefix 제거 + alias 적용) — 벡터화(1천만 행 apply 회피)
     ph["IP_raw"] = ph["타이틀명"].astype(str).str.strip()
-    ph["IP"] = ph["IP_raw"].apply(_clean_photo_title)
+    ph["IP"] = ph["IP_raw"].str.replace(_PHOTO_PREFIX, "", regex=True).str.strip()
     if alias:
-        ph["IP"] = ph["IP"].apply(lambda x: alias.get(x, x))
+        ph["IP"] = ph["IP"].map(alias).fillna(ph["IP"])
 
     # ip_only: 타이틀명 없는 건 제외
     if ip_only:

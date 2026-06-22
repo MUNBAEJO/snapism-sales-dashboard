@@ -34,8 +34,11 @@ def _parquet_for(csv_path: Path) -> Path:
     return Path(csv_path).with_suffix(".parquet")
 
 
-def read_master(csv_path, parquet_path=None, **csv_kwargs) -> pd.DataFrame:
-    """parquet 우선(존재하고 csv 보다 오래되지 않았으면) → 아니면 csv. 원본 그대로 반환."""
+def read_master(csv_path, parquet_path=None, columns=None, **csv_kwargs) -> pd.DataFrame:
+    """parquet 우선(존재하고 csv 보다 오래되지 않았으면) → 아니면 csv. 원본 그대로 반환.
+
+    columns: 필요한 컬럼만 읽어 메모리를 줄인다(예: 1천만 행 상세 parquet).
+             None이면 전체 컬럼. parquet/csv 양쪽에 적용된다."""
     csv_path = Path(csv_path)
     parquet_path = Path(parquet_path) if parquet_path else _parquet_for(csv_path)
 
@@ -45,13 +48,15 @@ def read_master(csv_path, parquet_path=None, **csv_kwargs) -> pd.DataFrame:
         )
         if use_parquet:
             try:
-                return pd.read_parquet(parquet_path)
+                return pd.read_parquet(parquet_path, columns=columns)
             except Exception:
                 pass  # 손상 시 csv 폴백
 
     if csv_path.exists():
         kw = dict(CSV_READ_KWARGS)
         kw.update(csv_kwargs)
+        if columns is not None:
+            kw["usecols"] = columns
         return pd.read_csv(csv_path, **kw)
 
     return pd.DataFrame()
