@@ -110,6 +110,19 @@ h1 {{ font-weight: 700 !important; }}
     [data-testid="stVerticalBlockBorderWrapper"] {{ padding: 2px 11px 10px !important; }}
     /* 사이드바를 화면 대부분 폭으로 펼쳐 필터 조작 편하게 */
     [data-testid="stSidebar"] {{ min-width: 84vw !important; }}
+    /* 핵심: 여러 칼럼(지표 카드·병렬 차트·2단 비교)을 세로로 쌓아 가독성 확보.
+       데스크탑은 그대로, 640px 이하에서만 한 줄에 하나씩 내려 쌓는다. */
+    [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; }}
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+        flex: 1 1 100% !important;
+        width: 100% !important;
+        min-width: 100% !important;
+    }}
+    /* 가로로 넓은 표(국가별 등)는 칸 안에서 가로 스크롤 (래퍼 없는 raw table 대응) */
+    .natbl {{ display: block !important; overflow-x: auto !important; white-space: nowrap !important; }}
+    /* plotly 차트가 칸 폭을 넘지 않도록 */
+    [data-testid="stPlotlyChart"], .js-plotly-plot {{ max-width: 100% !important; }}
 }}
 </style>
 """, unsafe_allow_html=True)
