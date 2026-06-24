@@ -119,11 +119,16 @@ h1 {{ font-weight: 700 !important; }}
         width: 100% !important;
         min-width: 100% !important;
     }}
-    /* 가로로 넓은 표(국가별 등)는 칸 안에서 가로 스크롤 (래퍼 없는 raw table 대응) */
-    .natbl {{ display: block !important; overflow-x: auto !important; white-space: nowrap !important; }}
+    /* 가로로 넓은 표(국가별 6~7컬럼): 내용 폭으로 펴서 래퍼 안에서 가로 스크롤
+       → 칸 폭에 욱여넣어 글자가 칸 선 넘는 현상 방지 */
+    .natbl {{ width: max-content !important; min-width: 100% !important; }}
+    /* plotly 모드바(카메라·줌 아이콘 툴바)가 차트 위에 겹쳐 보이는 것 숨김 */
+    .modebar, .modebar-container {{ display: none !important; }}
     /* plotly 차트가 칸 폭을 넘지 않도록 */
     [data-testid="stPlotlyChart"], .js-plotly-plot {{ max-width: 100% !important; }}
 }}
+/* 국가별 표 가로 스크롤 래퍼(전 화면 공통, 데스크탑은 표가 100%라 스크롤 안 생김) */
+.natbl-wrap {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
 </style>
 """, unsafe_allow_html=True)
 

@@ -501,11 +501,11 @@ with tab_nat:
                 ".natbl td.c{text-align:center;color:#8a90a2;font-weight:500;}"
                 ".natbl tbody tr:last-child td{border-bottom:none;}"
                 ".natbl tbody tr:hover td{background:#f6f8fc;}</style>"
-                '<table class="natbl"><thead><tr>'
+                '<div class="natbl-wrap"><table class="natbl"><thead><tr>'
                 '<th>국가</th><th style="text-align:center;">통화</th><th style="text-align:right;">건수</th>'
                 '<th style="text-align:right;">현지 통화 금액</th><th style="text-align:right;">KRW 환산</th>'
                 '<th style="text-align:right;">비중</th></tr></thead><tbody>'
-                + _rows + "</tbody></table>",
+                + _rows + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
 
@@ -577,10 +577,10 @@ with tab_nat:
                     for _, r in cpn.iterrows()
                 )
                 st.markdown(
-                    '<table class="natbl"><thead><tr>'
+                    '<div class="natbl-wrap"><table class="natbl"><thead><tr>'
                     '<th>국가</th><th style="text-align:right;">쿠폰건수</th>'
                     '<th style="text-align:right;">할인(현지)</th><th style="text-align:right;">할인 (₩)</th>'
-                    '</tr></thead><tbody>' + _crows + "</tbody></table>",
+                    '</tr></thead><tbody>' + _crows + "</tbody></table></div>",
                     unsafe_allow_html=True,
                 )
                 total_cpn = all_coupon["쿠폰KRW"].sum()
