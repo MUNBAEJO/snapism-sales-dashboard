@@ -231,7 +231,7 @@ DETAIL_DIMS = {
     "IP명 (날짜 합산·한영통합)": "IP명",
     "IP 구분 (아티스트/캐릭터/…)": "IP구분",
     "프레임 이름": "프레임 이름",
-    "테마 (구좌: BASIC/WITH/EVENT)": "구좌",
+    "구좌 (BASIC/WITH/EVENT)": "구좌",
     "타이틀 (원본 그대로)": "타이틀명",
     "타이틀 (이름+단가별)": "타이틀_단가",
     "상품 카테고리 (브랜드)": "브랜드",
@@ -1035,9 +1035,9 @@ with tab_ip:
     def _detail_search(date_range, selected_ips, selected_country,
                        selected_store, selected_brand, selected_ipgubun):
         with st.container(border=True):
-            st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 테마)</div>',
+            st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 구좌 등)</div>',
                         unsafe_allow_html=True)
-            st.caption("전체 거래에서 프레임·테마 등 세부 항목을 분류별로 모아 보여줘요. "
+            st.caption("전체 거래에서 프레임·구좌 등 세부 항목을 분류별로 모아 보여줘요. "
                        "사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용돼요.  "
                        "※ 같은 타이틀명이 단가만 다르게 등록된 경우(예: 마카오)는 "
                        "**「타이틀 (이름+단가별)」** 을 고르면 단가별로 나눠서 볼 수 있어요.")
