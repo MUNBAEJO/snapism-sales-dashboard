@@ -277,6 +277,12 @@ def load_sales_detail(group_col, start_date, end_date,
 
     group_expr = _DETAIL_EXPR.get(group_col, f'"{group_col}"')
 
+    # IP명 선택 필터를 비-IP 차원(프레임/구좌/브랜드/채널/IP구분)에도 '행 단위'로
+    # 정확히 적용하기 위해, IP가 선택된 경우에만 IP명(원시)을 함께 집계한다.
+    _need_ip = bool(ip_list) and group_col not in ("타이틀", "타이틀_단가", "IP명")
+    _ipname_sel = f', ({ip_classify.IP_NAMECORE_SQL}) AS "_ipname"' if _need_ip else ""
+    _ipname_grp = ", 4" if _need_ip else ""
+
     where = [
         f"TRY_CAST(\"날짜\" AS DATE) BETWEEN DATE '{start_date}' AND DATE '{end_date}'",
         "LOWER(CAST(\"취소 여부\" AS VARCHAR)) NOT IN ('true','1','yes')",
@@ -301,7 +307,7 @@ def load_sales_detail(group_col, start_date, end_date,
             SELECT
                 COALESCE(CAST(({group_expr}) AS VARCHAR), '') AS "항목",
                 COALESCE(CAST("결제 단위" AS VARCHAR), 'KRW') AS "결제 단위",
-                LOWER(COALESCE(CAST("국가코드" AS VARCHAR), '')) AS "국가코드",
+                LOWER(COALESCE(CAST("국가코드" AS VARCHAR), '')) AS "국가코드"{_ipname_sel},
                 SUM(TRY_CAST("최종 결제 금액" AS DOUBLE)) AS "최종 결제 금액",
                 SUM(TRY_CAST("쿠폰 할인 금액" AS DOUBLE)) AS "쿠폰 할인 금액",
                 SUM(CASE WHEN TRY_CAST("서비스코인" AS DOUBLE) > TRY_CAST("상품총액" AS DOUBLE)
@@ -312,7 +318,7 @@ def load_sales_detail(group_col, start_date, end_date,
                 SUM(CASE WHEN TRY_CAST("서비스코인" AS DOUBLE) > 0 THEN 1 ELSE 0 END) AS "코인건"
             FROM read_parquet('{parq}')
             WHERE {where_sql}
-            GROUP BY 1, 2, 3
+            GROUP BY 1, 2, 3{_ipname_grp}
         """).df()
     finally:
         con.close()
@@ -325,14 +331,19 @@ def load_sales_detail(group_col, start_date, end_date,
         df["항목"] = ip_classify.apply_alias_title(df["항목"].astype(str))
     elif group_col == "IP명":
         df["항목"] = ip_classify.apply_alias(df["항목"].astype(str))
-    # 선택된 IP명(사이드바 멀티셀렉트)으로 좁히기 — 타이틀 차원이면 IP명 포함 여부로 필터
+    # 선택된 IP명(사이드바 멀티셀렉트)으로 좁히기
     if ip_list:
-        ipset = [str(x) for x in ip_list]
+        ipset = set(str(x) for x in ip_list)
         if group_col in ("타이틀", "타이틀_단가"):
+            # 타이틀 항목 문자열에 IP명이 포함되는지로 판정
             df = df[df["항목"].astype(str).apply(
                 lambda t: any(name in t for name in ipset))]
-        else:
+        elif group_col == "IP명":
             df = df[df["항목"].astype(str).isin(ipset)]
+        else:
+            # 프레임/구좌/브랜드/채널/IP구분: 항목이 IP명이 아니므로 '행 단위' IP명으로 필터
+            _ipn = ip_classify.apply_alias(df["_ipname"].astype(str))
+            df = df[_ipn.isin(ipset)]
         if df.empty:
             return df
 
