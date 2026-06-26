@@ -32,3 +32,4 @@ __pycache__/
 # 기타
 *.png
 hub_current.txt
+raw_theme/
