@@ -1089,24 +1089,32 @@ with tab_ip:
 
                     tbl = detail_df.copy()
                     tbl.insert(0, "순위", range(1, len(tbl) + 1))
-                    tbl["평균단가"] = (tbl["매출"] / tbl["건수"].replace(0, 1)).round(0).astype("int64")
+                    tbl["건당 평균"] = (tbl["매출"] / tbl["건수"].replace(0, 1)).round(0).astype("int64")
                     tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
                     tbl["매출"]     = tbl["매출"].apply(fmt_krw)
-                    tbl["평균단가"] = tbl["평균단가"].apply(fmt_krw)
+                    tbl["건당 평균"] = tbl["건당 평균"].apply(fmt_krw)
                     tbl = tbl.rename(columns={"항목": sel_dim_label})
                     st.dataframe(
                         tbl, use_container_width=True, height=480, hide_index=True,
-                        column_config={"코인건": st.column_config.NumberColumn(
-                            "코인건",
-                            help="서비스코인으로 결제된 건수예요. 마카오처럼 코인을 매출에 "
-                                 "더하지 않는 나라는 이 건들의 매출이 0원이라, 평균단가가 "
-                                 "실제 단가보다 낮게 보일 수 있어요. (매출·건수 계산은 정확)",
-                            format="%d",
-                        )},
+                        column_config={
+                            "건당 평균": st.column_config.TextColumn(
+                                "건당 평균",
+                                help="매출 ÷ 건수 (건당 평균 매출). 장당 단가가 아니라서, "
+                                     "한 주문에 2장 이상 사면 단가(예: 7,000원)보다 높게, "
+                                     "0원(코인·무료) 거래가 섞이면 낮게 보일 수 있어요.",
+                            ),
+                            "코인건": st.column_config.NumberColumn(
+                                "코인건",
+                                help="서비스코인으로 결제된 건수예요. 마카오처럼 코인을 매출에 "
+                                     "더하지 않는 나라는 이 건들의 매출이 0원이라, 건당 평균이 "
+                                     "낮게 보일 수 있어요. (매출·건수 계산은 정확)",
+                                format="%d",
+                            ),
+                        },
                     )
                     if int(detail_df["코인건"].sum()) > 0:
                         st.caption("※ `코인건` = 서비스코인 결제 건수. 코인을 매출에 더하지 않는 "
-                                   "나라(예: 마카오)는 이 건들이 매출 0원이라 평균단가가 낮게 보일 수 있어요.")
+                                   "나라(예: 마카오)는 이 건들이 매출 0원이라 건당 평균이 낮게 보일 수 있어요.")
 
                     csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
                         index=False, encoding="utf-8-sig").encode("utf-8-sig")
