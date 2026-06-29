@@ -187,7 +187,7 @@ if auth.is_owner(st.user.email if getattr(st, "user", None) else None):
 
 pg = st.navigation(pages)
 
-# 우측 상단 고정: 계정 표시 + 로그아웃
-auth.render_account_bar()
+# 사이드바 좌하단 고정: 계정 표시 + 로그아웃
+auth.render_sidebar_account()
 
 pg.run()

@@ -277,40 +277,51 @@ def require_login() -> str:
     return email
 
 
-def render_account_bar() -> None:
-    """우측 상단 고정 영역: 현재 계정 + 로그아웃 (사이드바 박스 대신).
+def render_sidebar_account() -> None:
+    """사이드바 좌하단 고정: 현재 계정(아바타·이메일·권한) + 로그아웃.
+    st.sidebar 안에 그려서 사이드바를 접으면 함께 사라지고 너비도 사이드바에 맞춰진다.
     로그아웃은 Streamlit 기본 경로(/auth/logout) 링크로 처리."""
     email = (st.user.email or "").strip().lower()
-    role = " · 소유자" if is_owner(email) else ""
-    st.markdown(
+    role = "소유자" if is_owner(email) else "승인 계정"
+    initial = (email[:1] or "?").upper()
+    st.sidebar.markdown(
         f"""
         <style>
-        .account-bar {{
-            position: fixed; top: 11px; right: 260px; z-index: 999992;
-            display: flex; align-items: center; gap: 8px;
+        /* 좌하단 계정 바가 가리지 않게 사이드바 본문 아래 여백 확보 */
+        [data-testid="stSidebarUserContent"],
+        [data-testid="stSidebarContent"] {{ padding-bottom: 66px !important; }}
+        .sb-account {{
+            position: fixed; left: 0; bottom: 0; width: 100%; z-index: 999990;
+            box-sizing: border-box;
+            display: flex; align-items: center; gap: 9px;
+            padding: 9px 14px; border-top: 1px solid #e6eaf2; background: #fbfcfe;
             font-family: 'Pretendard','Malgun Gothic',sans-serif;
         }}
-        .account-bar .who {{
-            font-size: .82rem; font-weight: 600; color: #45456a;
-            background: #f4f6fb; border: 1px solid #e6eaf2;
-            border-radius: 8px; padding: 4px 11px; white-space: nowrap;
+        .sb-account .avatar {{
+            width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%;
+            background: #e7ebf9; color: #4361ee; font-weight: 800; font-size: .85rem;
+            display: flex; align-items: center; justify-content: center;
         }}
-        .account-bar .who b {{ color:#1a1a2e; font-weight:800; }}
-        .account-bar a.logout {{
-            font-size: .82rem; font-weight: 700; color: #e03131; text-decoration: none;
-            background: #fff; border: 1px solid #f0c2c2; border-radius: 8px; padding: 4px 12px;
+        .sb-account .meta {{ min-width: 0; line-height: 1.25; }}
+        .sb-account .meta .nm {{
+            font-size: .8rem; font-weight: 700; color: #1a1a2e;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 132px;
+        }}
+        .sb-account .meta .rl {{ font-size: .7rem; color: #8a8aa3; }}
+        .sb-account a.logout {{
+            margin-left: auto; flex: 0 0 auto;
+            font-size: .72rem; font-weight: 700; color: #e03131; text-decoration: none;
+            background: #fff; border: 1px solid #f0c2c2; border-radius: 7px; padding: 3px 9px;
             white-space: nowrap; transition: background .12s;
         }}
-        .account-bar a.logout:hover {{ background:#fff5f5; }}
-        /* 모바일: 상단 메뉴(햄버거·⋮)와 겹치지 않게 우하단으로, 이메일 숨김 */
-        @media (max-width: 640px) {{
-            .account-bar {{ top: auto; bottom: 12px; right: 12px; }}
-            .account-bar .who {{ display: none; }}
-            .account-bar a.logout {{ box-shadow: 0 2px 8px rgba(0,0,0,0.12); }}
-        }}
+        .sb-account a.logout:hover {{ background:#fff5f5; }}
         </style>
-        <div class="account-bar">
-          <span class="who">👤 <b>{email}</b>{role}</span>
+        <div class="sb-account">
+          <div class="avatar">{initial}</div>
+          <div class="meta">
+            <div class="nm" title="{email}">{email}</div>
+            <div class="rl">{role}</div>
+          </div>
           <a class="logout" href="/auth/logout" target="_self">로그아웃</a>
         </div>
         """,
