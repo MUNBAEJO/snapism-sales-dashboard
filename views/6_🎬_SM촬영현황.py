@@ -137,4 +137,5 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True,
 )
-st.caption("엑셀 3시트: **국가합산**(테마·프레임 × 날짜) · **국가별** · **원본**. CMS 화면값과 일치해요.")
+st.caption("엑셀: **요약** + **아티스트별 시트**(NCT WISH·라이즈·아이린·승한·태용·샤이니·NCT 재민제노) + **국가별**. "
+           "멤버 한·영 통합, CMS 값과 일치해요. (현재 오픈 IP만)")

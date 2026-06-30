@@ -1,25 +1,61 @@
 # -*- coding: utf-8 -*-
-"""SM 촬영수(sm_shoot_daily.parquet) → 대행사/부서 공유용 엑셀 생성.
+"""SM 촬영수(sm_shoot_daily.parquet) → 부서 공유용 엑셀(아티스트별 탭).
 
-받은 'Artist별 촬영수' 형식(테마·프레임 행 × 날짜 열)을 그대로 만든다.
-시트: 국가합산 / 국가별 / 원본.
+현재 오픈 중인 IP만, 한 엑셀에 아티스트별 시트로 나눠 보기 좋게 만든다.
+멤버·테마의 한/영 표기를 한국어로 통합. 값 = 촬영수(Artist별 촬영수, CMS와 일치).
 
+시트: 요약 → (아티스트별) → 국가별
 실행:
-  python sm_report.py                      # 전체 기간, reports/ 에 저장
+  python sm_report.py                      # 전체 기간 → reports/
   python sm_report.py 2026-06-16 2026-06-29
 """
 import io
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 BASE_DIR = Path(__file__).parent
 DAILY_PARQUET = BASE_DIR / "data" / "sm_shoot_daily.parquet"
 CONFIG_FILE = BASE_DIR / "config.json"
 REPORT_DIR = BASE_DIR / "reports"
+
+# ── 현재 오픈 IP (순서 = 시트 순서). kws=테마 부분일치(소문자), members=한국어 통합명→별칭 ──
+ARTISTS = [
+    {"name": "NCT WISH", "kws": ["nct wish"], "countries": None, "members": {
+        "시온": ["시온", "sion"], "리쿠": ["리쿠", "riku"], "유우시": ["유우시", "유시", "yushi"],
+        "사쿠야": ["사쿠야", "sakuya"], "재희": ["재희", "jaehee"], "료": ["료", "ryo"]}},
+    {"name": "라이즈", "kws": ["riize", "라이즈"], "countries": None, "members": {
+        "쇼타로": ["쇼타로", "shotaro"], "은석": ["은석", "eunseok"], "성찬": ["성찬", "sungchan"],
+        "원빈": ["원빈", "wonbin"], "앤톤": ["앤톤", "안톤", "anton"], "소희": ["소희", "sohee"]}},
+    {"name": "아이린", "kws": ["irene", "아이린"], "countries": None, "members": {
+        "아이린": ["아이린", "irene"]}},
+    {"name": "승한", "kws": ["xnghan", "승한", "seunghan"], "countries": None, "members": {
+        "승한": ["승한", "xnghan", "seunghan"]}},
+    {"name": "태용", "kws": ["taeyong", "태용"], "countries": None, "members": {
+        "태용": ["태용", "taeyong"]}},
+    {"name": "샤이니", "kws": ["shinee", "샤이니"], "countries": None, "members": {
+        "온유": ["온유", "onew"], "키": ["키", "key"], "민호": ["민호", "minho"], "태민": ["태민", "taemin"]}},
+    {"name": "NCT 재민제노", "kws": ["jnj", "재민제노"], "countries": ["jp"], "members": {
+        "재민": ["재민", "jaemin"], "제노": ["제노", "jeno"], "재민제노(듀오)": ["jnjm", "재민제노"]}},
+]
+
+# ── 서식 ──
+_BLUE = PatternFill("solid", fgColor="4361EE")
+_LIGHT = PatternFill("solid", fgColor="EEF2FB")
+_TOTAL = PatternFill("solid", fgColor="DDE6FA")
+_WHITE_BOLD = Font(bold=True, color="FFFFFF", name="맑은 고딕")
+_BOLD = Font(bold=True, name="맑은 고딕")
+_NORM = Font(name="맑은 고딕")
+_CENTER = Alignment(horizontal="center", vertical="center")
+_LEFT = Alignment(horizontal="left", vertical="center")
+_NUMFMT = '#,##0;-#,##0;"-"'
+_thin = Side(style="thin", color="D7DEEE")
+_BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 
 
 def country_name_map() -> dict:
@@ -42,27 +78,166 @@ def load_daily(start=None, end=None) -> pd.DataFrame:
     return df
 
 
-def _pivot(df, index_cols):
-    if df.empty:
-        return pd.DataFrame()
-    pv = pd.pivot_table(df, index=index_cols, columns="날짜", values="촬영수",
-                        aggfunc="sum", fill_value=0).astype(int)
-    pv["합계"] = pv.sum(axis=1)
-    return pv.sort_values("합계", ascending=False)
+def _match_artist(theme: str, cc: str):
+    tl = str(theme).lower()
+    for a in ARTISTS:
+        if any(k in tl for k in a["kws"]):
+            if a["countries"] and cc not in a["countries"]:
+                return None
+            return a
+    return None
+
+
+def _canon_member(artist, frame: str) -> str:
+    fl = str(frame).strip().lower()
+    for canon, aliases in artist["members"].items():
+        if fl in [x.lower() for x in aliases]:
+            return canon
+    return str(frame).strip()  # 미정의 멤버는 원문 유지
+
+
+def annotate(df: pd.DataFrame) -> pd.DataFrame:
+    """오픈 아티스트만 남기고 아티스트·멤버(한국어 통합) 컬럼 부여."""
+    arts, mems = [], []
+    for theme, cc, frame in zip(df["테마"], df["국가코드"], df["프레임"]):
+        a = _match_artist(theme, cc)
+        if a:
+            arts.append(a["name"])
+            mems.append(_canon_member(a, frame))
+        else:
+            arts.append(None)
+            mems.append(None)
+    out = df.copy()
+    out["아티스트"] = arts
+    out["멤버"] = mems
+    return out[out["아티스트"].notna()]
+
+
+def _member_order(name: str, present: set):
+    """정의된 멤버 순서 + 데이터에만 있는 멤버 뒤에 추가."""
+    for a in ARTISTS:
+        if a["name"] == name:
+            order = [m for m in a["members"].keys() if m in present]
+            extra = sorted(present - set(order))
+            return order + extra
+    return sorted(present)
+
+
+def _style_header(ws, ncols):
+    for c in range(1, ncols + 1):
+        cell = ws.cell(2, c)
+        cell.fill = _BLUE
+        cell.font = _WHITE_BOLD
+        cell.alignment = _CENTER
+        cell.border = _BORDER
+
+
+def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
+    """pivot: index=행라벨, columns=날짜/국가, 값=정수. 보기좋게 렌더 + 합계."""
+    dates = list(pivot.columns)
+    ncols = 1 + len(dates) + 1  # 라벨 + 날짜들 + 합계
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    t = ws.cell(1, 1, title)
+    t.font = Font(bold=True, size=13, name="맑은 고딕", color="1A1A2E")
+    t.alignment = _LEFT
+    # 헤더
+    ws.cell(2, 1, row_label)
+    for j, d in enumerate(dates):
+        ws.cell(2, 2 + j, str(d)[5:] if str(d)[:2] == "20" else str(d))  # 날짜는 MM-DD
+    ws.cell(2, ncols, "합계")
+    _style_header(ws, ncols)
+    # 데이터
+    col_tot = [0] * len(dates)
+    r0 = 3
+    for i, (label, row) in enumerate(pivot.iterrows()):
+        r = r0 + i
+        lc = ws.cell(r, 1, label)
+        lc.font = _BOLD
+        lc.alignment = _LEFT
+        lc.border = _BORDER
+        if i % 2 == 1:
+            lc.fill = _LIGHT
+        rtot = 0
+        for j, d in enumerate(dates):
+            v = int(row[d])
+            rtot += v
+            col_tot[j] += v
+            cell = ws.cell(r, 2 + j, v)
+            cell.number_format = _NUMFMT
+            cell.font = _NORM
+            cell.alignment = _CENTER
+            cell.border = _BORDER
+            if i % 2 == 1:
+                cell.fill = _LIGHT
+        tc = ws.cell(r, ncols, rtot)
+        tc.number_format = _NUMFMT
+        tc.font = _BOLD
+        tc.alignment = _CENTER
+        tc.border = _BORDER
+        tc.fill = _TOTAL
+    # 합계 행
+    rt = r0 + len(pivot)
+    ws.cell(rt, 1, "합계").font = _BOLD
+    ws.cell(rt, 1).fill = _TOTAL
+    ws.cell(rt, 1).border = _BORDER
+    for j in range(len(dates)):
+        cell = ws.cell(rt, 2 + j, col_tot[j])
+        cell.number_format = _NUMFMT
+        cell.font = _BOLD
+        cell.alignment = _CENTER
+        cell.fill = _TOTAL
+        cell.border = _BORDER
+    g = ws.cell(rt, ncols, sum(col_tot))
+    g.number_format = _NUMFMT
+    g.font = _BOLD
+    g.alignment = _CENTER
+    g.fill = _TOTAL
+    g.border = _BORDER
+    # 폭·고정
+    ws.column_dimensions["A"].width = max(12, min(22, max((len(str(x)) for x in pivot.index), default=8) + 4))
+    for j in range(len(dates)):
+        ws.column_dimensions[get_column_letter(2 + j)].width = 7.5
+    ws.column_dimensions[get_column_letter(ncols)].width = 10
+    ws.freeze_panes = "B3"
 
 
 def build_xlsx(df: pd.DataFrame) -> bytes:
+    a = annotate(df)
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    # 요약: 아티스트 × 날짜
+    summ = pd.pivot_table(a, index="아티스트", columns="날짜", values="촬영수",
+                          aggfunc="sum", fill_value=0)
+    order = [art["name"] for art in ARTISTS if art["name"] in summ.index]
+    summ = summ.reindex(order)
+    ws = wb.create_sheet("요약")
+    _write_pivot(ws, summ.astype(int), "SM 촬영 현황 — 아티스트별 일별 합계 (전 국가)", "아티스트")
+
+    # 아티스트별 시트: 멤버 × 날짜
+    for art in ARTISTS:
+        sub = a[a["아티스트"] == art["name"]]
+        if sub.empty:
+            continue
+        pv = pd.pivot_table(sub, index="멤버", columns="날짜", values="촬영수",
+                            aggfunc="sum", fill_value=0).astype(int)
+        pv = pv.reindex(_member_order(art["name"], set(pv.index)))
+        note = " (일본)" if art["countries"] == ["jp"] else " (전 국가 합산)"
+        ws = wb.create_sheet(art["name"][:31])
+        _write_pivot(ws, pv, f"{art['name']} — 멤버별 일별 촬영수{note}", "멤버")
+
+    # 국가별: (아티스트·멤버) × 국가
+    byc = pd.pivot_table(a, index=["아티스트", "멤버"], columns="국가", values="촬영수",
+                         aggfunc="sum", fill_value=0).astype(int)
+    if not byc.empty:
+        ws = wb.create_sheet("국가별")
+        # index 평탄화
+        byc2 = byc.copy()
+        byc2.index = [f"{ar} · {me}" for ar, me in byc.index]
+        _write_pivot(ws, byc2, "아티스트·멤버별 국가 촬영수", "아티스트 · 멤버")
+
     buf = io.BytesIO()
-    by_sum = _pivot(df, ["테마", "프레임"])
-    by_ctry = _pivot(df, ["국가", "테마", "프레임"])
-    flat = df[["날짜", "국가", "테마", "프레임", "촬영수", "주문수", "최종결제금액"]] \
-        .sort_values(["날짜", "국가", "테마", "프레임"])
-    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
-        (by_sum if not by_sum.empty else pd.DataFrame({"안내": ["데이터 없음"]})) \
-            .to_excel(xw, sheet_name="국가합산")
-        if not by_ctry.empty:
-            by_ctry.to_excel(xw, sheet_name="국가별")
-        flat.to_excel(xw, sheet_name="원본", index=False)
+    wb.save(buf)
     return buf.getvalue()
 
 
@@ -77,12 +252,10 @@ def main():
     if df.empty:
         print("해당 기간 데이터가 없어요.")
         sys.exit(0)
-    s = df["날짜"].min()
-    e = df["날짜"].max()
     REPORT_DIR.mkdir(exist_ok=True)
-    out = REPORT_DIR / f"SM촬영현황_{s}_{e}.xlsx"
+    out = REPORT_DIR / f"SM촬영현황_{df['날짜'].min()}_{df['날짜'].max()}.xlsx"
     out.write_bytes(build_xlsx(df))
-    print(f"저장: {out}  (행 {len(df):,} · 국가 {df['국가'].nunique()} · 테마 {df['테마'].nunique()})")
+    print(f"저장: {out}  (행 {len(df):,} · 국가 {df['국가'].nunique()})")
 
 
 if __name__ == "__main__":
