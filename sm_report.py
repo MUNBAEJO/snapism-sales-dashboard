@@ -17,12 +17,14 @@ from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
 
 BASE_DIR = Path(__file__).parent
 DAILY_PARQUET = BASE_DIR / "data" / "sm_shoot_daily.parquet"
+CHANGES_PARQUET = BASE_DIR / "data" / "sm_shoot_changes.parquet"  # 주차별 변동 이력
 CONFIG_FILE = BASE_DIR / "config.json"
 REPORT_DIR = BASE_DIR / "reports"
 
@@ -54,6 +56,7 @@ _LIGHT = PatternFill("solid", fgColor="EEF2FB")
 _TOTAL = PatternFill("solid", fgColor="DDE6FA")
 _WHITE_BOLD = Font(bold=True, color="FFFFFF", name="맑은 고딕")
 _HEAD_FONT = Font(bold=True, color="14245F", name="맑은 고딕")  # 진한 남색
+_CHG_FONT = Font(color="C0392B", name="맑은 고딕")  # 변동 셀(빨강) — 메모 동반
 _BOLD = Font(bold=True, name="맑은 고딕")
 _NORM = Font(name="맑은 고딕")
 _CENTER = Alignment(horizontal="center", vertical="center")
@@ -132,6 +135,34 @@ def annotate(df: pd.DataFrame) -> pd.DataFrame:
     out["아티스트"] = arts
     out["멤버"] = mems
     return out[out["아티스트"].notna()]
+
+
+def aggregate_members(df: pd.DataFrame) -> pd.DataFrame:
+    """리포트 셀 단위(날짜·국가·아티스트·멤버) 촬영수 — 주차별 변동 비교용."""
+    a = annotate(df)
+    if a.empty:
+        return pd.DataFrame(columns=["날짜", "국가코드", "아티스트", "멤버", "촬영수"])
+    return a.groupby(["날짜", "국가코드", "아티스트", "멤버"], as_index=False)["촬영수"].sum()
+
+
+def load_changes() -> pd.DataFrame:
+    try:
+        return pd.read_parquet(CHANGES_PARQUET)
+    except Exception:
+        return pd.DataFrame(columns=["갱신일", "날짜", "국가코드", "아티스트", "멤버", "이전", "신규"])
+
+
+def _changes_index(ch: pd.DataFrame) -> dict:
+    """(날짜, 국가코드, 아티스트, 멤버) → (이전, 신규, 갱신일) — 셀별 최신 변동."""
+    idx = {}
+    if ch.empty:
+        return idx
+    ch = ch.sort_values("갱신일")  # 오름차순 → 마지막(최신)이 최종 반영
+    for upd, day, cc, art, mem, prev, new in zip(
+            ch["갱신일"], ch["날짜"], ch["국가코드"], ch["아티스트"],
+            ch["멤버"], ch["이전"], ch["신규"]):
+        idx[(str(day), str(cc), str(art), str(mem))] = (int(prev), int(new), str(upd))
+    return idx
 
 
 def _member_order(name: str, present: set):
@@ -223,7 +254,7 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
     _fit_page(ws)
 
 
-def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
+def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_idx=None):
     """아티스트 시트 (RIIZE 참고형): 국가 | 아티스트 | 멤버 | 누적 | 날짜들.
     국가별 블록 + 굵은 구분선 + 국가 소계 + 전체 합계. 날짜는 실제 날짜값."""
     dates = [d for d in all_dates if d in set(sub["날짜"])]
@@ -247,8 +278,10 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
         c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
     ws.row_dimensions[2].height = 18
 
-    ctot = sub.groupby("국가")["촬영수"].sum().sort_values(ascending=False)
-    countries = [c for c in ctot.index if ctot[c] > 0]
+    changes_idx = changes_idx or {}
+    code_name = dict(zip(sub["국가코드"].astype(str), sub["국가"]))
+    ctot = sub.groupby("국가코드")["촬영수"].sum().sort_values(ascending=False)
+    codes = [c for c in ctot.index if ctot[c] > 0]
     r = 3
     grand = [0] * len(dates)
 
@@ -263,27 +296,33 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
             c.fill = fill
         return c
 
-    for cc in countries:
-        pv = pd.pivot_table(sub[sub["국가"] == cc], index="멤버", columns="날짜",
+    for code in codes:
+        cc_name = code_name.get(str(code), str(code).upper())
+        pv = pd.pivot_table(sub[sub["국가코드"] == code], index="멤버", columns="날짜",
                             values="촬영수", aggfunc="sum", fill_value=0)
         members = _member_order(artist["name"], set(pv.index))
         csub = [0] * len(dates)
         for i, m in enumerate(members):
             top = _MED if i == 0 else _thin  # 국가 블록 시작에 굵은선
             vals = [int(pv.loc[m].get(d, 0)) for d in dates]
-            _cell(r, 1, cc if i == 0 else None, font=_BOLD, top=top, left=True)
+            _cell(r, 1, cc_name if i == 0 else None, font=_BOLD, top=top, left=True)
             _cell(r, 2, artist["name"] if i == 0 else None, top=top)
             _cell(r, 3, m, left=True, top=top)
             _cell(r, 4, sum(vals), font=_BOLD, num=True, fill=_LIGHT, top=top)
-            for j, v in enumerate(vals):
-                _cell(r, LAB + 1 + j, v, num=True, top=top)
+            for j, (d, v) in enumerate(zip(dates, vals)):
+                c = _cell(r, LAB + 1 + j, v, num=True, top=top)
+                chg = changes_idx.get((str(d), str(code), artist["name"], m))
+                if chg:  # 변동 셀: 빨간 글씨 + 메모
+                    prev, new, upd = chg
+                    c.font = _CHG_FONT
+                    c.comment = Comment(f"이전 {prev:,} → 현재 {new:,}\n({upd} 갱신)", "SM 자동집계")
                 csub[j] += v
                 grand[j] += v
             r += 1
         # 국가 소계
         _cell(r, 1, None, fill=_TOTAL, bottom=_MED)
         _cell(r, 2, None, fill=_TOTAL, bottom=_MED)
-        _cell(r, 3, f"{cc} 소계", font=_BOLD, fill=_TOTAL, left=True, bottom=_MED)
+        _cell(r, 3, f"{cc_name} 소계", font=_BOLD, fill=_TOTAL, left=True, bottom=_MED)
         _cell(r, 4, sum(csub), font=_BOLD, num=True, fill=_TOTAL, bottom=_MED)
         for j in range(len(dates)):
             _cell(r, LAB + 1 + j, csub[j], font=_BOLD, num=True, fill=_TOTAL, bottom=_MED)
@@ -308,9 +347,44 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
     _fit_page(ws)
 
 
+def _write_changes_sheet(wb, ch: pd.DataFrame, name_map: dict):
+    """변경내역 시트: 매주 갱신 시 바뀐 (날짜·국가·멤버) 값 목록(최신순)."""
+    ws = wb.create_sheet("변경내역", 1)  # 요약 바로 다음
+    heads = ["갱신일", "날짜", "국가", "아티스트", "멤버", "이전", "신규", "증감"]
+    for j, h in enumerate(heads):
+        c = ws.cell(1, 1 + j, h)
+        c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
+    d = ch.copy()
+    d["국가"] = d["국가코드"].map(lambda c: name_map.get(str(c), str(c).upper()))
+    d["증감"] = d["신규"].astype(int) - d["이전"].astype(int)
+    d = d.sort_values(["갱신일", "증감"], ascending=[False, False])
+    r = 2
+    for upd, day, ctry, art, mem, prev, new, delta in zip(
+            d["갱신일"], d["날짜"], d["국가"], d["아티스트"], d["멤버"],
+            d["이전"], d["신규"], d["증감"]):
+        row = [str(upd), _mmdd(day), ctry, art, mem, int(prev), int(new), int(delta)]
+        for j, v in enumerate(row):
+            c = ws.cell(r, 1 + j, v)
+            c.border = _BORDER
+            c.alignment = _CENTER if j >= 5 else _LEFT
+            if j >= 5:
+                c.number_format = _NUMFMT
+            if j == 7:  # 증감 색
+                c.font = Font(name="맑은 고딕", bold=True,
+                              color="C0392B" if delta > 0 else "1F6FB2")
+        r += 1
+    for col, w in zip("ABCDEFGH", (12, 8, 12, 11, 12, 9, 9, 9)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+    _fit_page(ws)
+
+
 def build_xlsx(df: pd.DataFrame) -> bytes:
     a = annotate(df)
     all_dates = sorted(a["날짜"].unique())
+    ch = load_changes()
+    cidx = _changes_index(ch)
+    nm = country_name_map()
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -322,13 +396,17 @@ def build_xlsx(df: pd.DataFrame) -> bytes:
     _write_pivot(ws, summ.reindex(order).astype(int),
                  "SM 촬영 현황 — 아티스트별 일별 합계 (전 국가)", "아티스트")
 
-    # 아티스트별 시트: 국가 × 멤버 × 날짜
+    # 변경내역(있을 때만, 요약 다음에)
+    if not ch.empty:
+        _write_changes_sheet(wb, ch, nm)
+
+    # 아티스트별 시트: 국가 × 멤버 × 날짜 (변동 셀엔 메모)
     for art in ARTISTS:
         sub = a[a["아티스트"] == art["name"]]
         if sub.empty:
             continue
         ws = wb.create_sheet(art["name"][:31])
-        _write_artist_sheet(ws, sub, art, all_dates)
+        _write_artist_sheet(ws, sub, art, all_dates, cidx)
 
     buf = io.BytesIO()
     wb.save(buf)

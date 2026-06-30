@@ -10,6 +10,8 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import pandas as pd
+
 import sm_collect
 import sm_report
 
@@ -30,8 +32,34 @@ def main():
     cfg = json.load(open(BASE_DIR / "config.json", encoding="utf-8"))["photoism"]
     codes = list(cfg["countries"].keys())
 
+    # 변동 감지용 — 수집(덮어쓰기) 전 직전 값 스냅샷
+    prev = None
+    if sm_report.DAILY_PARQUET.exists():
+        try:
+            prev = sm_report.aggregate_members(sm_report.load_daily())
+        except Exception as ex:
+            sm_collect.log(f"직전 스냅샷 실패: {ex}")
+
     sm_collect.log(f"### 주간 자동 수집 시작: {start}~{end} ({len(codes)}개국) ###")
     sm_collect.collect(start, end, codes, delay=8)
+
+    # 수집 후 — 직전 대비 변동(같은 날짜·국가·멤버의 값 변화)을 변경내역에 기록
+    if prev is not None and not prev.empty:
+        new = sm_report.aggregate_members(sm_report.load_daily())
+        m = prev.merge(new, on=["날짜", "국가코드", "아티스트", "멤버"], suffixes=("_old", "_new"))
+        chg = m[m["촬영수_old"].astype(int) != m["촬영수_new"].astype(int)]
+        if not chg.empty:
+            rec = pd.DataFrame({
+                "갱신일": today.isoformat(), "날짜": chg["날짜"].values,
+                "국가코드": chg["국가코드"].values, "아티스트": chg["아티스트"].values,
+                "멤버": chg["멤버"].values,
+                "이전": chg["촬영수_old"].astype(int).values,
+                "신규": chg["촬영수_new"].astype(int).values})
+            allch = pd.concat([sm_report.load_changes(), rec], ignore_index=True)
+            allch.to_parquet(sm_report.CHANGES_PARQUET, index=False)
+            sm_collect.log(f"### 변동 {len(rec)}건 기록 (변경내역 누적 {len(allch)}건) ###")
+        else:
+            sm_collect.log("### 변동 없음 ###")
 
     # 누적 전체로 공유 엑셀 생성 (고정명 + 날짜본)
     df = sm_report.load_daily()
