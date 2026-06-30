@@ -274,7 +274,7 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
     _fit_page(ws)
 
 
-def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_idx=None):
+def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_idx=None, name_map=None):
     """아티스트 시트 (RIIZE 참고형): 국가 | 아티스트 | 멤버 | 누적 | 날짜들.
     국가별 블록 + 굵은 구분선 + 국가 소계 + 전체 합계. 날짜는 실제 날짜값."""
     dates = [d for d in all_dates if d in set(sub["날짜"])]
@@ -299,9 +299,13 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
     ws.row_dimensions[2].height = 18
 
     changes_idx = changes_idx or {}
-    code_name = dict(zip(sub["국가코드"].astype(str), sub["국가"]))
-    ctot = sub.groupby("국가코드")["촬영수"].sum().sort_values(ascending=False)
-    codes = [c for c in ctot.index if ctot[c] > 0]
+    # 전 국가 로스터(설정 30개국). 판매 없는 국가도 0으로 표기.
+    code_name = dict(name_map or {})
+    code_name.update(dict(zip(sub["국가코드"].astype(str), sub["국가"])))  # 보강
+    ctot = sub.groupby("국가코드")["촬영수"].sum()
+    roster = artist["countries"] if artist["countries"] else list(code_name.keys())
+    # 판매 많은 국가 먼저, 그다음 미판매(0) 국가
+    codes = sorted(dict.fromkeys(roster), key=lambda c: -int(ctot.get(str(c), 0)))
     r = 3
     grand = [0] * len(dates)
 
@@ -494,7 +498,7 @@ def build_xlsx(df: pd.DataFrame) -> bytes:
         if sub.empty:
             continue
         ws = wb.create_sheet(art["name"][:31])
-        _write_artist_sheet(ws, sub, art, all_dates, cidx)
+        _write_artist_sheet(ws, sub, art, all_dates, cidx, nm)
 
     # 표지(맨 앞)
     _write_info_sheet(wb, df, a)
