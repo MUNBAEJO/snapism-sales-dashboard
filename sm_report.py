@@ -47,9 +47,12 @@ ARTISTS = [
 
 # ── 서식 ──
 _BLUE = PatternFill("solid", fgColor="4361EE")
+_HEAD_FILL = PatternFill("solid", fgColor="C9D6F5")   # 헤더: 연한 파랑(진한 글씨)
+_GRAND = PatternFill("solid", fgColor="AEC4EC")       # 전체 합계
 _LIGHT = PatternFill("solid", fgColor="EEF2FB")
 _TOTAL = PatternFill("solid", fgColor="DDE6FA")
 _WHITE_BOLD = Font(bold=True, color="FFFFFF", name="맑은 고딕")
+_HEAD_FONT = Font(bold=True, color="14245F", name="맑은 고딕")  # 진한 남색
 _BOLD = Font(bold=True, name="맑은 고딕")
 _NORM = Font(name="맑은 고딕")
 _CENTER = Alignment(horizontal="center", vertical="center")
@@ -129,10 +132,10 @@ def _member_order(name: str, present: set):
 def _style_header(ws, ncols):
     for c in range(1, ncols + 1):
         cell = ws.cell(2, c)
-        cell.fill = _BLUE
-        cell.font = _WHITE_BOLD
+        cell.fill = _HEAD_FILL
+        cell.font = _HEAD_FONT
         cell.alignment = _CENTER
-        cell.border = _BORDER
+        cell.border = _HEADBORD
 
 
 def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
@@ -206,7 +209,7 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
     for j in range(len(dates)):
         ws.column_dimensions[get_column_letter(2 + j)].width = 7.5
     ws.column_dimensions[get_column_letter(ncols)].width = 10
-    ws.freeze_panes = "B3"
+    ws.freeze_panes = "A3"
 
 
 def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
@@ -224,14 +227,14 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
     tc.alignment = _LEFT
     ws.row_dimensions[1].height = 24
 
-    # 헤더(2행)
+    # 헤더(2행) — 연한 배경 + 진한 글씨(흰 글씨 안 보이는 문제 방지)
     for j, h in enumerate(["국가", "아티스트", "멤버", "누적"]):
         c = ws.cell(2, 1 + j, h)
-        c.fill, c.font, c.alignment, c.border = _BLUE, _WHITE_BOLD, _CENTER, _HEADBORD
+        c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
     for j, d in enumerate(dates):
         c = ws.cell(2, LAB + 1 + j, dt.date.fromisoformat(str(d)))
         c.number_format = "mm/dd"
-        c.fill, c.font, c.alignment, c.border = _BLUE, _WHITE_BOLD, _CENTER, _HEADBORD
+        c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
     ws.row_dimensions[2].height = 18
 
     ctot = sub.groupby("국가")["촬영수"].sum().sort_values(ascending=False)
@@ -276,13 +279,13 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
             _cell(r, LAB + 1 + j, csub[j], font=_BOLD, num=True, fill=_TOTAL, bottom=_MED)
         r += 1
 
-    # 전체 합계
-    _cell(r, 1, "전체", font=_WHITE_BOLD, fill=_BLUE, left=True, top=_MED)
-    _cell(r, 2, None, fill=_BLUE, top=_MED)
-    _cell(r, 3, "합계", font=_WHITE_BOLD, fill=_BLUE, left=True, top=_MED)
-    _cell(r, 4, sum(grand), font=_WHITE_BOLD, num=True, fill=_BLUE, top=_MED)
+    # 전체 합계 (진한 글씨 + 중간 톤 배경)
+    _cell(r, 1, "전체", font=_HEAD_FONT, fill=_GRAND, left=True, top=_MED)
+    _cell(r, 2, None, fill=_GRAND, top=_MED)
+    _cell(r, 3, "합계", font=_HEAD_FONT, fill=_GRAND, left=True, top=_MED)
+    _cell(r, 4, sum(grand), font=_HEAD_FONT, num=True, fill=_GRAND, top=_MED)
     for j in range(len(dates)):
-        _cell(r, LAB + 1 + j, grand[j], font=_WHITE_BOLD, num=True, fill=_BLUE, top=_MED)
+        _cell(r, LAB + 1 + j, grand[j], font=_HEAD_FONT, num=True, fill=_GRAND, top=_MED)
 
     ws.column_dimensions["A"].width = 9
     ws.column_dimensions["B"].width = 11
@@ -290,7 +293,8 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
     ws.column_dimensions["D"].width = 9
     for j in range(len(dates)):
         ws.column_dimensions[get_column_letter(LAB + 1 + j)].width = 6.8
-    ws.freeze_panes = "E3"
+    # 행만 고정(틀고정이 제목 병합 경계를 가로질러 헤더가 가려지던 문제 방지)
+    ws.freeze_panes = "A3"
 
 
 def build_xlsx(df: pd.DataFrame) -> bytes:
