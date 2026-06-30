@@ -19,6 +19,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.properties import PageSetupProperties
 
 BASE_DIR = Path(__file__).parent
 DAILY_PARQUET = BASE_DIR / "data" / "sm_shoot_daily.parquet"
@@ -62,6 +63,20 @@ _thin = Side(style="thin", color="D7DEEE")
 _MED = Side(style="medium", color="8AA4E0")
 _BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 _HEADBORD = Border(left=_thin, right=_thin, top=_MED, bottom=_MED)
+
+
+def _fit_page(ws):
+    """인쇄 시 가로로 안 잘리게 가로방향 + 너비 1페이지 맞춤."""
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+
+
+def _mmdd(d) -> str:
+    """'2026-06-16' → '06/16' (Excel 날짜서식 미적용 문제 회피, 텍스트로 표기)."""
+    s = str(d)
+    return f"{s[5:7]}/{s[8:10]}" if len(s) >= 10 and s[4] == "-" else s
 
 
 def country_name_map() -> dict:
@@ -149,12 +164,7 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
     # 헤더
     ws.cell(2, 1, row_label)
     for j, d in enumerate(dates):
-        cell = ws.cell(2, 2 + j)
-        try:
-            cell.value = dt.date.fromisoformat(str(d))
-            cell.number_format = "mm/dd"
-        except ValueError:
-            cell.value = str(d)
+        ws.cell(2, 2 + j, _mmdd(d))
     ws.cell(2, ncols, "합계")
     _style_header(ws, ncols)
     # 데이터
@@ -210,6 +220,7 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
         ws.column_dimensions[get_column_letter(2 + j)].width = 7.5
     ws.column_dimensions[get_column_letter(ncols)].width = 10
     ws.freeze_panes = "A3"
+    _fit_page(ws)
 
 
 def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
@@ -232,8 +243,7 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
         c = ws.cell(2, 1 + j, h)
         c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
     for j, d in enumerate(dates):
-        c = ws.cell(2, LAB + 1 + j, dt.date.fromisoformat(str(d)))
-        c.number_format = "mm/dd"
+        c = ws.cell(2, LAB + 1 + j, _mmdd(d))
         c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
     ws.row_dimensions[2].height = 18
 
@@ -295,6 +305,7 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
         ws.column_dimensions[get_column_letter(LAB + 1 + j)].width = 6.8
     # 행만 고정(틀고정이 제목 병합 경계를 가로질러 헤더가 가려지던 문제 방지)
     ws.freeze_panes = "A3"
+    _fit_page(ws)
 
 
 def build_xlsx(df: pd.DataFrame) -> bytes:
