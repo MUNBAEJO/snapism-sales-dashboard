@@ -64,7 +64,7 @@ _BOLD = Font(bold=True, name="맑은 고딕")
 _NORM = Font(name="맑은 고딕")
 _CENTER = Alignment(horizontal="center", vertical="center")
 _LEFT = Alignment(horizontal="left", vertical="center")
-_NUMFMT = '#,##0;-#,##0;"-"'
+_NUMFMT = '#,##0'   # 0은 그대로 '0'으로 표기(담당자 요청)
 _thin = Side(style="thin", color="D7DEEE")
 _MED = Side(style="medium", color="8AA4E0")
 _BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
@@ -197,12 +197,12 @@ def _changes_index(ch: pd.DataFrame) -> dict:
 
 
 def _member_order(name: str, present: set):
-    """정의된 멤버 순서 + 데이터에만 있는 멤버 뒤에 추가."""
+    """정의된 전체 멤버(출력 0이어도 표기) + 데이터에만 있는 멤버 뒤에 추가."""
     for a in ARTISTS:
         if a["name"] == name:
-            order = [m for m in a["members"].keys() if m in present]
-            extra = sorted(present - set(order))
-            return order + extra
+            defined = list(a["members"].keys())          # 0건이어도 모두 표기
+            extra = sorted(present - set(defined))
+            return defined + extra
     return sorted(present)
 
 
@@ -335,7 +335,8 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
         csub = [0] * len(dates)
         for i, m in enumerate(members):
             top = _MED if i == 0 else _thin  # 국가 블록 시작에 굵은선
-            vals = [int(pv.loc[m].get(d, 0)) for d in dates]
+            # 그 국가에서 판매 없던 멤버도 0으로 표기
+            vals = [int(pv.loc[m].get(d, 0)) for d in dates] if m in pv.index else [0] * len(dates)
             _cell(r, 1, cc_name if i == 0 else None, font=_BOLD, top=top, left=True)
             _cell(r, 2, artist["name"] if i == 0 else None, top=top)
             _cell(r, 3, m, left=True, top=top)
@@ -444,7 +445,7 @@ def _write_info_sheet(wb, df: pd.DataFrame, a: pd.DataFrame):
         ("갱신·변동", "최근 2주를 매주 다시 받습니다. 시차로 확정 전 값은 이후 바뀔 수 있어 덮어쓰며, 변동분은 [변경내역] 시트와 셀의 빨간 글씨·메모(이전→현재)로 표시합니다."),
         ("포함 범위", "전 세계 30개국 자체 운영 포토부스 (해당 기간 판매 국가만 표시)."),
         ("오픈 IP", "  ·  ".join(artists)),
-        ("범례", "빨간 글씨·셀 메모 = 직전 대비 변동 / [미분류IP] = 팔리지만 탭에 없는 신규·누락 IP / 빈칸·0 = 해당일 촬영 없음"),
+        ("범례", "빨간 글씨·셀 메모 = 직전 대비 변동 / [미분류IP] = 팔리지만 탭에 없는 신규·누락 IP / 0 = 해당일 촬영 없음(멤버는 0이어도 모두 표기)"),
     ]
     r = 3
     for label, val in rows:
