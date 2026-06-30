@@ -9,6 +9,7 @@
   python sm_report.py                      # 전체 기간 → reports/
   python sm_report.py 2026-06-16 2026-06-29
 """
+import datetime as dt
 import io
 import json
 import sys
@@ -55,7 +56,9 @@ _CENTER = Alignment(horizontal="center", vertical="center")
 _LEFT = Alignment(horizontal="left", vertical="center")
 _NUMFMT = '#,##0;-#,##0;"-"'
 _thin = Side(style="thin", color="D7DEEE")
+_MED = Side(style="medium", color="8AA4E0")
 _BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
+_HEADBORD = Border(left=_thin, right=_thin, top=_MED, bottom=_MED)
 
 
 def country_name_map() -> dict:
@@ -143,7 +146,12 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
     # 헤더
     ws.cell(2, 1, row_label)
     for j, d in enumerate(dates):
-        ws.cell(2, 2 + j, str(d)[5:] if str(d)[:2] == "20" else str(d))  # 날짜는 MM-DD
+        cell = ws.cell(2, 2 + j)
+        try:
+            cell.value = dt.date.fromisoformat(str(d))
+            cell.number_format = "mm/dd"
+        except ValueError:
+            cell.value = str(d)
     ws.cell(2, ncols, "합계")
     _style_header(ws, ncols)
     # 데이터
@@ -202,31 +210,40 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
 
 
 def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
-    """아티스트 시트: 국가 블록 × 멤버 행 × 날짜 열 (+ 국가 소계, 전체 합계)."""
+    """아티스트 시트 (RIIZE 참고형): 국가 | 아티스트 | 멤버 | 누적 | 날짜들.
+    국가별 블록 + 굵은 구분선 + 국가 소계 + 전체 합계. 날짜는 실제 날짜값."""
     dates = [d for d in all_dates if d in set(sub["날짜"])]
-    ncols = 2 + len(dates) + 1
+    LAB = 4  # 국가·아티스트·멤버·누적
+    ncols = LAB + len(dates)
+
+    # 제목
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
-    note = " (일본)" if artist["countries"] == ["jp"] else ""
-    t = ws.cell(1, 1, f"{artist['name']} — 국가·멤버별 일별 촬영수{note}")
-    t.font = Font(bold=True, size=13, name="맑은 고딕", color="1A1A2E")
-    t.alignment = _LEFT
-    ws.cell(2, 1, "국가")
-    ws.cell(2, 2, "멤버")
+    note = " (일본 단독)" if artist["countries"] == ["jp"] else ""
+    tc = ws.cell(1, 1, f"{artist['name']} · Artist별 일별 촬영수{note}")
+    tc.font = Font(bold=True, size=14, name="맑은 고딕", color="1A1A2E")
+    tc.alignment = _LEFT
+    ws.row_dimensions[1].height = 24
+
+    # 헤더(2행)
+    for j, h in enumerate(["국가", "아티스트", "멤버", "누적"]):
+        c = ws.cell(2, 1 + j, h)
+        c.fill, c.font, c.alignment, c.border = _BLUE, _WHITE_BOLD, _CENTER, _HEADBORD
     for j, d in enumerate(dates):
-        ws.cell(2, 3 + j, str(d)[5:])
-    ws.cell(2, ncols, "합계")
-    _style_header(ws, ncols)
+        c = ws.cell(2, LAB + 1 + j, dt.date.fromisoformat(str(d)))
+        c.number_format = "mm/dd"
+        c.fill, c.font, c.alignment, c.border = _BLUE, _WHITE_BOLD, _CENTER, _HEADBORD
+    ws.row_dimensions[2].height = 18
 
     ctot = sub.groupby("국가")["촬영수"].sum().sort_values(ascending=False)
     countries = [c for c in ctot.index if ctot[c] > 0]
     r = 3
     grand = [0] * len(dates)
 
-    def _put(row, col, val, *, bold=False, fill=None, num=False, left=False):
+    def _cell(row, col, val, *, font=_NORM, fill=None, num=False, left=False, top=_thin, bottom=_thin):
         c = ws.cell(row, col, val)
-        c.font = _BOLD if bold else _NORM
+        c.font = font
         c.alignment = _LEFT if left else _CENTER
-        c.border = _BORDER
+        c.border = Border(left=_thin, right=_thin, top=top, bottom=bottom)
         if num:
             c.number_format = _NUMFMT
         if fill:
@@ -238,52 +255,42 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
                             values="촬영수", aggfunc="sum", fill_value=0)
         members = _member_order(artist["name"], set(pv.index))
         csub = [0] * len(dates)
-        for m in members:
-            _put(r, 1, cc, left=True)
-            _put(r, 2, m, left=True)
-            rtot = 0
-            for j, d in enumerate(dates):
-                v = int(pv.loc[m].get(d, 0))
-                rtot += v
+        for i, m in enumerate(members):
+            top = _MED if i == 0 else _thin  # 국가 블록 시작에 굵은선
+            vals = [int(pv.loc[m].get(d, 0)) for d in dates]
+            _cell(r, 1, cc if i == 0 else None, font=_BOLD, top=top, left=True)
+            _cell(r, 2, artist["name"] if i == 0 else None, top=top)
+            _cell(r, 3, m, left=True, top=top)
+            _cell(r, 4, sum(vals), font=_BOLD, num=True, fill=_LIGHT, top=top)
+            for j, v in enumerate(vals):
+                _cell(r, LAB + 1 + j, v, num=True, top=top)
                 csub[j] += v
                 grand[j] += v
-                _put(r, 3 + j, v, num=True)
-            _put(r, ncols, rtot, bold=True, num=True, fill=_LIGHT)
             r += 1
-        _put(r, 1, cc, bold=True, fill=_TOTAL, left=True)
-        _put(r, 2, "소계", bold=True, fill=_TOTAL, left=True)
+        # 국가 소계
+        _cell(r, 1, None, fill=_TOTAL, bottom=_MED)
+        _cell(r, 2, None, fill=_TOTAL, bottom=_MED)
+        _cell(r, 3, f"{cc} 소계", font=_BOLD, fill=_TOTAL, left=True, bottom=_MED)
+        _cell(r, 4, sum(csub), font=_BOLD, num=True, fill=_TOTAL, bottom=_MED)
         for j in range(len(dates)):
-            _put(r, 3 + j, csub[j], bold=True, num=True, fill=_TOTAL)
-        _put(r, ncols, sum(csub), bold=True, num=True, fill=_TOTAL)
+            _cell(r, LAB + 1 + j, csub[j], font=_BOLD, num=True, fill=_TOTAL, bottom=_MED)
         r += 1
 
     # 전체 합계
-    for col, val in ((1, "전체"), (2, "합계")):
-        c = ws.cell(r, col, val)
-        c.font = _WHITE_BOLD
-        c.fill = _BLUE
-        c.border = _BORDER
-        c.alignment = _LEFT
+    _cell(r, 1, "전체", font=_WHITE_BOLD, fill=_BLUE, left=True, top=_MED)
+    _cell(r, 2, None, fill=_BLUE, top=_MED)
+    _cell(r, 3, "합계", font=_WHITE_BOLD, fill=_BLUE, left=True, top=_MED)
+    _cell(r, 4, sum(grand), font=_WHITE_BOLD, num=True, fill=_BLUE, top=_MED)
     for j in range(len(dates)):
-        c = ws.cell(r, 3 + j, grand[j])
-        c.font = _WHITE_BOLD
-        c.fill = _BLUE
-        c.border = _BORDER
-        c.alignment = _CENTER
-        c.number_format = _NUMFMT
-    gc = ws.cell(r, ncols, sum(grand))
-    gc.font = _WHITE_BOLD
-    gc.fill = _BLUE
-    gc.border = _BORDER
-    gc.alignment = _CENTER
-    gc.number_format = _NUMFMT
+        _cell(r, LAB + 1 + j, grand[j], font=_WHITE_BOLD, num=True, fill=_BLUE, top=_MED)
 
-    ws.column_dimensions["A"].width = 11
-    ws.column_dimensions["B"].width = 13
+    ws.column_dimensions["A"].width = 9
+    ws.column_dimensions["B"].width = 11
+    ws.column_dimensions["C"].width = 12
+    ws.column_dimensions["D"].width = 9
     for j in range(len(dates)):
-        ws.column_dimensions[get_column_letter(3 + j)].width = 7.5
-    ws.column_dimensions[get_column_letter(ncols)].width = 10
-    ws.freeze_panes = "C3"
+        ws.column_dimensions[get_column_letter(LAB + 1 + j)].width = 6.8
+    ws.freeze_panes = "E3"
 
 
 def build_xlsx(df: pd.DataFrame) -> bytes:
