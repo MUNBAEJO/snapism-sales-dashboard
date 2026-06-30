@@ -201,40 +201,112 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
     ws.freeze_panes = "B3"
 
 
+def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates):
+    """아티스트 시트: 국가 블록 × 멤버 행 × 날짜 열 (+ 국가 소계, 전체 합계)."""
+    dates = [d for d in all_dates if d in set(sub["날짜"])]
+    ncols = 2 + len(dates) + 1
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    note = " (일본)" if artist["countries"] == ["jp"] else ""
+    t = ws.cell(1, 1, f"{artist['name']} — 국가·멤버별 일별 촬영수{note}")
+    t.font = Font(bold=True, size=13, name="맑은 고딕", color="1A1A2E")
+    t.alignment = _LEFT
+    ws.cell(2, 1, "국가")
+    ws.cell(2, 2, "멤버")
+    for j, d in enumerate(dates):
+        ws.cell(2, 3 + j, str(d)[5:])
+    ws.cell(2, ncols, "합계")
+    _style_header(ws, ncols)
+
+    ctot = sub.groupby("국가")["촬영수"].sum().sort_values(ascending=False)
+    countries = [c for c in ctot.index if ctot[c] > 0]
+    r = 3
+    grand = [0] * len(dates)
+
+    def _put(row, col, val, *, bold=False, fill=None, num=False, left=False):
+        c = ws.cell(row, col, val)
+        c.font = _BOLD if bold else _NORM
+        c.alignment = _LEFT if left else _CENTER
+        c.border = _BORDER
+        if num:
+            c.number_format = _NUMFMT
+        if fill:
+            c.fill = fill
+        return c
+
+    for cc in countries:
+        pv = pd.pivot_table(sub[sub["국가"] == cc], index="멤버", columns="날짜",
+                            values="촬영수", aggfunc="sum", fill_value=0)
+        members = _member_order(artist["name"], set(pv.index))
+        csub = [0] * len(dates)
+        for m in members:
+            _put(r, 1, cc, left=True)
+            _put(r, 2, m, left=True)
+            rtot = 0
+            for j, d in enumerate(dates):
+                v = int(pv.loc[m].get(d, 0))
+                rtot += v
+                csub[j] += v
+                grand[j] += v
+                _put(r, 3 + j, v, num=True)
+            _put(r, ncols, rtot, bold=True, num=True, fill=_LIGHT)
+            r += 1
+        _put(r, 1, cc, bold=True, fill=_TOTAL, left=True)
+        _put(r, 2, "소계", bold=True, fill=_TOTAL, left=True)
+        for j in range(len(dates)):
+            _put(r, 3 + j, csub[j], bold=True, num=True, fill=_TOTAL)
+        _put(r, ncols, sum(csub), bold=True, num=True, fill=_TOTAL)
+        r += 1
+
+    # 전체 합계
+    for col, val in ((1, "전체"), (2, "합계")):
+        c = ws.cell(r, col, val)
+        c.font = _WHITE_BOLD
+        c.fill = _BLUE
+        c.border = _BORDER
+        c.alignment = _LEFT
+    for j in range(len(dates)):
+        c = ws.cell(r, 3 + j, grand[j])
+        c.font = _WHITE_BOLD
+        c.fill = _BLUE
+        c.border = _BORDER
+        c.alignment = _CENTER
+        c.number_format = _NUMFMT
+    gc = ws.cell(r, ncols, sum(grand))
+    gc.font = _WHITE_BOLD
+    gc.fill = _BLUE
+    gc.border = _BORDER
+    gc.alignment = _CENTER
+    gc.number_format = _NUMFMT
+
+    ws.column_dimensions["A"].width = 11
+    ws.column_dimensions["B"].width = 13
+    for j in range(len(dates)):
+        ws.column_dimensions[get_column_letter(3 + j)].width = 7.5
+    ws.column_dimensions[get_column_letter(ncols)].width = 10
+    ws.freeze_panes = "C3"
+
+
 def build_xlsx(df: pd.DataFrame) -> bytes:
     a = annotate(df)
+    all_dates = sorted(a["날짜"].unique())
     wb = Workbook()
     wb.remove(wb.active)
 
-    # 요약: 아티스트 × 날짜
+    # 요약: 아티스트 × 날짜 (전 국가 합산)
     summ = pd.pivot_table(a, index="아티스트", columns="날짜", values="촬영수",
                           aggfunc="sum", fill_value=0)
     order = [art["name"] for art in ARTISTS if art["name"] in summ.index]
-    summ = summ.reindex(order)
     ws = wb.create_sheet("요약")
-    _write_pivot(ws, summ.astype(int), "SM 촬영 현황 — 아티스트별 일별 합계 (전 국가)", "아티스트")
+    _write_pivot(ws, summ.reindex(order).astype(int),
+                 "SM 촬영 현황 — 아티스트별 일별 합계 (전 국가)", "아티스트")
 
-    # 아티스트별 시트: 멤버 × 날짜
+    # 아티스트별 시트: 국가 × 멤버 × 날짜
     for art in ARTISTS:
         sub = a[a["아티스트"] == art["name"]]
         if sub.empty:
             continue
-        pv = pd.pivot_table(sub, index="멤버", columns="날짜", values="촬영수",
-                            aggfunc="sum", fill_value=0).astype(int)
-        pv = pv.reindex(_member_order(art["name"], set(pv.index)))
-        note = " (일본)" if art["countries"] == ["jp"] else " (전 국가 합산)"
         ws = wb.create_sheet(art["name"][:31])
-        _write_pivot(ws, pv, f"{art['name']} — 멤버별 일별 촬영수{note}", "멤버")
-
-    # 국가별: (아티스트·멤버) × 국가
-    byc = pd.pivot_table(a, index=["아티스트", "멤버"], columns="국가", values="촬영수",
-                         aggfunc="sum", fill_value=0).astype(int)
-    if not byc.empty:
-        ws = wb.create_sheet("국가별")
-        # index 평탄화
-        byc2 = byc.copy()
-        byc2.index = [f"{ar} · {me}" for ar, me in byc.index]
-        _write_pivot(ws, byc2, "아티스트·멤버별 국가 촬영수", "아티스트 · 멤버")
+        _write_artist_sheet(ws, sub, art, all_dates)
 
     buf = io.BytesIO()
     wb.save(buf)
