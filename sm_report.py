@@ -36,6 +36,9 @@ ARTISTS = [
     {"name": "라이즈", "kws": ["riize", "라이즈"], "countries": None, "members": {
         "쇼타로": ["쇼타로", "shotaro"], "은석": ["은석", "eunseok"], "성찬": ["성찬", "sungchan"],
         "원빈": ["원빈", "wonbin"], "앤톤": ["앤톤", "안톤", "anton"], "소희": ["소희", "sohee"]}},
+    {"name": "에스파", "kws": ["aespa", "에스파"], "countries": None, "members": {
+        "카리나": ["카리나", "karina"], "지젤": ["지젤", "giselle"],
+        "윈터": ["윈터", "winter"], "닝닝": ["닝닝", "ningning"]}},
     {"name": "아이린", "kws": ["irene", "아이린"], "countries": None, "members": {
         "아이린": ["아이린", "irene"]}},
     {"name": "승한", "kws": ["xnghan", "승한", "seunghan"], "countries": None, "members": {
@@ -80,6 +83,11 @@ def _mmdd(d) -> str:
     """'2026-06-16' → '06/16' (Excel 날짜서식 미적용 문제 회피, 텍스트로 표기)."""
     s = str(d)
     return f"{s[5:7]}/{s[8:10]}" if len(s) >= 10 and s[4] == "-" else s
+
+
+def _ctry_label(code, name) -> str:
+    """'한국 (KR)' — 한글명 + ISO 국가코드 병기(표기 표준화)."""
+    return f"{name} ({str(code).upper()})"
 
 
 def country_name_map() -> dict:
@@ -324,7 +332,7 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
     r += 1
 
     for code in codes:
-        cc_name = code_name.get(str(code), str(code).upper())
+        cc_name = _ctry_label(code, code_name.get(str(code), str(code).upper()))
         pv = pd.pivot_table(sub[sub["국가코드"] == code], index="멤버", columns="날짜",
                             values="촬영수", aggfunc="sum", fill_value=0)
         members = _member_order(artist["name"], set(pv.index))
@@ -354,7 +362,7 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
             _cell(r, LAB + 1 + j, csub[j], font=_BOLD, num=True, fill=_TOTAL, bottom=_MED)
         r += 1
 
-    ws.column_dimensions["A"].width = 9
+    ws.column_dimensions["A"].width = 13
     ws.column_dimensions["B"].width = 11
     ws.column_dimensions["C"].width = 12
     ws.column_dimensions["D"].width = 9
@@ -373,7 +381,7 @@ def _write_changes_sheet(wb, ch: pd.DataFrame, name_map: dict):
         c = ws.cell(1, 1 + j, h)
         c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
     d = ch.copy()
-    d["국가"] = d["국가코드"].map(lambda c: name_map.get(str(c), str(c).upper()))
+    d["국가"] = d["국가코드"].map(lambda c: _ctry_label(c, name_map.get(str(c), str(c).upper())))
     d["증감"] = d["신규"].astype(int) - d["이전"].astype(int)
     d = d.sort_values(["갱신일", "증감"], ascending=[False, False])
     r = 2
@@ -422,6 +430,71 @@ def _write_unmatched_sheet(wb, um: pd.DataFrame):
     _fit_page(ws)
 
 
+def _write_info_sheet(wb, df: pd.DataFrame, a: pd.DataFrame):
+    """표지·안내 시트(맨 앞) — 정의·기간·단위·갱신·범례. 되묻기 차단용."""
+    ws = wb.create_sheet("안내", 0)
+    ws.sheet_properties.tabColor = "808080"
+    days = sorted(df["날짜"].astype(str).unique())
+    period = f"{days[0]} ~ {days[-1]}" if days else "-"
+    artists = [x["name"] for x in ARTISTS if x["name"] in set(a["아티스트"])]
+    ws.merge_cells("A1:B1")
+    t = ws.cell(1, 1, "SM 아티스트 포토부스 — 일별 촬영수 리포트")
+    t.font = Font(bold=True, size=15, name="맑은 고딕", color="1A1A2E")
+    rows = [
+        ("대상 기간", f"{period}  (각 국가 현지시각 기준 하루)"),
+        ("데이터 기준일", days[-1] if days else "-"),
+        ("발행일", f"{dt.date.today().isoformat()}  ·  매주 월요일 자동 갱신"),
+        ("촬영수 정의", "CMS '매출정보(Artist별 촬영 수)'의 촬영 건수. 1건 = 1촬영(주문)이며 CMS 화면값과 동일합니다(취소·환불 처리도 CMS 기준과 같음)."),
+        ("단위", "건(촬영수). 인화 매수·결제 금액이 아닙니다."),
+        ("집계 시각", "각 국가 현지 표준시 00:00~23:59 기준. 시차 국가는 KST와 다릅니다."),
+        ("갱신·변동", "최근 2주를 매주 다시 받습니다. 시차로 확정 전 값은 이후 바뀔 수 있어 덮어쓰며, 변동분은 [변경내역] 시트와 셀의 빨간 글씨·메모(이전→현재)로 표시합니다."),
+        ("포함 범위", "전 세계 30개국 자체 운영 포토부스 (해당 기간 판매 국가만 표시)."),
+        ("오픈 IP", "  ·  ".join(artists)),
+        ("시트 구성", "요약 → (미분류IP) → (변경내역) → 아티스트별 탭 → 분석용(raw)"),
+        ("범례", "빨간 글씨·셀 메모 = 직전 대비 변동 / [미분류IP] = 팔리지만 탭에 없는 신규·누락 IP / 빈칸·0 = 해당일 촬영 없음"),
+    ]
+    r = 3
+    for label, val in rows:
+        lc = ws.cell(r, 1, label)
+        lc.font, lc.fill, lc.border = _HEAD_FONT, _HEAD_FILL, _BORDER
+        lc.alignment = Alignment(horizontal="left", vertical="top")
+        vc = ws.cell(r, 2, val)
+        vc.font, vc.border = _NORM, _BORDER
+        vc.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        ws.row_dimensions[r].height = 34 if len(str(val)) > 45 else 18
+        r += 1
+    ws.column_dimensions["A"].width = 14
+    ws.column_dimensions["B"].width = 96
+    _fit_page(ws)
+
+
+def _write_raw_sheet(wb, a: pd.DataFrame, name_map: dict):
+    """분석용 롱 포맷(소계 없음) — 피벗·필터로 자유 분석."""
+    ws = wb.create_sheet("분석용(raw)")
+    ws.sheet_properties.tabColor = "2E8B57"
+    raw = a.groupby(["날짜", "국가코드", "아티스트", "멤버"], as_index=False)["촬영수"].sum()
+    raw["국가"] = raw["국가코드"].map(lambda c: name_map.get(str(c), str(c).upper()))
+    raw = raw.sort_values(["날짜", "국가코드", "아티스트", "멤버"])
+    heads = ["날짜", "국가코드", "국가", "아티스트", "멤버", "촬영수"]
+    for j, h in enumerate(heads):
+        c = ws.cell(1, 1 + j, h)
+        c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
+    r = 2
+    for day, code, art, mem, ctry, v in zip(
+            raw["날짜"], raw["국가코드"], raw["아티스트"], raw["멤버"], raw["국가"], raw["촬영수"]):
+        for j, val in enumerate([str(day), str(code).upper(), ctry, art, mem, int(v)]):
+            c = ws.cell(r, 1 + j, val)
+            c.border = _BORDER
+            c.alignment = _CENTER if j in (0, 1, 5) else _LEFT
+            if j == 5:
+                c.number_format = _NUMFMT
+        r += 1
+    ws.auto_filter.ref = f"A1:F{max(1, r - 1)}"
+    for col, w in zip("ABCDEF", (11, 9, 12, 11, 12, 9)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+
+
 def build_xlsx(df: pd.DataFrame) -> bytes:
     a = annotate(df)
     all_dates = sorted(a["날짜"].unique())
@@ -437,16 +510,19 @@ def build_xlsx(df: pd.DataFrame) -> bytes:
                           aggfunc="sum", fill_value=0)
     order = [art["name"] for art in ARTISTS if art["name"] in summ.index]
     ws = wb.create_sheet("요약")
+    ws.sheet_properties.tabColor = "4361EE"
     _write_pivot(ws, summ.reindex(order).astype(int),
                  "SM 촬영 현황 — 아티스트별 일별 합계 (전 국가)", "아티스트")
 
     # 미분류 IP 안내(있을 때만)
     if not um.empty:
         _write_unmatched_sheet(wb, um)
+        wb["미분류IP"].sheet_properties.tabColor = "C0392B"
 
     # 변경내역(있을 때만, 요약 다음에)
     if not ch.empty:
         _write_changes_sheet(wb, ch, nm)
+        wb["변경내역"].sheet_properties.tabColor = "E08A1E"
 
     # 아티스트별 시트: 국가 × 멤버 × 날짜 (변동 셀엔 메모)
     for art in ARTISTS:
@@ -455,6 +531,10 @@ def build_xlsx(df: pd.DataFrame) -> bytes:
             continue
         ws = wb.create_sheet(art["name"][:31])
         _write_artist_sheet(ws, sub, art, all_dates, cidx)
+
+    # 표지(맨 앞) + 분석용 raw(맨 뒤)
+    _write_info_sheet(wb, df, a)
+    _write_raw_sheet(wb, a, nm)
 
     buf = io.BytesIO()
     wb.save(buf)
