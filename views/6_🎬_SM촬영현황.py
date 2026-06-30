@@ -15,6 +15,13 @@ import plotly.express as px
 # set_page_config 는 라우터(스내피즘.py)에서 처리
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sm_report
+import auth
+
+# 소유자 전용 — URL 직접 접근 차단
+_email = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
+if not auth.is_owner(_email):
+    st.error("🔒 이 페이지는 소유자만 볼 수 있어요.")
+    st.stop()
 
 BASE_DIR = Path(__file__).parent.parent
 DAILY_PARQUET = BASE_DIR / "data" / "sm_shoot_daily.parquet"

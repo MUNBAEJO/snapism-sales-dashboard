@@ -177,11 +177,13 @@ pages = [
     st.Page("views/2_💰_IP정산현황_(스내피즘).py", title="IP정산현황 (스내피즘)", icon="💰", url_path="settlement"),
     st.Page("views/3_⚠️_기간_후_매출분석.py",       title="기간 후 매출분석",      icon="⚠️", url_path="expired"),
     st.Page("views/4_📋_주간리포트.py",            title="주간리포트",          icon="📋", url_path="weekly"),
-    st.Page("views/6_🎬_SM촬영현황.py",            title="SM 촬영현황",         icon="🎬", url_path="sm-shooting"),
 ]
 
-# 소유자에게만 '접속·계정 관리' 페이지를 메뉴에 노출 (접속 로그는 소유자 전용)
+# 소유자에게만 노출 (SM 촬영현황·접속 로그는 소유자 전용)
 if auth.is_owner(st.user.email if getattr(st, "user", None) else None):
+    pages.append(
+        st.Page("views/6_🎬_SM촬영현황.py", title="SM 촬영현황", icon="🎬", url_path="sm-shooting")
+    )
     pages.append(
         st.Page("views/5_🔐_접속관리.py", title="접속·계정 관리", icon="🔐", url_path="admin")
     )
