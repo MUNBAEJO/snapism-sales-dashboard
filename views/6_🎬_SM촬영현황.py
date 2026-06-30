@@ -18,6 +18,7 @@ import sm_shooting
 
 BASE_DIR = Path(__file__).parent.parent
 TX_PARQUET = BASE_DIR / "data" / "master_photoism.parquet"
+THEME_MAP = BASE_DIR / "data" / "theme_map.parquet"
 INK = "#1a1a2e"
 
 st.markdown(f"""
@@ -36,12 +37,19 @@ st.caption("이름에 **'SM ent'** 가 들어간 타이틀의 **테마 · 프레
 
 
 @st.cache_data(show_spinner="SM 촬영 데이터를 불러오는 중…")
-def _load(_mtime: float) -> pd.DataFrame:
+def _load(_tx_mtime: float, _map_mtime: float) -> pd.DataFrame:
     return sm_shooting.load_sm_shooting()
 
 
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 try:
-    g = _load(TX_PARQUET.stat().st_mtime)
+    g = _load(_mtime(TX_PARQUET), _mtime(THEME_MAP))
 except Exception as e:
     st.error(f"데이터를 불러오지 못했어요. 잠시 후 다시 시도해 주세요. ({e})")
     st.stop()
