@@ -6,6 +6,7 @@
 """
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -63,20 +64,27 @@ if g.empty:
 
 # 갱신 시점 안내
 last_day = g["날짜"].max()
-st.caption(f"수집 범위: {g['날짜'].min()} ~ {last_day}  ·  ⚠️ 최근 1~2일 값은 CMS 정착 전이라 며칠 뒤 바뀔 수 있어요(갱신 시 덮어써요).")
+st.caption(f"데이터는 **오픈부터 계속 누적**돼요(현재 {g['날짜'].min()} ~ {last_day}). 좁히면 주간, **전체로 두면 정산용**이에요. "
+           "⚠️ 최근 1~2일 값은 CMS 정착 전이라 며칠 뒤 바뀔 수 있어요(갱신 시 덮어쓰고 변경내역 기록).")
 
 # ── 사이드바 필터 ──
 st.sidebar.header("🔍 필터")
 days = sorted(g["날짜"].astype(str).unique())
-date_range = st.sidebar.date_input(
-    "날짜 범위",
-    value=(pd.to_datetime(days[0]).date(), pd.to_datetime(days[-1]).date()),
-    min_value=pd.to_datetime(days[0]).date(), max_value=pd.to_datetime(days[-1]).date(),
-)
-if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    s_str, e_str = str(date_range[0]), str(date_range[1])
+dmin = pd.to_datetime(days[0]).date()
+dmax = pd.to_datetime(days[-1]).date()
+
+preset = st.sidebar.radio("보기 기간", ["전체 (정산용)", "최근 4주", "최근 2주", "이번 주(7일)", "직접 지정"], index=0)
+if preset == "직접 지정":
+    dr = st.sidebar.date_input("날짜 범위", value=(dmin, dmax), min_value=dmin, max_value=dmax)
+    if isinstance(dr, (list, tuple)) and len(dr) == 2:
+        s_d, e_d = dr
+    else:
+        s_d, e_d = dmin, dmax
 else:
-    s_str, e_str = days[0], days[-1]
+    span = {"전체 (정산용)": None, "최근 4주": 27, "최근 2주": 13, "이번 주(7일)": 6}[preset]
+    e_d = dmax
+    s_d = dmin if span is None else max(dmin, dmax - timedelta(days=span))
+s_str, e_str = str(s_d), str(e_d)
 
 all_countries = sorted(g["국가"].unique())
 sel_countries = st.sidebar.multiselect("국가", all_countries, default=all_countries)

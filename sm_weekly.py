@@ -61,17 +61,26 @@ def main():
         else:
             sm_collect.log("### 변동 없음 ###")
 
-    # 누적 전체로 공유 엑셀 생성 (고정명 + 날짜본)
-    df = sm_report.load_daily()
-    if df.empty:
-        sm_collect.log("주간 리포트: 데이터 없음")
-        return
-    xlsx = sm_report.build_xlsx(df)
     REPORT_DIR = BASE_DIR / "reports"
     REPORT_DIR.mkdir(exist_ok=True)
-    (REPORT_DIR / "SM촬영현황_최신.xlsx").write_bytes(xlsx)
-    (REPORT_DIR / f"SM촬영현황_{df['날짜'].min()}_{df['날짜'].max()}.xlsx").write_bytes(xlsx)
-    sm_collect.log(f"### 주간 리포트 저장 완료: reports/SM촬영현황_최신.xlsx (행 {len(df):,}) ###")
+
+    # ① 전체 정산용 — 오픈~현재 누적 전체
+    full = sm_report.load_daily()
+    if full.empty:
+        sm_collect.log("주간 리포트: 데이터 없음")
+        return
+    full_xlsx = sm_report.build_xlsx(full)
+    (REPORT_DIR / "SM촬영현황_전체.xlsx").write_bytes(full_xlsx)
+    (REPORT_DIR / f"SM촬영현황_전체_{full['날짜'].min()}_{full['날짜'].max()}.xlsx").write_bytes(full_xlsx)
+
+    # ② 주간 발송용 — 최근 2주(LOOKBACK)만
+    wk = sm_report.load_daily(start=start.isoformat(), end=end.isoformat())
+    if not wk.empty:
+        wk_xlsx = sm_report.build_xlsx(wk)
+        (REPORT_DIR / "SM촬영현황_주간.xlsx").write_bytes(wk_xlsx)
+        (REPORT_DIR / f"SM촬영현황_주간_{start}_{end}.xlsx").write_bytes(wk_xlsx)
+
+    sm_collect.log(f"### 주간 리포트 저장: 전체 {len(full):,}행(SM촬영현황_전체.xlsx) + 주간(SM촬영현황_주간.xlsx) ###")
 
 
 if __name__ == "__main__":
