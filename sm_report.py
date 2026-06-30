@@ -145,6 +145,29 @@ def aggregate_members(df: pd.DataFrame) -> pd.DataFrame:
     return a.groupby(["날짜", "국가코드", "아티스트", "멤버"], as_index=False)["촬영수"].sum()
 
 
+def detect_unmatched(df: pd.DataFrame, recent_days: int = 7) -> pd.DataFrame:
+    """ARTISTS에 없는 SM 테마 중 '최근 판매중'인 것 = 신규/누락 IP 후보.
+    반환: 테마·프레임수·최근판매·마지막판매일·총촬영수 (없으면 빈 DF)."""
+    if df.empty:
+        return pd.DataFrame()
+    matched = annotate(df)
+    mk = set(zip(matched["날짜"], matched["국가코드"], matched["테마"], matched["프레임"]))
+    idx = df.set_index(["날짜", "국가코드", "테마", "프레임"]).index
+    unm = df[~idx.isin(mk)].copy()
+    if unm.empty:
+        return pd.DataFrame()
+    days = sorted(df["날짜"].astype(str).unique())
+    recent_set = set(days[-recent_days:])
+    g = unm.groupby("테마").agg(프레임수=("프레임", "nunique"),
+                                 총촬영수=("촬영수", "sum")).reset_index()
+    rec = unm[unm["날짜"].astype(str).isin(recent_set)].groupby("테마")["촬영수"].sum()
+    last = unm[unm["촬영수"] > 0].groupby("테마")["날짜"].max()
+    g["최근판매"] = g["테마"].map(rec).fillna(0).astype(int)
+    g["마지막판매"] = g["테마"].map(last)
+    g["총촬영수"] = g["총촬영수"].astype(int)
+    return g[g["최근판매"] > 0].sort_values("최근판매", ascending=False).reset_index(drop=True)
+
+
 def load_changes() -> pd.DataFrame:
     try:
         return pd.read_parquet(CHANGES_PARQUET)
@@ -198,9 +221,21 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
         ws.cell(2, 2 + j, _mmdd(d))
     ws.cell(2, ncols, "합계")
     _style_header(ws, ncols)
-    # 데이터
-    col_tot = [0] * len(dates)
-    r0 = 3
+
+    col_tot = [int(pivot[d].sum()) for d in dates]
+    # 합계 행을 상단(3행)에 — 전체부터 보이게
+    hc = ws.cell(3, 1, "합계")
+    hc.font, hc.fill, hc.alignment, hc.border = _HEAD_FONT, _GRAND, _LEFT, _BORDER
+    for j in range(len(dates)):
+        cell = ws.cell(3, 2 + j, col_tot[j])
+        cell.number_format = _NUMFMT
+        cell.font, cell.fill, cell.alignment, cell.border = _HEAD_FONT, _GRAND, _CENTER, _BORDER
+    g = ws.cell(3, ncols, sum(col_tot))
+    g.number_format = _NUMFMT
+    g.font, g.fill, g.alignment, g.border = _HEAD_FONT, _GRAND, _CENTER, _BORDER
+
+    # 데이터(4행부터)
+    r0 = 4
     for i, (label, row) in enumerate(pivot.iterrows()):
         r = r0 + i
         lc = ws.cell(r, 1, label)
@@ -213,7 +248,6 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
         for j, d in enumerate(dates):
             v = int(row[d])
             rtot += v
-            col_tot[j] += v
             cell = ws.cell(r, 2 + j, v)
             cell.number_format = _NUMFMT
             cell.font = _NORM
@@ -227,24 +261,6 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
         tc.alignment = _CENTER
         tc.border = _BORDER
         tc.fill = _TOTAL
-    # 합계 행
-    rt = r0 + len(pivot)
-    ws.cell(rt, 1, "합계").font = _BOLD
-    ws.cell(rt, 1).fill = _TOTAL
-    ws.cell(rt, 1).border = _BORDER
-    for j in range(len(dates)):
-        cell = ws.cell(rt, 2 + j, col_tot[j])
-        cell.number_format = _NUMFMT
-        cell.font = _BOLD
-        cell.alignment = _CENTER
-        cell.fill = _TOTAL
-        cell.border = _BORDER
-    g = ws.cell(rt, ncols, sum(col_tot))
-    g.number_format = _NUMFMT
-    g.font = _BOLD
-    g.alignment = _CENTER
-    g.fill = _TOTAL
-    g.border = _BORDER
     # 폭·고정
     ws.column_dimensions["A"].width = max(12, min(22, max((len(str(x)) for x in pivot.index), default=8) + 4))
     for j in range(len(dates)):
@@ -296,6 +312,17 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
             c.fill = fill
         return c
 
+    # ── 전체 합계를 상단(헤더 바로 아래)에 — 큰 숫자부터 보이게 ──
+    day_sum = sub.groupby("날짜")["촬영수"].sum()
+    grand = [int(day_sum.get(d, 0)) for d in dates]
+    _cell(r, 1, "전체", font=_HEAD_FONT, fill=_GRAND, left=True, top=_MED, bottom=_MED)
+    _cell(r, 2, None, fill=_GRAND, top=_MED, bottom=_MED)
+    _cell(r, 3, "합계", font=_HEAD_FONT, fill=_GRAND, left=True, top=_MED, bottom=_MED)
+    _cell(r, 4, sum(grand), font=_HEAD_FONT, num=True, fill=_GRAND, top=_MED, bottom=_MED)
+    for j, g in enumerate(grand):
+        _cell(r, LAB + 1 + j, g, font=_HEAD_FONT, num=True, fill=_GRAND, top=_MED, bottom=_MED)
+    r += 1
+
     for code in codes:
         cc_name = code_name.get(str(code), str(code).upper())
         pv = pd.pivot_table(sub[sub["국가코드"] == code], index="멤버", columns="날짜",
@@ -317,7 +344,6 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
                     c.font = _CHG_FONT
                     c.comment = Comment(f"이전 {prev:,} → 현재 {new:,}\n({upd} 갱신)", "SM 자동집계")
                 csub[j] += v
-                grand[j] += v
             r += 1
         # 국가 소계
         _cell(r, 1, None, fill=_TOTAL, bottom=_MED)
@@ -327,14 +353,6 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
         for j in range(len(dates)):
             _cell(r, LAB + 1 + j, csub[j], font=_BOLD, num=True, fill=_TOTAL, bottom=_MED)
         r += 1
-
-    # 전체 합계 (진한 글씨 + 중간 톤 배경)
-    _cell(r, 1, "전체", font=_HEAD_FONT, fill=_GRAND, left=True, top=_MED)
-    _cell(r, 2, None, fill=_GRAND, top=_MED)
-    _cell(r, 3, "합계", font=_HEAD_FONT, fill=_GRAND, left=True, top=_MED)
-    _cell(r, 4, sum(grand), font=_HEAD_FONT, num=True, fill=_GRAND, top=_MED)
-    for j in range(len(dates)):
-        _cell(r, LAB + 1 + j, grand[j], font=_HEAD_FONT, num=True, fill=_GRAND, top=_MED)
 
     ws.column_dimensions["A"].width = 9
     ws.column_dimensions["B"].width = 11
@@ -379,11 +397,37 @@ def _write_changes_sheet(wb, ch: pd.DataFrame, name_map: dict):
     _fit_page(ws)
 
 
+def _write_unmatched_sheet(wb, um: pd.DataFrame):
+    """미분류 IP(팔리는데 탭 없는 신규/누락) 안내 시트 — 요약 다음."""
+    ws = wb.create_sheet("미분류IP", 1)
+    ws.merge_cells("A1:E1")
+    t = ws.cell(1, 1, "⚠ 팔리고 있지만 아티스트 탭에 없는 IP — 포함하려면 확인 필요")
+    t.font = Font(bold=True, size=12, name="맑은 고딕", color="C0392B")
+    for j, h in enumerate(["테마(원본)", "프레임수", "최근 7일 촬영", "마지막 판매일", "전체 촬영"]):
+        c = ws.cell(2, 1 + j, h)
+        c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
+    r = 3
+    for th, fcnt, total, recent, last in zip(
+            um["테마"], um["프레임수"], um["총촬영수"], um["최근판매"], um["마지막판매"]):
+        for j, v in enumerate([th, int(fcnt), int(recent), str(last), int(total)]):
+            c = ws.cell(r, 1 + j, v)
+            c.border = _BORDER
+            c.alignment = _LEFT if j == 0 else _CENTER
+            if j in (1, 2, 4):
+                c.number_format = _NUMFMT
+        r += 1
+    for col, w in zip("ABCDE", (22, 10, 14, 14, 12)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A3"
+    _fit_page(ws)
+
+
 def build_xlsx(df: pd.DataFrame) -> bytes:
     a = annotate(df)
     all_dates = sorted(a["날짜"].unique())
     ch = load_changes()
     cidx = _changes_index(ch)
+    um = detect_unmatched(df)
     nm = country_name_map()
     wb = Workbook()
     wb.remove(wb.active)
@@ -395,6 +439,10 @@ def build_xlsx(df: pd.DataFrame) -> bytes:
     ws = wb.create_sheet("요약")
     _write_pivot(ws, summ.reindex(order).astype(int),
                  "SM 촬영 현황 — 아티스트별 일별 합계 (전 국가)", "아티스트")
+
+    # 미분류 IP 안내(있을 때만)
+    if not um.empty:
+        _write_unmatched_sheet(wb, um)
 
     # 변경내역(있을 때만, 요약 다음에)
     if not ch.empty:
