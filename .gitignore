@@ -33,3 +33,5 @@ __pycache__/
 *.png
 hub_current.txt
 raw_theme/
+reports/
+scratch_*.txt

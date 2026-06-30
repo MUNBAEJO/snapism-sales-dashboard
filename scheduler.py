@@ -233,6 +233,23 @@ def run_photoism_crawler():
         log(f"포토이즘 실행 오류: {e}")
 
 
+# ── SM 촬영수 주간 수집 (매주 월요일) ───────────────────────────
+def run_sm_weekly():
+    """매주 월요일: 최근 2주 SM 촬영수 CMS 재수집(덮어쓰기) + 부서 공유 엑셀 생성."""
+    log("SM 주간 수집 시작...")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(BASE_DIR / "sm_weekly.py")],
+            cwd=str(BASE_DIR), capture_output=True, text=True, timeout=3600,
+        )
+        log(result.stdout.strip() if result.stdout else "(출력 없음)")
+        log("SM 주간 완료." if result.returncode == 0 else f"SM 주간 일부 실패 (exit {result.returncode})")
+    except subprocess.TimeoutExpired:
+        log("SM 주간 수집 타임아웃 (60분 초과)")
+    except Exception as e:
+        log(f"SM 주간 수집 오류: {e}")
+
+
 def main():
     run_time = load_schedule_time()
     log(f"스케줄러 시작 - 매일 {run_time}에 크롤러 실행 (환율 포함)")
@@ -240,6 +257,7 @@ def main():
 
     schedule.every().day.at(run_time).do(run_crawler)
     schedule.every().day.at(run_time).do(run_photoism_crawler)
+    schedule.every().monday.at("07:00").do(run_sm_weekly)  # SM 촬영수 주간 갱신
 
     # 시작 즉시 환율 1회 갱신
     run_update_rates()
