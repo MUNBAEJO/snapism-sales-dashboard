@@ -215,10 +215,11 @@ def _style_header(ws, ncols):
         cell.border = _HEADBORD
 
 
-def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
-    """pivot: index=행라벨, columns=날짜/국가, 값=정수. 보기좋게 렌더 + 합계."""
+def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str, date_cols: bool = True):
+    """pivot: index=행라벨, columns=날짜(or 아티스트/국가), 값=정수. 렌더+합계.
+    date_cols=False면 컬럼 헤더를 날짜서식 없이 원문으로."""
     dates = list(pivot.columns)
-    ncols = 1 + len(dates) + 1  # 라벨 + 날짜들 + 합계
+    ncols = 1 + len(dates) + 1  # 라벨 + 컬럼들 + 합계
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
     t = ws.cell(1, 1, title)
     t.font = Font(bold=True, size=13, name="맑은 고딕", color="1A1A2E")
@@ -226,7 +227,7 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
     # 헤더
     ws.cell(2, 1, row_label)
     for j, d in enumerate(dates):
-        ws.cell(2, 2 + j, _mmdd(d))
+        ws.cell(2, 2 + j, _mmdd(d) if date_cols else str(d))
     ws.cell(2, ncols, "합계")
     _style_header(ws, ncols)
 
@@ -267,9 +268,9 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str):
         tc.fill = _TOTAL
     # 폭·고정 (합계행 3행까지 고정)
     ws.column_dimensions["A"].width = max(12, min(22, max((len(str(x)) for x in pivot.index), default=8) + 4))
-    for j in range(len(dates)):
-        ws.column_dimensions[get_column_letter(2 + j)].width = 7.5
-    ws.column_dimensions[get_column_letter(ncols)].width = 10
+    for j, d in enumerate(dates):
+        ws.column_dimensions[get_column_letter(2 + j)].width = 7.5 if date_cols else max(9, len(str(d)) + 3)
+    ws.column_dimensions[get_column_letter(ncols)].width = 11
     ws.freeze_panes = "A4"
     _fit_page(ws)
 
@@ -444,12 +445,10 @@ def _write_info_sheet(wb, df: pd.DataFrame, a: pd.DataFrame):
         ("대상 기간", f"{period}  (각 국가 현지시각 기준 하루)"),
         ("데이터 기준일", days[-1] if days else "-"),
         ("발행일", f"{dt.date.today().isoformat()}  ·  매주 월요일 자동 갱신"),
-        ("촬영수 정의", "CMS '매출정보(Artist별 촬영 수)'의 촬영 건수. 1건 = 1촬영(주문)이며 CMS 화면값과 동일합니다(취소·환불 처리도 CMS 기준과 같음)."),
         ("집계 시각", "각 국가 현지 표준시 00:00~23:59 기준. 시차 국가는 KST와 다릅니다."),
         ("갱신·변동", "최근 2주를 매주 다시 받습니다. 시차로 확정 전 값은 이후 바뀔 수 있어 덮어쓰며, 변동분은 [변경내역] 시트와 셀의 빨간 글씨·메모(이전→현재)로 표시합니다."),
-        ("포함 범위", "전 세계 30개국 자체 운영 포토부스 (해당 기간 판매 국가만 표시)."),
+        ("포함 범위", "전 세계 30개국 자체 운영 포토부스."),
         ("오픈 IP", "  ·  ".join(artists)),
-        ("범례", "빨간 글씨·셀 메모 = 직전 대비 변동 / [미분류IP] = 팔리지만 탭에 없는 신규·누락 IP / 0 = 해당일 촬영 없음(멤버는 0이어도 모두 표기)"),
     ]
     r = 3
     for label, val in rows:
@@ -463,6 +462,37 @@ def _write_info_sheet(wb, df: pd.DataFrame, a: pd.DataFrame):
         r += 1
     ws.column_dimensions["A"].width = 14
     ws.column_dimensions["B"].width = 96
+    _fit_page(ws)
+
+
+def _write_member_summary(ws, a: pd.DataFrame):
+    """멤버별 요약 — 아티스트·멤버별 총 촬영수 + 판매 국가수(0 멤버도 표기)."""
+    ws.merge_cells("A1:D1")
+    t = ws.cell(1, 1, "멤버별 요약 — 총 촬영수 (전 기간 · 전 국가)")
+    t.font = Font(bold=True, size=13, name="맑은 고딕", color="1A1A2E")
+    for j, h in enumerate(["아티스트", "멤버", "총 촬영수", "판매 국가수"]):
+        c = ws.cell(2, 1 + j, h)
+        c.fill, c.font, c.alignment, c.border = _HEAD_FILL, _HEAD_FONT, _CENTER, _HEADBORD
+    tot = a.groupby(["아티스트", "멤버"])["촬영수"].sum()
+    ncc = a[a["촬영수"] > 0].groupby(["아티스트", "멤버"])["국가코드"].nunique()
+    present = set(a["아티스트"].unique())
+    r = 3
+    for art in ARTISTS:
+        name = art["name"]
+        if name not in present:
+            continue
+        for m in art["members"].keys():
+            vals = [name, m, int(tot.get((name, m), 0)), int(ncc.get((name, m), 0))]
+            for j, v in enumerate(vals):
+                c = ws.cell(r, 1 + j, v)
+                c.border = _BORDER
+                c.alignment = _LEFT if j < 2 else _CENTER
+                if j >= 2:
+                    c.number_format = _NUMFMT
+            r += 1
+    for col, w in zip("ABCD", (13, 13, 12, 11)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A3"
     _fit_page(ws)
 
 
@@ -483,6 +513,24 @@ def build_xlsx(df: pd.DataFrame) -> bytes:
     ws = wb.create_sheet("요약")
     _write_pivot(ws, summ.reindex(order).astype(int),
                  "SM 촬영 현황 — 아티스트별 일별 합계 (전 국가)", "아티스트")
+
+    # 일자별 요약 — 날짜 × 아티스트
+    pv_day = pd.pivot_table(a, index="날짜", columns="아티스트", values="촬영수",
+                            aggfunc="sum", fill_value=0).reindex(columns=order, fill_value=0)
+    _write_pivot(wb.create_sheet("일자별요약"), pv_day.astype(int),
+                 "일자별 요약 — 날짜 × 아티스트 (전 국가)", "날짜", date_cols=False)
+
+    # 국가별 요약 — 국가 × 아티스트 (전 30개국, ISO 병기)
+    ac = a.copy()
+    ac["국가표기"] = ac["국가코드"].map(lambda c: _ctry_label(c, nm.get(str(c), str(c).upper())))
+    pv_ctry = pd.pivot_table(ac, index="국가표기", columns="아티스트", values="촬영수",
+                             aggfunc="sum", fill_value=0).reindex(columns=order, fill_value=0)
+    pv_ctry = pv_ctry.loc[pv_ctry.sum(axis=1).sort_values(ascending=False).index]  # 촬영수 순
+    _write_pivot(wb.create_sheet("국가별요약"), pv_ctry.astype(int),
+                 "국가별 요약 — 국가 × 아티스트 (전 기간)", "국가", date_cols=False)
+
+    # 멤버별 요약
+    _write_member_summary(wb.create_sheet("멤버별요약"), a)
 
     # 미분류 IP 안내(있을 때만)
     if not um.empty:
