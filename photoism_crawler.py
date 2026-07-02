@@ -307,6 +307,20 @@ def main():
             cwd=str(BASE_DIR),
         )
 
+    # SM 촬영수 일일 수집을 독립 프로세스로 분리 실행(fire-and-forget).
+    # 이 크롤러의 실행시간 제한(PT1H)·종료코드와 무관하게 SM 데이터도 매일 갱신되도록.
+    # (전용 작업 스케줄러 등록은 관리자 권한이 필요해, 매일 도는 이 작업에 얹어 트리거)
+    try:
+        import subprocess, os
+        flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
+        subprocess.Popen(
+            [sys.executable, str(BASE_DIR / "sm_daily.py")],
+            cwd=str(BASE_DIR), creationflags=flags, close_fds=True,
+        )
+        log("SM 촬영수 일일 수집(sm_daily.py) 분리 실행 시작")
+    except Exception as e:
+        log(f"SM 일일 수집 실행 실패: {e}")
+
     if fail_list:
         sys.exit(1)
 
