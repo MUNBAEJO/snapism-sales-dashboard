@@ -98,17 +98,18 @@ def send(dry: bool = False):
 
     period = f"{start.isoformat()} ~ {end.isoformat()}"
     msg = EmailMessage()
-    msg["Subject"] = f"[스내피즘] SM 촬영현황 주간 리포트 ({period})"
-    msg["From"] = formataddr((m.get("sender_name", "스내피즘 대시보드"), sender))
+    msg["Subject"] = f"[포토이즘] SM 촬영현황 주간 리포트 ({period})"
+    msg["From"] = formataddr((m.get("sender_name", "포토이즘 대시보드"), sender))
     msg["To"] = ", ".join(recipients)
     if cc:
         msg["Cc"] = ", ".join(cc)
     msg.set_content(
-        f"안녕하세요, 담당자님.\n\n"
-        f"SM 촬영현황 주간 리포트({period})를 첨부드립니다.\n"
-        f"CMS 매출정보(Artist별 촬영수) 기준이며, 아티스트별 시트와 국가별 요약을 포함합니다.\n\n"
-        f"※ 시차 국가는 최근 1~2일 값이 정착 후 소폭 조정될 수 있어요(변경내역 시트 참고).\n\n"
-        f"감사합니다.\n스내피즘 매출 대시보드 자동 발송"
+        "안녕하세요 :)\n\n"
+        "이번 주 SM 촬영현황 리포트 보내드려요. 아티스트별·국가별로 정리해뒀어요.\n\n"
+        "시차 있는 국가는 최근 1~2일 수치가 나중에 조금 바뀔 수 있으니 참고만 해주세요!\n\n"
+        "편하게 보시고 궁금한 점 있으면 언제든 말씀 주세요.\n"
+        "감사합니다 🙂\n\n"
+        "(매주 월요일 자동으로 보내드리는 메일이에요)"
     )
     msg.add_attachment(
         data, maintype="application",
