@@ -275,7 +275,7 @@ def _write_pivot(ws, pivot: pd.DataFrame, title: str, row_label: str, date_cols:
     _fit_page(ws)
 
 
-def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_idx=None, name_map=None):
+def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_idx=None, name_map=None, country_order=None):
     """아티스트 시트 (RIIZE 참고형): 국가 | 아티스트 | 멤버 | 누적 | 날짜들.
     국가별 블록 + 굵은 구분선 + 국가 소계 + 전체 합계. 날짜는 실제 날짜값."""
     dates = [d for d in all_dates if d in set(sub["날짜"])]
@@ -303,10 +303,18 @@ def _write_artist_sheet(ws, sub: pd.DataFrame, artist: dict, all_dates, changes_
     # 전 국가 로스터(설정 30개국). 판매 없는 국가도 0으로 표기.
     code_name = dict(name_map or {})
     code_name.update(dict(zip(sub["국가코드"].astype(str), sub["국가"])))  # 보강
-    ctot = sub.groupby("국가코드")["촬영수"].sum()
-    roster = artist["countries"] if artist["countries"] else list(code_name.keys())
-    # 판매 많은 국가 먼저, 그다음 미판매(0) 국가
-    codes = sorted(dict.fromkeys(roster), key=lambda c: -int(ctot.get(str(c), 0)))
+    # 국가 노출 순서는 전 아티스트 공통(전체 촬영수 기준)으로 통일 — IP마다 순서가 달라지지 않게.
+    if artist["countries"]:
+        # 국가 제한 IP(예: 재민제노=jp)는 공통 순서를 그 국가로만 필터
+        roster = [str(c) for c in artist["countries"]]
+        codes = [c for c in (country_order or roster) if str(c) in set(roster)]
+        codes += [c for c in roster if str(c) not in set(map(str, codes))]
+    elif country_order:
+        codes = list(country_order)
+    else:
+        # 폴백(공통 순서 미전달): 이 아티스트 촬영수 기준
+        ctot = sub.groupby("국가코드")["촬영수"].sum()
+        codes = sorted(dict.fromkeys(code_name.keys()), key=lambda c: -int(ctot.get(str(c), 0)))
     r = 3
     grand = [0] * len(dates)
 
@@ -540,13 +548,18 @@ def build_xlsx(df: pd.DataFrame) -> bytes:
     if not ch.empty:
         _write_changes_sheet(wb, ch, nm)
 
+    # 국가 노출 순서 = 전체 촬영수 내림차순(동률·미판매는 코드순) — 모든 아티스트 시트 공통
+    gtot = a.groupby("국가코드")["촬영수"].sum()
+    all_codes = set(map(str, nm.keys())) | set(a["국가코드"].astype(str))
+    country_order = sorted(all_codes, key=lambda c: (-int(gtot.get(c, 0)), c))
+
     # 아티스트별 시트: 국가 × 멤버 × 날짜 (변동 셀엔 메모)
     for art in ARTISTS:
         sub = a[a["아티스트"] == art["name"]]
         if sub.empty:
             continue
         ws = wb.create_sheet(art["name"][:31])
-        _write_artist_sheet(ws, sub, art, all_dates, cidx, nm)
+        _write_artist_sheet(ws, sub, art, all_dates, cidx, nm, country_order)
 
     # 표지(맨 앞)
     _write_info_sheet(wb, df, a)
