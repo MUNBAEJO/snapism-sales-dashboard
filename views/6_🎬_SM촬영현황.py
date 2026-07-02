@@ -40,7 +40,7 @@ st.markdown(f"""
 
 st.title("🎬 SM 촬영 현황")
 st.caption("CMS **매출정보(Artist별 촬영수)** 기준이에요. 이름에 **'SM ent'** 들어간 타이틀의 "
-           "**테마 · 프레임(멤버) · 국가별 일일 촬영수**로, **CMS 화면값과 일치**해요. (매주 월요일 갱신)")
+           "**테마 · 프레임(멤버) · 국가별 일일 촬영수**로, **CMS 화면값과 일치**해요. (매일 자동 갱신)")
 
 if not DAILY_PARQUET.exists():
     st.warning("아직 CMS 수집 데이터가 없어요. 터미널에서 `python sm_collect.py 시작일 종료일` 로 먼저 수집해 주세요.")
