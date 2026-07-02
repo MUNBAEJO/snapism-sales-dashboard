@@ -32,5 +32,15 @@
     "wbs_field": "customfield_11168",
     "rs_agency_field": "customfield_11058",
     "rs_mgmt_field": "customfield_11059"
+  },
+  "mail": {
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "sender": "여기에_보내는_계정@seobuk.kr",
+    "sender_name": "스내피즘 대시보드",
+    "app_password": "여기에_Google_앱비밀번호_16자리",
+    "recipients": ["담당부서1@seobuk.kr", "담당부서2@seobuk.kr"],
+    "cc": [],
+    "weeks": 2
   }
 }
