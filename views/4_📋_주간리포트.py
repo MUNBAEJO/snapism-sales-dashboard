@@ -190,18 +190,33 @@ if gen_btn:
             "falling": a["falling"].reset_index().to_dict(orient="records"),
         }
 
+    # AI 호출이 실패(할당량 등)했는데 직전에 정상 생성된 리포트가 있으면 그걸 유지
+    ai_failed  = bool(gemini.get("error")) and not gemini.get("text")
+    prev_ai    = (insight or {}).get("ai_report", {})
+    kept_prev  = False
+    if ai_failed and prev_ai.get("text"):
+        ai_report = {**prev_ai, "stale": True, "last_error": gemini.get("error")}
+        kept_prev = True
+    else:
+        ai_report = gemini
+
     payload = {
         "generated_at": datetime.now().isoformat(),
         "period":       f"{this_start} ~ {this_end}",
         "snap":         _to_records(snap_a),
         "photo":        _to_records(photo_a),
-        "ai_report":    gemini,
+        "ai_report":    ai_report,
     }
     save_insight(payload)
     prog.progress(100, text="✅ 완료!")
 
-    if gemini.get("error") and not gemini.get("text"):
-        st.warning(f"⚠️ Gemini 오류: {gemini['error']}")
+    if ai_failed:
+        note = "이전 AI 리포트를 그대로 유지했어요. " if kept_prev else ""
+        if gemini.get("quota"):
+            st.warning(f"⏳ {note}{gemini['error']}")
+        else:
+            st.warning(f"⚠️ {note}Gemini 오류: {gemini['error']}")
+        st.caption("매출 요약·Top·급등·급락 수치는 정상적으로 갱신됐어요.")
     else:
         st.success(f"✅ 리포트 생성 완료! (모델: {gemini.get('model','gemini-2.5-flash')})")
 
@@ -331,10 +346,18 @@ with st.container(border=True):
     ai_error = ai.get("error", "")
 
     if ai_error and not ai_text:
-        st.error(f"⚠️ {ai_error}")
+        if ai.get("quota"):
+            st.warning(f"⏳ {ai_error}")
+        else:
+            st.error(f"⚠️ {ai_error}")
     elif ai_text:
         model_used = ai.get("model", "gemini-2.5-flash")
-        if model_used != "gemini-2.5-flash":
+        if ai.get("stale"):
+            st.warning(
+                "⏳ 최신 생성은 사용량 초과로 실패해, 직전에 생성된 AI 리포트를 보여주고 있어요. "
+                "1~2분 뒤 다시 시도해 주세요."
+            )
+        elif model_used != "gemini-2.5-flash":
             st.info(f"ℹ️ 기본 모델 대신 {model_used} 모델로 생성했어요.")
 
         st.markdown(f'<div class="report-box">{ai_text}</div>', unsafe_allow_html=True)
