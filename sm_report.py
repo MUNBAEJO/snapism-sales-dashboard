@@ -29,7 +29,8 @@ CONFIG_FILE = BASE_DIR / "config.json"
 REPORT_DIR = BASE_DIR / "reports"
 
 # ── 현재 오픈 IP (순서 = 시트 순서). kws=테마 부분일치(소문자), members=한국어 통합명→별칭 ──
-ARTISTS = [
+# 기본값(내장). 실제로는 sm_artists.json 이 있으면 그걸 우선 사용(없으면 이 값으로 폴백).
+_DEFAULT_ARTISTS = [
     {"name": "NCT WISH", "kws": ["nct wish"], "countries": None, "members": {
         "시온": ["시온", "sion"], "리쿠": ["리쿠", "riku"], "유우시": ["유우시", "유시", "yushi"],
         "사쿠야": ["사쿠야", "sakuya"], "재희": ["재희", "jaehee"], "료": ["료", "ryo"]}},
@@ -52,6 +53,31 @@ ARTISTS = [
     {"name": "려욱", "kws": ["ryeowook", "려욱"], "countries": None, "members": {
         "려욱": ["려욱", "ryeowook"]}},
 ]
+
+ARTISTS_FILE = BASE_DIR / "sm_artists.json"
+
+
+def _load_artists():
+    """sm_artists.json 이 있으면 그걸로 아티스트 목록을 구성(코드 수정 없이 IP 추가).
+    파일이 없거나 형식이 깨지면 내장 기본값(_DEFAULT_ARTISTS)으로 안전 폴백."""
+    if ARTISTS_FILE.exists():
+        try:
+            data = json.load(open(ARTISTS_FILE, encoding="utf-8"))
+            arts = data.get("artists", data) if isinstance(data, dict) else data
+            ok = []
+            for a in arts:
+                if (isinstance(a, dict) and a.get("name") and a.get("kws")
+                        and isinstance(a.get("members"), dict)):
+                    a.setdefault("countries", None)
+                    ok.append(a)
+            if ok:
+                return ok
+        except Exception:
+            pass
+    return _DEFAULT_ARTISTS
+
+
+ARTISTS = _load_artists()
 
 # ── 서식 ──
 # 색은 단순하게 — 회색 2톤만(헤더/합계). 변동(빨강)·증감 색만 기능상 유지.
