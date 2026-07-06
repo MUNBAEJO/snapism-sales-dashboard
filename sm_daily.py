@@ -69,6 +69,20 @@ def main():
         except Exception as ex:
             sm_collect.log(f"변동 기록 실패: {ex}")
 
+    # 신규 IP 자동 처리 — 솔로는 sm_artists.json 자동 등록, 그룹은 관리자 메일 알림
+    try:
+        info = sm_report.analyze_unmatched(sm_report.load_daily())
+        added = sm_report.add_artists_to_json(info["solos"])
+        if added:
+            sm_collect.log(f"### 신규 솔로 IP 자동 등록: {', '.join(added)} (sm_artists.json) ###")
+        if info["groups"]:
+            import sm_mail
+            keys = sm_mail.alert_new_groups(info["groups"])
+            if keys:
+                sm_collect.log(f"### 신규 그룹 IP 감지 — 관리자 메일 알림: {keys} ###")
+    except Exception as ex:
+        sm_collect.log(f"신규 IP 자동처리 실패: {ex}")
+
     sm_collect.log("### 일일 자동 수집 완료 ###")
 
 

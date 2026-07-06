@@ -12,6 +12,7 @@
 import datetime as dt
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -202,6 +203,94 @@ def detect_unmatched(df: pd.DataFrame, recent_days: int = 7) -> pd.DataFrame:
     g["마지막판매"] = g["테마"].map(last)
     g["총촬영수"] = g["총촬영수"].astype(int)
     return g[g["최근판매"] > 0].sort_values("최근판매", ascending=False).reset_index(drop=True)
+
+
+_HANGUL = re.compile(r"[가-힣]")
+_DATEPFX = re.compile(r"^\s*\d{6}[_\s]+")   # '260703_' 같은 날짜 접두어
+
+
+def _strip_theme_prefix(theme) -> str:
+    return _DATEPFX.sub("", str(theme)).strip()
+
+
+def _theme_group_key(theme) -> str:
+    """한/영 변형을 한 아티스트로 묶기 위한 키 = 날짜 접두어(없으면 이름 소문자)."""
+    m = re.match(r"^\s*(\d{6})", str(theme))
+    return m.group(1) if m else _strip_theme_prefix(theme).lower()
+
+
+def analyze_unmatched(df: pd.DataFrame):
+    """미분류 SM 테마를 (날짜접두어) 단위로 묶어 솔로/그룹을 판정.
+    - 솔로: 프레임 이름이 곧 아티스트명(테마명) — 자동 등록 대상.
+    - 그룹/애매: 멤버가 여럿이라 자동 판단 위험 — 알림만.
+    반환: {'solos': [artist_entry,...], 'groups': [{key,themes,frames,최근판매,총촬영수},...]}
+    """
+    um = detect_unmatched(df)
+    if um.empty:
+        return {"solos": [], "groups": []}
+    unmatched_themes = set(um["테마"])
+    matched = annotate(df)
+    mk = set(zip(matched["날짜"], matched["국가코드"], matched["테마"], matched["프레임"]))
+    idx = df.set_index(["날짜", "국가코드", "테마", "프레임"]).index
+    rows = df[(~idx.isin(mk)) & (df["테마"].isin(unmatched_themes))].copy()
+    if rows.empty:
+        return {"solos": [], "groups": []}
+    rows["_key"] = rows["테마"].map(_theme_group_key)
+    solos, groups = [], []
+    for key, sub in rows.groupby("_key"):
+        themes = sorted(sub["테마"].astype(str).unique())
+        frames = sorted(sub["프레임"].astype(str).unique())
+        raw = sorted(set(_strip_theme_prefix(t) for t in themes))
+        raw_l = {r.lower() for r in raw}
+        총 = int(sub["촬영수"].sum())
+        recent = int(um[um["테마"].isin(themes)]["최근판매"].sum())
+        hangul = [r for r in raw if _HANGUL.search(r)]
+        eng = [r for r in raw if not _HANGUL.search(r)]
+        # 솔로(자동등록) 조건: 이름 변형이 한/영 각 1개 이하 + 모든 프레임이 테마명과 동일
+        clean = len(hangul) <= 1 and len(eng) <= 1
+        is_solo = clean and all(f.lower() in raw_l for f in frames)
+        if is_solo:
+            name = (hangul[0] if hangul else (eng[0] if eng else raw[0]))
+            aliases = [x for x in (hangul[:1] + eng[:1]) if x] or [name]
+            kws = sorted({*(e.lower() for e in eng), *hangul} or {name.lower()})
+            solos.append({"name": name, "kws": kws, "countries": None,
+                          "members": {name: aliases}})
+        else:
+            groups.append({"key": key, "themes": themes, "frames": frames,
+                           "최근판매": recent, "총촬영수": 총})
+    return {"solos": solos, "groups": groups}
+
+
+def add_artists_to_json(entries) -> list:
+    """솔로 신규 IP를 sm_artists.json 에 추가(이미 있으면 건너뜀). 추가된 이름 리스트 반환."""
+    if not entries:
+        return []
+    doc = None
+    if ARTISTS_FILE.exists():
+        try:
+            doc = json.load(open(ARTISTS_FILE, encoding="utf-8"))
+        except Exception:
+            doc = None
+    if doc is None:
+        doc = {"artists": [dict(a) for a in _DEFAULT_ARTISTS]}
+    arts = doc.get("artists", doc) if isinstance(doc, dict) else doc
+    names = {a.get("name") for a in arts}
+    kwset = {str(k).lower() for a in arts for k in a.get("kws", [])}
+    added = []
+    for e in entries:
+        if e["name"] in names or any(str(k).lower() in kwset for k in e["kws"]):
+            continue
+        arts.append(e)
+        names.add(e["name"])
+        kwset.update(str(k).lower() for k in e["kws"])
+        added.append(e["name"])
+    if added:
+        if isinstance(doc, dict):
+            doc["artists"] = arts
+        else:
+            doc = arts
+        json.dump(doc, open(ARTISTS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    return added
 
 
 def load_changes() -> pd.DataFrame:

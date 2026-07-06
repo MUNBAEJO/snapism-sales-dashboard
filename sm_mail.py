@@ -127,6 +127,71 @@ def send(dry: bool = False):
     log(f"발송 완료: {len(all_rcpts)}명 (To {len(recipients)} / Cc {len(cc)}), 첨부 {fname}")
 
 
+ALERTED_FILE = BASE_DIR / "data" / "sm_alerted_groups.json"
+
+
+def _load_alerted():
+    try:
+        return set(json.load(open(ALERTED_FILE, encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def _save_alerted(keys):
+    ALERTED_FILE.parent.mkdir(exist_ok=True)
+    json.dump(sorted(keys), open(ALERTED_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+
+def alert_new_groups(groups) -> list:
+    """자동 판단이 어려운 신규 '그룹' IP를 관리자(발신자)에게 1회 메일 알림.
+    이미 알린 건 건너뜀. 새로 알린 key 리스트 반환."""
+    if not groups:
+        return []
+    m = _load_mail_cfg()
+    sender = (m.get("sender") or "").strip()
+    app_pw = (m.get("app_password") or "").strip()
+    if not (sender and app_pw):
+        log("그룹 IP 알림: 메일 설정 미완료 — 생략")
+        return []
+    alerted = _load_alerted()
+    new = [g for g in groups if g.get("key") not in alerted]
+    if not new:
+        return []
+
+    lines = []
+    for g in new:
+        lines.append(
+            f"- 테마: {', '.join(g['themes'])}\n"
+            f"  프레임(멤버 후보): {', '.join(g['frames'])}\n"
+            f"  최근7일 {g['최근판매']} · 누적 {g['총촬영수']}"
+        )
+    body = (
+        "새로 팔리기 시작한 SM 그룹 IP가 감지됐어요. 멤버 구성 판단이 필요해 자동 등록은 보류했어요.\n\n"
+        + "\n".join(lines)
+        + "\n\nsm_artists.json 의 artists 배열에 아래 형식으로 추가하면 정식 탭으로 잡혀요:\n"
+        '{ "name": "그룹명", "kws": ["영문테마", "한글테마"], "countries": null,\n'
+        '  "members": { "멤버1": ["멤버1","member1"], "멤버2": ["멤버2","member2"] } }\n'
+        "\n(판단이 애매하면 이 메일 내용을 그대로 담당 개발에 전달해 주세요.)"
+    )
+    admin = [sender]  # 관리자(발신자 본인)에게만 — 담당부서에는 안 감
+    msg = EmailMessage()
+    msg["Subject"] = "[포토이즘] 새 SM 그룹 IP 감지 — 분류 등록 필요"
+    msg["From"] = formataddr((m.get("sender_name", "포토이즘 대시보드"), sender))
+    msg["To"] = ", ".join(admin)
+    msg.set_content(body)
+    ctx = ssl.create_default_context()
+    with smtplib.SMTP(m.get("smtp_host", "smtp.gmail.com"), int(m.get("smtp_port", 587)), timeout=60) as s:
+        s.ehlo()
+        s.starttls(context=ctx)
+        s.login(sender, app_pw)
+        s.send_message(msg, to_addrs=admin)
+    alerted.update(g["key"] for g in new)
+    _save_alerted(alerted)
+    keys = [g["key"] for g in new]
+    log(f"신규 그룹 IP 알림 발송: {keys}")
+    return keys
+
+
 def main():
     dry = "--dry" in sys.argv[1:]
     try:

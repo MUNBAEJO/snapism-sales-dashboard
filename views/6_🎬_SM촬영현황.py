@@ -71,7 +71,7 @@ st.caption(f"데이터는 **오픈부터 계속 누적**돼요(현재 {g['날짜
 _um = sm_report.detect_unmatched(g)
 if not _um.empty:
     _lst = "".join(f"\n- **{t}** (최근7일 {int(r)} · 누적 {int(tot)})"
-                   for t, r, tot in zip(_um["테마"], _um["최근판매"], _um["총판매"]))[:1500]
+                   for t, r, tot in zip(_um["테마"], _um["최근판매"], _um["총촬영수"]))[:1500]
     st.warning(
         f"🆕 아직 분류에 없는 **새 SM 테마 {len(_um)}건**이 감지됐어요:{_lst}\n\n"
         "정식 아티스트 탭으로 넣으려면 `sm_artists.json`에 한 줄 추가하면 돼요. "
