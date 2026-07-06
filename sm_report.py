@@ -49,6 +49,8 @@ ARTISTS = [
         "온유": ["온유", "onew"], "키": ["키", "key"], "민호": ["민호", "minho"], "태민": ["태민", "taemin"]}},
     {"name": "NCT 재민제노", "kws": ["jnj", "재민제노"], "countries": ["jp"], "members": {
         "재민": ["재민", "jaemin"], "제노": ["제노", "jeno"], "재민제노(듀오)": ["jnjm", "재민제노"]}},
+    {"name": "려욱", "kws": ["ryeowook", "려욱"], "countries": None, "members": {
+        "려욱": ["려욱", "ryeowook"]}},
 ]
 
 # ── 서식 ──
