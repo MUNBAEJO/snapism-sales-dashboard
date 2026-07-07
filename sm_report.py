@@ -49,7 +49,7 @@ _DEFAULT_ARTISTS = [
         "태용": ["태용", "taeyong"]}},
     {"name": "샤이니", "kws": ["shinee", "샤이니"], "countries": None, "members": {
         "온유": ["온유", "onew"], "키": ["키", "key"], "민호": ["민호", "minho"], "태민": ["태민", "taemin"]}},
-    {"name": "NCT 재민제노", "kws": ["jnj", "재민제노"], "countries": None, "members": {
+    {"name": "NCT 재민제노", "kws": ["jnj", "재민제노"], "countries": ["jp"], "since": "2026-06-27", "members": {
         "재민": ["재민", "jaemin"], "제노": ["제노", "jeno"], "재민제노(듀오)": ["jnjm", "재민제노"]}},
     {"name": "려욱", "kws": ["ryeowook", "려욱"], "countries": None, "members": {
         "려욱": ["려욱", "ryeowook"]}},
@@ -171,7 +171,13 @@ def annotate(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["아티스트"] = arts
     out["멤버"] = mems
-    return out[out["아티스트"].notna()]
+    out = out[out["아티스트"].notna()]
+    # 아티스트별 'since'(현재 캠페인 오픈일) 이전 = 정산 끝난 과거 캠페인 → 제외
+    since_map = {a["name"]: a["since"] for a in ARTISTS if a.get("since")}
+    if since_map and not out.empty:
+        floor = out["아티스트"].map(since_map)
+        out = out[floor.isna() | (out["날짜"].astype(str) >= floor.fillna("0000-00-00"))]
+    return out
 
 
 def aggregate_members(df: pd.DataFrame) -> pd.DataFrame:
