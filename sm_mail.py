@@ -56,15 +56,16 @@ def _load_mail_cfg():
     return cfg.get("mail", {})
 
 
-def build_weekly_xlsx(weeks: int = 2):
-    """최근 N주 SM 촬영현황 엑셀 생성 → (bytes, start, end, 파일명)."""
+def build_cumulative_xlsx():
+    """오픈(첫 판매) 시점부터 누적된 전체 SM 촬영현황 엑셀 → (bytes, start, end, 파일명).
+    실무팀 요청: 최근 N주가 아니라 각 IP 오픈 시점부터 현재까지 누적."""
     end = date.today() - timedelta(days=1)          # 어제까지(발송일 당일 제외)
-    start = end - timedelta(days=weeks * 7 - 1)
-    df = sm_report.load_daily(start.isoformat(), end.isoformat())
+    df = sm_report.load_daily(None, end.isoformat())  # 오픈~어제 전체 누적
     if df.empty:
-        return None, start, end, None
+        return None, None, end, None
     data = sm_report.build_xlsx(df)
-    fname = f"SM촬영현황_주간_{df['날짜'].min()}_{df['날짜'].max()}.xlsx"
+    start = str(df["날짜"].min())                    # 실제 첫 판매(오픈)일
+    fname = f"SM촬영현황_누적_{df['날짜'].min()}_{df['날짜'].max()}.xlsx"
     # 발송본을 reports/ 에도 저장(감사·재발송용)
     REPORT_DIR.mkdir(exist_ok=True)
     (REPORT_DIR / fname).write_bytes(data)
@@ -73,9 +74,8 @@ def build_weekly_xlsx(weeks: int = 2):
 
 def send(dry: bool = False):
     m = _load_mail_cfg()
-    weeks = int(m.get("weeks", 2))
 
-    data, start, end, fname = build_weekly_xlsx(weeks)
+    data, start, end, fname = build_cumulative_xlsx()
     if data is None:
         log("해당 기간 데이터가 없어 발송을 건너뜁니다.")
         return
@@ -96,17 +96,19 @@ def send(dry: bool = False):
             "config.json 의 mail 섹션을 채워 주세요.")
         return
 
-    period = f"{start.isoformat()} ~ {end.isoformat()}"
+    period = f"{start} ~ {end.isoformat()}"
     msg = EmailMessage()
-    msg["Subject"] = f"[포토이즘] SM 촬영현황 주간 리포트 ({period})"
+    msg["Subject"] = f"[포토이즘] SM 촬영현황 누적 리포트 (오픈~{end.isoformat()})"
     msg["From"] = formataddr((m.get("sender_name", "포토이즘 대시보드"), sender))
     msg["To"] = ", ".join(recipients)
     if cc:
         msg["Cc"] = ", ".join(cc)
     msg.set_content(
         "안녕하세요 :)\n\n"
-        "이번 주 SM 촬영현황 리포트 보내드려요. 아티스트별·국가별로 정리해뒀어요.\n\n"
-        "시차 있는 국가는 최근 1~2일 수치가 나중에 조금 바뀔 수 있으니 참고만 해주세요!\n\n"
+        f"SM 촬영현황 누적 리포트 보내드려요. 각 IP 오픈(첫 판매) 시점부터 현재까지 "
+        f"누적한 자료예요. (집계 기간: {period})\n\n"
+        "아티스트별·국가별로 정리돼 있고, 시차 있는 국가는 최근 1~2일 수치가 나중에 "
+        "조금 바뀔 수 있으니 참고만 해주세요!\n\n"
         "편하게 보시고 궁금한 점 있으면 언제든 말씀 주세요.\n"
         "감사합니다 🙂\n\n"
         "(매주 월요일 오전 11시에 자동으로 보내드리는 메일이에요)"
