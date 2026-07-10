@@ -423,13 +423,15 @@ _opts = _sidebar_options(_file_mtime(AGG_FILE))
 selected_country = st.sidebar.selectbox("국가", ["전체"] + _opts["countries"])
 selected_store = st.sidebar.selectbox("매장", ["전체"] + _opts["stores"])
 
-# IP 구분 (아티스트/캐릭터/렌탈/PICK) — 기획(P)는 화면에서 제외(전처럼)
+# IP 구분 — 기본값 '전체(기본 프레임 포함)' = 오리지널까지 포함한 진짜 총매출.
+#   'IP 전체'는 오리지널(기본 프레임=제외)을 뺀 IP 매출만. 그 아래는 개별 구분.
+#   기획(P)는 단독 필터 옵션만 빠질 뿐, '전체'·'IP 전체' 합계에는 포함됨.
 IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g != "기획(P)"]
-IPGUBUN_OPTIONS = ["IP 전체"] + IP_GUBUN_VIEW + ["전체 (기본 프레임 포함)"]
+IPGUBUN_OPTIONS = ["전체 (기본 프레임 포함)", "IP 전체"] + IP_GUBUN_VIEW
 selected_ipgubun = st.sidebar.selectbox(
     "IP 구분", IPGUBUN_OPTIONS,
-    help="아티스트 / 캐릭터 / 렌탈 / PICK(이벤트). "
-         "'IP 전체'는 IP가 있는 매출만, '전체'는 기본 프레임까지 모두 봐요.",
+    help="기본값 '전체'는 오리지널(기본 프레임)까지 포함한 총매출이에요. "
+         "'IP 전체'는 오리지널을 뺀 IP 매출만, 아티스트/캐릭터/렌탈/PICK은 그 구분만 봐요.",
 )
 
 selected_brand = st.sidebar.selectbox("상품 카테고리 (브랜드)", ["전체"] + _opts["brands"])
