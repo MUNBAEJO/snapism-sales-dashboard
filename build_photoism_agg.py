@@ -90,7 +90,10 @@ def build_agg(con, parq: str):
             CAST(COALESCE(SUM("_coin"),0)          AS BIGINT) AS "서비스코인"
         FROM tagged
         GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
-    """).df()
+    """).to_arrow_table()
+    # Arrow → pandas 변환 시 버퍼를 즉시 해제(self_destruct)해 피크 메모리 절감.
+    # 저메모리 환경(커밋 한계 근접)에서 .df() 가 OS Allocation failure 나는 것 방지.
+    df = df.to_pandas(split_blocks=True, self_destruct=True)
 
     # 한·영 통합(별칭→대표명): IP명(롤업) + 타이틀(날짜 유지). '제외'는 빈 값.
     df["IP명"] = ip_classify.apply_alias(df["IP명_raw"])
@@ -148,6 +151,16 @@ def main():
 
     parq = str(PARQ_IN).replace("\\", "/")
     con  = duckdb.connect()
+    # OOM 방지: 메모리 상한 + 디스크 스필(temp_directory). master가 커지면(수천만 행)
+    # 기본 무제한 설정으로는 GROUP BY 중 OutOfMemory 로 집계가 조용히 실패한다
+    # (photoism_ingest 와 동일한 안전장치).
+    tdir = BASE_DIR / "data" / "_duckdb_tmp"
+    tdir.mkdir(parents=True, exist_ok=True)
+    con.execute("PRAGMA memory_limit='512MB'")
+    con.execute("PRAGMA threads=1")
+    con.execute("PRAGMA preserve_insertion_order=false")
+    con.execute(f"PRAGMA temp_directory='{str(tdir).replace(chr(92), '/')}'")
+    con.execute("PRAGMA max_temp_directory_size='20GB'")
     try:
         build_agg(con, parq)
         build_hourly(con, parq)
