@@ -22,6 +22,12 @@ LOG_DIR     = BASE_DIR / "logs"
 
 KST = timezone(timedelta(hours=9))
 
+# 롤링 재수집: 무인수 일일 실행 시 '어제'부터 최근 N일을 다시 받아 덮어쓴다.
+# 목적은 시차 절단(실측상 없음)이 아니라 CMS '사후 매출'(뒤늦게 반영되는 정산분,
+# 전 국가 공통 0.1~0.4%) 자동 보정. SM(sm_daily)과 동일한 롤링·덮어쓰기 방식.
+LOOKBACK_DAYS = 3
+COUNTRY_DELAY = 2   # 국가 간 대기(초) — 서버 부담 완화
+
 
 def load_config():
     if not CONFIG_FILE.exists():
@@ -243,19 +249,85 @@ def crawl_country(browser, country_code, country_info, username, password, date_
     return success
 
 
-def main():
-    # 날짜 결정
+def crawl_country_days(browser, country_code, country_info, username, password, dates):
+    """단일 국가를 로그인 1회로 여러 날짜 순차 다운로드(롤링 재수집).
+
+    같은 파일명(photoism_{code}_{YYYYMMDD}.xlsx)에 덮어쓰므로 중복 파일이 안 생기고,
+    이후 ingest 가 최소 날짜(cutoff)부터 교체 → 사후 매출이 자동 반영된다.
+    반환: 성공한 날짜 수."""
+    url  = country_info["url"].rstrip("/")
+    name = country_info["name"]
+
+    log(f"\n{'='*45}")
+    log(f"[{country_code.upper()}] {name}  ({url})  · {len(dates)}일")
+    log(f"{'='*45}")
+
+    ctx  = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = ctx.new_page()
+    ok_days = 0
+
     try:
-        if len(sys.argv) == 2:
-            date_str = sys.argv[1]
-            datetime.strptime(date_str, "%Y-%m-%d")
+        token = get_jwt_token(page, url, username, password, country_code)
+        if not token:
+            log("[실패] JWT 토큰 추출 실패")
+            return 0
+        log(f"토큰 확보 ({token[:30]}...)")
+
+        tz_offset  = country_info.get("timezone_offset", 9)
+        cmsapi_url = country_info.get("cmsapi") or get_cmsapi_url(url)
+        api_cc     = get_country_code(url)
+        region     = country_info.get("region")
+
+        for date_str in dates:
+            start_utc = date_to_utc(date_str, is_end=False, tz_offset=tz_offset)
+            end_utc   = date_to_utc(date_str, is_end=True,  tz_offset=tz_offset)
+            for attempt in range(1, 4):
+                try:
+                    excel_data = download_excel_api(cmsapi_url, token, api_cc, start_utc, end_utc, region=region)
+                    dest = RAW_DIR / f"photoism_{country_code}_{date_str.replace('-', '')}.xlsx"
+                    if len(excel_data) < 512:
+                        raise ValueError(f"응답 크기가 너무 작음 ({len(excel_data)} bytes)")
+                    dest.write_bytes(excel_data)
+                    log(f"  {date_str} 완료 ({len(excel_data):,} bytes)")
+                    ok_days += 1
+                    break
+                except urllib.error.HTTPError as e:
+                    if e.code in (401, 403):
+                        token = get_jwt_token(page, url, username, password, country_code) or token
+                    log(f"  {date_str} HTTP {e.code} ({attempt}/3)")
+                    if attempt < 3:
+                        time.sleep(10)
+                except Exception as e:
+                    log(f"  {date_str} 실패({attempt}/3): {str(e)[:80]}")
+                    if attempt < 3:
+                        time.sleep(10)
+    finally:
+        ctx.close()
+
+    return ok_days
+
+
+def main():
+    # 날짜 결정: 인수 없으면 '어제'부터 최근 LOOKBACK_DAYS일 롤링 재수집.
+    #   photoism_crawler.py                    → 최근 3일(어제~3일 전)
+    #   photoism_crawler.py 2026-07-05         → 그 하루만(하위호환)
+    #   photoism_crawler.py 2026-07-01 2026-07-05 → 기간 지정
+    args = sys.argv[1:]
+    try:
+        if len(args) >= 1:
+            start = datetime.strptime(args[0], "%Y-%m-%d").date()
+            end   = datetime.strptime(args[1], "%Y-%m-%d").date() if len(args) >= 2 else start
         else:
-            date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            end   = datetime.now(KST).date() - timedelta(days=1)
+            start = end - timedelta(days=LOOKBACK_DAYS - 1)
     except ValueError as e:
         print(f"날짜 형식 오류: {e}  (올바른 형식: YYYY-MM-DD)")
         sys.exit(1)
+    if start > end:
+        start, end = end, start
+    dates = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
 
-    log(f"크롤링 대상: {date_str}")
+    log(f"크롤링 대상: {dates[0]} ~ {dates[-1]} ({len(dates)}일 · 롤링 재수집)")
 
     config   = load_config()
     photoism = config.get("photoism", {})
@@ -275,26 +347,21 @@ def main():
         browser = p.chromium.launch(headless=True)
 
         for code, info in countries.items():
-            for attempt in range(1, 4):
-                ok = crawl_country(browser, code, info, username, password, date_str)
-                if ok:
-                    results[code] = True
-                    break
-                if attempt < 3:
-                    log(f"[{code.upper()}] 실패 — {attempt}/3 재시도 (30초 후...)")
-                    time.sleep(30)
-            else:
-                results[code] = False
-                log(f"[{code.upper()}] 3회 시도 후 최종 실패")
+            results[code] = crawl_country_days(browser, code, info, username, password, dates)
+            if COUNTRY_DELAY:
+                time.sleep(COUNTRY_DELAY)
 
         browser.close()
 
-    # 결과 요약
+    # 결과 요약 (국가별 성공 날짜 수)
     log(f"\n{'='*45}")
     log("크롤링 완료 요약")
-    success_list = [c for c, ok in results.items() if ok]
-    fail_list    = [c for c, ok in results.items() if not ok]
+    success_list = [c for c, n in results.items() if n > 0]
+    fail_list    = [c for c, n in results.items() if n == 0]
+    partial      = [f"{c}({n}/{len(dates)})" for c, n in results.items() if 0 < n < len(dates)]
     log(f"  성공 ({len(success_list)}개): {', '.join(success_list)}")
+    if partial:
+        log(f"  일부일자 실패: {', '.join(partial)}")
     if fail_list:
         log(f"  실패 ({len(fail_list)}개): {', '.join(fail_list)}")
     log(f"{'='*45}")
@@ -303,7 +370,7 @@ def main():
         log("\n데이터 누적 처리 시작 (photoism_ingest.py)...")
         import subprocess
         subprocess.run(
-            [sys.executable, str(BASE_DIR / "photoism_ingest.py"), date_str],
+            [sys.executable, str(BASE_DIR / "photoism_ingest.py"), dates[0]],
             cwd=str(BASE_DIR),
         )
 
