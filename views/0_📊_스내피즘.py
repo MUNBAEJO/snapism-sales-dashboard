@@ -89,6 +89,22 @@ h1{ font-weight:800 !important; letter-spacing:-0.5px; color:var(--text); }
 .npct-bar i{ display:block; height:100%; background:var(--brand-2); border-radius:5px; }
 .npct .p{ font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums; min-width:44px; text-align:right; }
 
+/* 도넛 오른쪽 범례 (시안) */
+.lgd-wrap{ display:flex; flex-direction:column; gap:1px; justify-content:center; height:100%; padding:8px 2px; }
+.lgd{ display:flex; align-items:center; gap:9px; padding:8px 4px; border-bottom:1px solid #f2f4f8; font-size:13px; }
+.lgd:last-child{ border-bottom:none; }
+.lgd-dot{ width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+.lgd-n{ font-weight:600; color:var(--text); }
+.lgd-p{ margin-left:auto; font-weight:800; font-variant-numeric:tabular-nums; color:var(--text); }
+
+/* 가로 막대 순위 (시안 TOP — 트랙+채움) */
+.hb-wrap{ display:flex; flex-direction:column; gap:12px; padding:6px 2px; }
+.hb{ display:grid; grid-template-columns:104px 1fr 116px; align-items:center; gap:12px; font-size:13px; }
+.hb-n{ font-weight:700; color:var(--text); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hb-track{ height:22px; background:#eef1f5; border-radius:7px; overflow:hidden; }
+.hb-track i{ display:block; height:100%; border-radius:7px; }
+.hb-v{ text-align:right; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; }
+
 /* 사이드바 변화 */
 .mv{ display:flex; align-items:center; gap:8px; font-size:12.5px; padding:6px 2px; border-bottom:1px solid #eef1f5; }
 .mv:last-child{ border-bottom:none; }
@@ -257,13 +273,43 @@ def cat3(series):
     return s.where(s.isin(["아티스트", "캐릭터"]), "기타")
 
 
-def donut(dfg, names, values, height=250):
-    fig = px.pie(dfg, names=names, values=values, hole=0.5, color_discrete_sequence=PAL)
+def donut(dfg, names, values, height=250, showlegend=True):
+    fig = px.pie(dfg, names=names, values=values, hole=0.58, color_discrete_sequence=PAL)
     fig.update_traces(sort=False, textposition="inside", texttemplate="%{percent}",
+                      marker=dict(line=dict(color="#fff", width=2)),
                       hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
-    style_fig(fig, height, legend=True)
-    fig.update_layout(legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center", font_size=10))
+    style_fig(fig, height, legend=showlegend)
+    if showlegend:
+        fig.update_layout(legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center", font_size=10))
     return fig
+
+
+def legend_list(dframe, name_col):
+    """도넛 오른쪽 범례(이름 + %). 도넛 슬라이스 색(PAL)과 순서 일치."""
+    d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
+    tot = d["매출"].sum()
+    html = '<div class="lgd-wrap">'
+    for i, r in d.iterrows():
+        pct = (r["매출"] / tot * 100) if tot else 0
+        html += (f'<div class="lgd"><span class="lgd-dot" style="background:{PAL[i % len(PAL)]}"></span>'
+                 f'<span class="lgd-n">{r[name_col]}</span><span class="lgd-p">{pct:.1f}%</span></div>')
+    st.markdown(html + "</div>", unsafe_allow_html=True)
+
+
+def hbar_list(dframe, name_col, top=None):
+    """시안 TOP 스타일 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루."""
+    d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
+    if top:
+        d = d.head(top)
+    mx = d["매출"].max() or 1
+    html = '<div class="hb-wrap">'
+    for i, r in d.iterrows():
+        w = max(3, r["매출"] / mx * 100)
+        col = BRAND if i == 0 else "#bcd3fb"
+        html += (f'<div class="hb"><span class="hb-n">{r[name_col]}</span>'
+                 f'<span class="hb-track"><i style="width:{w:.0f}%;background:{col}"></i></span>'
+                 f'<span class="hb-v">{fmt_krw(r["매출"])}</span></div>')
+    st.markdown(html + "</div>", unsafe_allow_html=True)
 
 
 def rank_table(dframe, name_col, top=None):
@@ -498,7 +544,7 @@ with tab_home:
                                  marker_color=BRAND2, hovertemplate="%{x}<br>실결제 %{y:,}원<extra></extra>"))
             fig.add_trace(go.Bar(x=trend["label"], y=trend["쿠폰"], name="쿠폰 할인",
                                  marker_color=SKY, hovertemplate="%{x}<br>쿠폰 %{y:,}원<extra></extra>"))
-            fig.update_layout(barmode="stack", yaxis_tickformat=",", bargap=0.6)
+            fig.update_layout(barmode="stack", yaxis_tickformat=",", bargap=0.55, barcornerradius=6)
             style_fig(fig, 320)
             fig.update_xaxes(type="category")
             st.plotly_chart(fig, use_container_width=True, key="ch_trend")
@@ -510,16 +556,27 @@ with tab_home:
             pc = (sales.groupby("상품 카테고리")["KRW환산금액"].sum().rename("매출")
                   .reset_index().sort_values("매출", ascending=False))
             if pc["매출"].sum() > 0:
-                st.plotly_chart(donut(pc, "상품 카테고리", "매출"), use_container_width=True, key="ch_home_prodcat")
+                _dd, _ll = st.columns([1, 1])
+                with _dd:
+                    st.plotly_chart(donut(pc, "상품 카테고리", "매출", showlegend=False),
+                                    use_container_width=True, key="ch_home_prodcat")
+                with _ll:
+                    legend_list(pc, "상품 카테고리")
             else:
                 st.info("데이터가 없어요.")
     with _c2:
         with card("🎨 아티스트/캐릭터 비중"):
             _s = sales.assign(_c=cat3(sales["카테고리"]))
-            ac = _s.groupby("_c")["KRW환산금액"].sum().rename("매출").reset_index()
+            ac = (_s.groupby("_c")["KRW환산금액"].sum().rename("매출").reset_index()
+                  .sort_values("매출", ascending=False))
             ac = ac[ac["매출"] > 0]
             if not ac.empty:
-                st.plotly_chart(donut(ac, "_c", "매출"), use_container_width=True, key="ch_home_ac")
+                _dd, _ll = st.columns([1, 1])
+                with _dd:
+                    st.plotly_chart(donut(ac, "_c", "매출", showlegend=False),
+                                    use_container_width=True, key="ch_home_ac")
+                with _ll:
+                    legend_list(ac, "_c")
                 _m = {r["_c"]: int(r["매출"]) for _, r in ac.iterrows()}
                 st.caption("아티스트 " + fmt_krw(_m.get("아티스트", 0)) + " · 캐릭터 " + fmt_krw(_m.get("캐릭터", 0)))
             else:
@@ -530,7 +587,7 @@ with tab_home:
         fr = _fsrc.groupby("프레임 이름")["KRW환산금액"].sum().rename("매출").reset_index()
         fr = fr[fr["매출"] > 0]
         if not fr.empty:
-            rank_table(fr, "프레임 이름", top=5)
+            hbar_list(fr, "프레임 이름", top=5)
         else:
             st.info("프레임 데이터가 없어요.")
 
