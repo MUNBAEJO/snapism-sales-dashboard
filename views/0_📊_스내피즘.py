@@ -30,8 +30,8 @@ st.markdown("""
   --bg:#f4f5f7; --surface:#fff; --surface-2:#f8fafc; --surface-3:#eef1f5;
   --border:#e7e9ee; --border-strong:#d7dae1;
   --text:#1b2330; --text-2:#5b6573; --text-3:#98a0af;
-  --brand:#4f46e5; --brand-2:#6366f1; --brand-soft:#eef0fe;
-  --red:#c0322b; --green:#15803d; --sky:#38a3e8;
+  --brand:#3182f6; --brand-2:#4e8ef8; --brand-soft:#e8f1fe;
+  --red:#f04452; --green:#15b76e; --sky:#93c5fd;
 }
 html, body, [class*="css"], [data-testid="stAppViewContainer"]{
   font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
@@ -102,6 +102,11 @@ h1{ font-weight:800 !important; letter-spacing:-0.5px; color:var(--text); }
 [data-testid="stToolbar"]{ display:none !important; }
 #MainMenu, footer{ display:none !important; }
 [data-testid="stHeader"]{ background:transparent; height:0 !important; }
+/* 사이드바 토스 톤(상시 노출) */
+[data-testid="stSidebar"]{ background:#ffffff !important; border-right:1px solid #e5e8eb !important; }
+[data-testid="stSidebarNav"] a{ border-radius:10px !important; padding:9px 12px !important; margin:1px 0 !important; }
+[data-testid="stSidebarNav"] a:hover{ background:#f2f4f8 !important; }
+[data-testid="stSidebar"] hr{ border-color:#eef1f5 !important; }
 /* 사이드바 접힘 상태의 펼치기(>) 버튼 — 반드시 보이고 눌리게(페이지 이동 통로) */
 [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{
   display:block !important; visibility:visible !important; opacity:1 !important;
@@ -145,8 +150,8 @@ COUNTRY_ISO = {
     "대한민국": "kr", "한국": "kr", "일본": "jp", "중국": "cn", "대만": "tw",
     "인도네시아": "id", "홍콩": "hk", "태국": "th", "말레이시아": "my",
 }
-PAL = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#7c77ee", "#c98a2e", "#5f6b7a"]
-BRAND, BRAND2, SKY = "#4f46e5", "#6366f1", "#38a3e8"
+PAL = ["#3182f6", "#f2a63b", "#12b886", "#f06595", "#7048e8", "#22b8cf", "#e8590c", "#868e96"]
+BRAND, BRAND2, SKY = "#3182f6", "#4e8ef8", "#93c5fd"
 
 
 def flag_img(name, h=13):
