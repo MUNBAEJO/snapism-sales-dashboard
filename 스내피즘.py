@@ -31,15 +31,24 @@ st.markdown(f"""
     font-size: 1.12rem; font-weight: 800; color: {INK}; letter-spacing: -0.3px;
     border-bottom: 1px solid #e6eaf2; white-space: nowrap;
 }}
-/* 사이드바 페이지 이름 폰트 */
-[data-testid="stSidebarNav"] a {{ font-weight: 600 !important; }}
+/* 사이드바 nav 항목 = 토스/starfish 스타일 (라운드·아이콘+라벨·활성 연블루) */
+[data-testid="stSidebarNav"] a {{
+    font-weight: 600 !important; border-radius: 10px !important;
+    padding: 10px 12px !important; margin: 2px 8px !important; transition: background .12s;
+}}
 [data-testid="stSidebarNav"] a span, [data-testid="stSidebarNav"] a p {{
     font-family: 'Pretendard', 'Malgun Gothic', sans-serif !important;
     font-size: 0.93rem !important; font-weight: 600 !important;
 }}
+[data-testid="stSidebarNav"] a:hover {{ background: #f2f4f8 !important; }}
+[data-testid="stSidebarNav"] a[aria-current="page"] {{ background: #e8f1fe !important; }}
+[data-testid="stSidebarNav"] a[aria-current="page"] span,
+[data-testid="stSidebarNav"] a[aria-current="page"] p {{ color: #3182f6 !important; font-weight: 700 !important; }}
 
 [data-testid="stDeployButton"] {{ display: none !important; }}
-[data-testid="stSidebar"] {{ background: #fbfcfe; border-right: 1px solid #eceff5; }}
+[data-testid="stSidebar"] {{ background: #ffffff; border-right: 1px solid #e5e8eb; }}
+/* 사이드바 접기(<) 버튼 잘 보이게 */
+[data-testid="stSidebarCollapseButton"] button {{ color: #3182f6 !important; }}
 
 /* ── 사이드바 필터 구분 강화 ── */
 [data-testid="stSidebar"] h2 {{
