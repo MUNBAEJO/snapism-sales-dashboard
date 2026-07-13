@@ -37,7 +37,10 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"]{
   font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
   letter-spacing:-0.01em;
 }
-[data-testid="stAppViewContainer"] .main .block-container{ padding-top:2rem; padding-bottom:3rem; max-width:1120px; }
+/* 본문 가운데 정렬 + 시안 폭(~1060px) — layout=wide 를 강제로 좁힘 */
+[data-testid="stMainBlockContainer"], .stMainBlockContainer, section.main .block-container, .block-container{
+  max-width:1060px !important; margin-left:auto !important; margin-right:auto !important;
+  padding-top:1.3rem !important; padding-bottom:3rem !important; }
 h1{ font-weight:800 !important; letter-spacing:-0.5px; color:var(--text); }
 [data-testid="stDeployButton"]{ display:none !important; }
 [data-testid="stElementToolbar"]{ display:none; }
@@ -96,14 +99,16 @@ h1{ font-weight:800 !important; letter-spacing:-0.5px; color:var(--text); }
 .mv .up{ color:var(--green); } .mv .down{ color:var(--red); }
 
 /* Streamlit 기본 크롬 정리 (시안 느낌으로) */
-[data-testid="stHeader"]{ background:transparent; }
-[data-testid="stToolbar"]{ display:none; }
+[data-testid="stToolbar"]{ display:none !important; }
 #MainMenu, footer{ display:none !important; }
-/* 사이드바 기본 접힘 → 펼치기(≡) 버튼은 반드시 보이게(다른 페이지 이동 통로) */
+[data-testid="stHeader"]{ background:transparent; height:0 !important; }
+/* 사이드바 접힘 상태의 펼치기(>) 버튼 — 반드시 보이고 눌리게(페이지 이동 통로) */
 [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{
-  display:flex !important; visibility:visible !important; opacity:1 !important; z-index:100 !important; }
-[data-testid="stSidebarCollapsedControl"] button{
-  background:var(--brand-soft) !important; color:var(--brand) !important; border-radius:9px !important; }
+  display:block !important; visibility:visible !important; opacity:1 !important;
+  position:fixed !important; top:10px !important; left:10px !important; z-index:999999 !important; }
+[data-testid="stSidebarCollapsedControl"] button, [data-testid="collapsedControl"] button{
+  background:var(--brand) !important; color:#fff !important; border-radius:10px !important;
+  box-shadow:0 2px 8px rgba(79,70,229,.35) !important; width:38px !important; height:38px !important; }
 
 /* 탭 = 시안 언더라인 스타일 */
 [data-baseweb="tab-list"]{ gap:2px; border-bottom:1px solid var(--border); }
@@ -114,9 +119,15 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 
 /* 인라인 필터바 (시안 칩 느낌) */
 .fbar-label{ font-size:12.5px; font-weight:700; color:var(--text-2); margin:2px 0 6px; }
-[data-testid="stPopover"] > div > button, [data-testid="stPopoverButton"]{
+[data-testid="stPopover"] button, [data-testid="stPopoverButton"]{
   border:1px solid var(--border-strong) !important; background:var(--surface-2) !important;
-  border-radius:9px !important; font-weight:600 !important; color:var(--text) !important; }
+  border-radius:9px !important; font-weight:600 !important; color:var(--text) !important;
+  min-height:38px !important; }
+/* 칩 글자 한 줄 유지(줄바꿈 방지) */
+[data-testid="stPopover"] button p, [data-testid="stPopoverButton"] p{
+  white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; }
+/* 기간 date_input 도 칩 높이에 맞춤 */
+.stDateInput input{ font-size:13px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -277,7 +288,6 @@ ex_rates = load_exchange_rates()
 
 st.title("📊 스내피즘 매출 대시보드")
 st.caption("기간·국가·매장·상품·IP를 골라 매출을 봐요. 매출 = 실결제(쿠폰 제외) 기준이에요.")
-render_guide("snapism")
 
 if df_all.empty:
     st.warning("아직 불러온 매출 데이터가 없어요. `raw` 폴더에 CSV를 넣고 `데이터추가.bat`을 실행한 뒤 새로고침해 주세요.")
@@ -483,7 +493,7 @@ with tab_home:
                                  marker_color=BRAND2, hovertemplate="%{x}<br>실결제 %{y:,}원<extra></extra>"))
             fig.add_trace(go.Bar(x=trend["label"], y=trend["쿠폰"], name="쿠폰 할인",
                                  marker_color=SKY, hovertemplate="%{x}<br>쿠폰 %{y:,}원<extra></extra>"))
-            fig.update_layout(barmode="stack", yaxis_tickformat=",")
+            fig.update_layout(barmode="stack", yaxis_tickformat=",", bargap=0.6)
             style_fig(fig, 320)
             fig.update_xaxes(type="category")
             st.plotly_chart(fig, use_container_width=True, key="ch_trend")
@@ -529,7 +539,7 @@ with tab_home:
                 figb = px.bar(nat6.sort_values("매출"), x="매출", y="국가", orientation="h",
                               color_discrete_sequence=[BRAND2])
                 figb.update_traces(hovertemplate="%{y}<br>%{x:,}원<extra></extra>")
-                figb.update_layout(xaxis_tickformat=",", yaxis_title="")
+                figb.update_layout(xaxis_tickformat=",", yaxis_title="", bargap=0.45)
                 style_fig(figb, 300, legend=False)
                 st.plotly_chart(figb, use_container_width=True, key="ch_home_nat6")
             else:
