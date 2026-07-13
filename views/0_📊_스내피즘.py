@@ -99,6 +99,11 @@ h1{ font-weight:800 !important; letter-spacing:-0.5px; color:var(--text); }
 [data-testid="stHeader"]{ background:transparent; }
 [data-testid="stToolbar"]{ display:none; }
 #MainMenu, footer{ display:none !important; }
+/* 사이드바 기본 접힘 → 펼치기(≡) 버튼은 반드시 보이게(다른 페이지 이동 통로) */
+[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"]{
+  display:flex !important; visibility:visible !important; opacity:1 !important; z-index:100 !important; }
+[data-testid="stSidebarCollapsedControl"] button{
+  background:var(--brand-soft) !important; color:var(--brand) !important; border-radius:9px !important; }
 
 /* 탭 = 시안 언더라인 스타일 */
 [data-baseweb="tab-list"]{ gap:2px; border-bottom:1px solid var(--border); }
