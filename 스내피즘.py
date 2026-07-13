@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="CMS 매출 대시보드",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="collapsed",   # 시안처럼 기본 접힘 — ≡ 화살표로 펼쳐 nav·변화·환율 사용
+    initial_sidebar_state="expanded",   # 왼쪽 사이드바 상시 노출(토스 형태) — 사용자 선호
 )
 
 # ── Google 로그인 + 승인제 접근 통제 ──
