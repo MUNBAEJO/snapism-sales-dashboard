@@ -94,7 +94,24 @@ h1{ font-weight:800 !important; letter-spacing:-0.5px; color:var(--text); }
 .mv .n{ font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .mv .p{ margin-left:auto; font-weight:800; font-variant-numeric:tabular-nums; flex:0 0 auto; }
 .mv .up{ color:var(--green); } .mv .down{ color:var(--red); }
-button[data-baseweb="tab"] p{ font-size:1.0rem !important; font-weight:700 !important; }
+
+/* Streamlit 기본 크롬 정리 (시안 느낌으로) */
+[data-testid="stHeader"]{ background:transparent; }
+[data-testid="stToolbar"]{ display:none; }
+#MainMenu, footer{ display:none !important; }
+
+/* 탭 = 시안 언더라인 스타일 */
+[data-baseweb="tab-list"]{ gap:2px; border-bottom:1px solid var(--border); }
+button[data-baseweb="tab"]{ padding:10px 15px; }
+button[data-baseweb="tab"] p{ font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
+button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !important; }
+[data-baseweb="tab-highlight"]{ background:var(--brand) !important; height:2.5px !important; }
+
+/* 인라인 필터바 (시안 칩 느낌) */
+.fbar-label{ font-size:12.5px; font-weight:700; color:var(--text-2); margin:2px 0 6px; }
+[data-testid="stPopover"] > div > button, [data-testid="stPopoverButton"]{
+  border:1px solid var(--border-strong) !important; background:var(--surface-2) !important;
+  border-radius:9px !important; font-weight:600 !important; color:var(--text) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -267,13 +284,6 @@ first_date = df_all["날짜"].min()
 # ══════════════════════════════════════════════════════════════
 #  사이드바: 필터(멀티셀렉트)
 # ══════════════════════════════════════════════════════════════
-st.sidebar.header("🔍 필터")
-st.sidebar.caption("여러 개 고르면 그 값들로 전 화면이 좁혀져요. 안 고르면 전체예요.")
-
-default_start = max(last_date - timedelta(days=29), first_date)
-date_range = st.sidebar.date_input(
-    "기간", value=[default_start, last_date], min_value=first_date, max_value=last_date)
-
 KNOWN_COUNTRIES = ["대한민국", "일본", "중국", "대만", "인도네시아", "홍콩", "태국", "말레이시아"]
 
 
@@ -285,17 +295,30 @@ def _uniq(col):
 
 
 _country_opts = sorted(set(_uniq("국가")) | set(KNOWN_COUNTRIES)) if "국가" in df_all.columns else []
-sel_country = st.sidebar.multiselect("국가", _country_opts, placeholder="전체")
-sel_store = st.sidebar.multiselect("매장", _uniq("매장 이름"), placeholder="전체")
-sel_prod = st.sidebar.multiselect("상품", _uniq("상품 카테고리"), placeholder="전체")
-sel_ip = st.sidebar.multiselect("IP (프레임)", _uniq("프레임 이름"), placeholder="전체")
+
+# ── 인라인 필터바 (시안 상단 칩) ──
+st.markdown('<div class="fbar-label">🔎 필터 — 여러 개 고르면 그 값들로 전 화면이 좁혀져요 (안 고르면 전체)</div>',
+            unsafe_allow_html=True)
+default_start = max(last_date - timedelta(days=29), first_date)
+_fb = st.columns([1.6, 1, 1, 1, 1])
+with _fb[0]:
+    date_range = st.date_input("기간", value=[default_start, last_date],
+                               min_value=first_date, max_value=last_date, label_visibility="collapsed")
+
+
+def _fpop(col, label, key, options):
+    prev = [v for v in st.session_state.get(key, []) if v in options]
+    cap = "전체" if not prev else (prev[0] if len(prev) == 1 else f"{len(prev)}개")
+    with col.popover(f"{label} · {cap}", use_container_width=True):
+        return st.multiselect(label, options, key=key, placeholder="전체 (선택 안 함)")
+
+
+sel_country = _fpop(_fb[1], "국가", "f_country", _country_opts)
+sel_store = _fpop(_fb[2], "매장", "f_store", _uniq("매장 이름"))
+sel_prod = _fpop(_fb[3], "상품", "f_prod", _uniq("상품 카테고리"))
+sel_ip = _fpop(_fb[4], "IP", "f_ip", _uniq("프레임 이름"))
 
 _cfg = load_config()
-st.sidebar.divider()
-st.sidebar.caption(f"💱 실시간 환율{'  ·  ' + _cfg.get('rates_updated', '') if _cfg.get('rates_updated') else ''}")
-for cur, rate in ex_rates.items():
-    if cur != "KRW":
-        st.sidebar.caption(f"  1 {cur} = ₩{rate:,.2f}")
 
 # ── 필터 적용 ──
 df = df_all.copy()
@@ -410,6 +433,12 @@ st.sidebar.markdown('<div style="font-size:12px;font-weight:700;color:#15803d;ma
                     + _mv_rows(_up, "up"), unsafe_allow_html=True)
 st.sidebar.markdown('<div style="font-size:12px;font-weight:700;color:#c0322b;margin:10px 0 2px">▼ 내린 IP</div>'
                     + _mv_rows(_down, "down"), unsafe_allow_html=True)
+
+st.sidebar.divider()
+st.sidebar.caption(f"💱 실시간 환율{'  ·  ' + _cfg.get('rates_updated', '') if _cfg.get('rates_updated') else ''}")
+for _cur, _rate in ex_rates.items():
+    if _cur != "KRW":
+        st.sidebar.caption(f"  1 {_cur} = ₩{_rate:,.2f}")
 
 # ══════════════════════════════════════════════════════════════
 #  탭 5개
