@@ -26,6 +26,7 @@ import data_io
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
 :root{
   --bg:#f4f5f7; --surface:#fff; --surface-2:#f8fafc; --surface-3:#eef1f5;
   --border:#e7e9ee; --border-strong:#d7dae1;
@@ -33,15 +34,27 @@ st.markdown("""
   --brand:#3182f6; --brand-2:#4e8ef8; --brand-soft:#e8f1fe;
   --red:#f04452; --green:#15b76e; --sky:#93c5fd;
 }
-html, body, [class*="css"], [data-testid="stAppViewContainer"]{
-  font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
-  letter-spacing:-0.01em;
+/* Pretendard 강제 적용(맑은고딕 폴백 방지) — 시안의 부드러운 느낌 */
+html, body, [class*="css"], [data-testid="stAppViewContainer"], [data-testid="stSidebar"],
+button, input, select, textarea, label, p, span, div, h1, h2, h3, h4, li, a,
+[data-baseweb], [data-testid="stMarkdownContainer"], [data-testid="stMetricValue"]{
+  font-family:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,
+              'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif !important;
 }
+html, body{ letter-spacing:-0.02em; }
 /* 본문 가운데 정렬 + 시안 폭(~1060px) — layout=wide 를 강제로 좁힘 */
 [data-testid="stMainBlockContainer"], .stMainBlockContainer, section.main .block-container, .block-container{
   max-width:1060px !important; margin-left:auto !important; margin-right:auto !important;
   padding-top:1.3rem !important; padding-bottom:3rem !important; }
-h1{ font-weight:800 !important; letter-spacing:-0.5px; color:var(--text); }
+h1{ font-size:25px !important; font-weight:800 !important; letter-spacing:-0.03em !important; color:var(--text); }
+h2, h3{ letter-spacing:-0.02em !important; }
+/* 카드 = 시안 톤(부드러운 테두리·그림자·라운드) */
+[data-testid="stVerticalBlockBorderWrapper"]{
+  border:1px solid #e7e9ee !important; border-radius:14px !important;
+  box-shadow:0 1px 3px rgba(20,28,45,.05) !important; padding:6px 18px 14px !important; background:#fff !important;
+}
+/* 캡션(부제)도 시안 톤 */
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{ font-size:14px !important; color:#8b95a1 !important; }
 [data-testid="stDeployButton"]{ display:none !important; }
 [data-testid="stElementToolbar"]{ display:none; }
 [data-testid="stSidebar"]{ background:#fbfcfe; border-right:1px solid #eceff5; }
