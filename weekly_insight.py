@@ -3,6 +3,7 @@
 스내피즘 / 포토이즘 분리 분석
 """
 import json
+import os
 import re
 import sys
 import pandas as pd
@@ -43,8 +44,10 @@ def load_config() -> dict:
 def save_gemini_key(api_key: str):
     cfg = load_config()
     cfg["gemini_api_key"] = api_key
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+    _tmp = str(CONFIG_FILE) + ".tmp"          # 원자적 저장(torn read 방지)
+    with open(_tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+    os.replace(_tmp, CONFIG_FILE)
 
 
 def load_frame_alias() -> dict:

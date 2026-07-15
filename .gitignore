@@ -3,6 +3,10 @@ config.json
 .streamlit/secrets.toml
 allowed-users.json
 
+# 원자적 저장/락 임시 파일 (auth·config 저장 시 잠깐 생겼다 사라짐)
+*.json.tmp
+*.json.lock
+
 # 데이터 파일 (용량 큼)
 data/
 raw/

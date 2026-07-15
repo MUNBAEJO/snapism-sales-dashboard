@@ -20,6 +20,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
 import data_io
+import auth
 
 # ══════════════════════════════════════════════════════════════
 #  디자인 시스템 (시안 토큰 이식)
@@ -31,8 +32,8 @@ st.markdown("""
   --bg:#f4f5f7; --surface:#fff; --surface-2:#f8fafc; --surface-3:#eef1f5;
   --border:#e7e9ee; --border-strong:#d7dae1;
   --text:#1b2330; --text-2:#5b6573; --text-3:#98a0af;
-  --brand:#3182f6; --brand-2:#4e8ef8; --brand-soft:#e8f1fe;
-  --red:#f04452; --green:#15b76e; --sky:#93c5fd;
+  --brand:#4f46e5; --brand-2:#6366f1; --brand-soft:#eef0fe;
+  --red:#c0322b; --green:#15803d; --amber:#b45309; --sky:#38a3e8; --teal:#0f9d77;
 }
 /* Pretendard 강제 적용(맑은고딕 폴백 방지) — 시안의 부드러운 느낌 */
 html, body, [class*="css"], [data-testid="stAppViewContainer"], [data-testid="stSidebar"],
@@ -42,16 +43,29 @@ button, input, select, textarea, label, p, span, div, h1, h2, h3, h4, li, a,
               'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif !important;
 }
 html, body{ letter-spacing:-0.02em; }
+/* 페이지 배경 회색(#f4f5f7) — 흰 카드가 떠 보이게(시안 표면 분리).
+   ※ config.toml 의 테마 backgroundColor=#fff 가 stMain 을 흰색으로 덮으므로 메인영역까지 회색 강제. */
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stMain, section.main{
+  background:var(--bg) !important; }
+[data-testid="stMainBlockContainer"], .block-container{ background:transparent !important; }
 /* 본문 가운데 정렬 + 시안 폭(~1060px) — layout=wide 를 강제로 좁힘 */
 [data-testid="stMainBlockContainer"], .stMainBlockContainer, section.main .block-container, .block-container{
-  max-width:1060px !important; margin-left:auto !important; margin-right:auto !important;
-  padding-top:1.3rem !important; padding-bottom:3rem !important; }
-h1{ font-size:25px !important; font-weight:800 !important; letter-spacing:-0.03em !important; color:var(--text); }
+  max-width:1680px !important; margin-left:auto !important; margin-right:auto !important;
+  padding-top:1.4rem !important; padding-bottom:3rem !important;
+  padding-left:1.6rem !important; padding-right:1.6rem !important; }
+h1{ font-size:24px !important; font-weight:800 !important; letter-spacing:-0.03em !important; color:var(--text); }
 h2, h3{ letter-spacing:-0.02em !important; }
-/* 카드 = 시안 톤(부드러운 테두리·그림자·라운드) */
-[data-testid="stVerticalBlockBorderWrapper"]{
-  border:1px solid #e7e9ee !important; border-radius:14px !important;
-  box-shadow:0 1px 3px rgba(20,28,45,.05) !important; padding:6px 18px 14px !important; background:#fff !important;
+/* 카드 = 시안 톤. ※ 라우터 중첩규칙 + Streamlit 칼럼 래퍼가 섹션 카드 테두리를 지우거나
+   엉뚱한 칼럼에 붙여서, 메인의 모든 border-wrapper를 무력화한 뒤
+   card()·필터바(key=scard-*)에만 실제 카드 스타일을 준다. */
+[data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"]{
+  border:none !important; box-shadow:none !important; background:transparent !important;
+  padding:0 !important; margin:0 !important;
+}
+[data-testid="stMain"] [class*="st-key-scard-"]{
+  border:1px solid var(--border) !important; border-radius:14px !important;
+  box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06) !important;
+  padding:15px 18px !important; margin-bottom:14px !important; background:#fff !important;
 }
 /* 캡션(부제)도 시안 톤 */
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{ font-size:14px !important; color:#8b95a1 !important; }
@@ -61,13 +75,13 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .num{ font-variant-numeric:tabular-nums; }
 
 /* KPI 카드 */
-.kpis{ display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin:4px 0 6px; }
+.kpis{ display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin:14px 0 8px; }
 .kpi{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:15px 17px;
-      box-shadow:0 1px 3px rgba(20,28,45,.06); }
+      box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06); }
 .kpi.hero{ background:linear-gradient(180deg,#fbfbff,#fff); border-color:#dcdcfb; }
 .kpi .l{ font-size:12.5px; color:var(--text-2); font-weight:600; }
 .kpi .v{ font-size:24px; font-weight:800; letter-spacing:-0.02em; margin-top:6px; line-height:1.05; color:var(--text); }
-.kpi.hero .v{ font-size:32px; color:var(--brand); }
+.kpi.hero .v{ font-size:33px; color:var(--brand); }
 .kpi .d{ font-size:12px; font-weight:700; margin-top:7px; color:var(--text-3); }
 @media(max-width:720px){ .kpis{ grid-template-columns:1fr; } }
 
@@ -76,7 +90,7 @@ h2, h3{ letter-spacing:-0.02em !important; }
         font-weight:600; padding:9px 14px; border-radius:10px; margin:6px 0 2px; }
 
 /* 섹션 헤더 */
-.sechd{ display:flex; align-items:center; gap:10px; margin:20px 0 2px; }
+.sechd{ display:flex; align-items:center; gap:10px; margin:28px 0 2px; }
 .secn{ font-size:12px; font-weight:800; color:#fff; background:var(--brand); width:22px; height:22px;
        border-radius:7px; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
 .sect{ font-size:18px; font-weight:800; letter-spacing:-0.02em; color:var(--text); }
@@ -87,7 +101,7 @@ h2, h3{ letter-spacing:-0.02em !important; }
 
 /* 비중막대 내장 표 (.ntbl) */
 .ntbl{ border:1px solid var(--border); border-radius:12px; overflow:hidden; margin:2px 0 4px; }
-.ntr{ display:grid; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border);
+.ntr{ display:grid; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--border);
       font-size:13px; color:var(--text); }
 .ntr:last-child{ border-bottom:none; }
 .ntr.nth{ background:var(--surface-2); font-size:11px; font-weight:700; color:var(--text-3); letter-spacing:.02em; }
@@ -110,13 +124,71 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .lgd-n{ font-weight:600; color:var(--text); }
 .lgd-p{ margin-left:auto; font-weight:800; font-variant-numeric:tabular-nums; color:var(--text); }
 
-/* 가로 막대 순위 (시안 TOP — 트랙+채움) */
-.hb-wrap{ display:flex; flex-direction:column; gap:12px; padding:6px 2px; }
-.hb{ display:grid; grid-template-columns:104px 1fr 116px; align-items:center; gap:12px; font-size:13px; }
-.hb-n{ font-weight:700; color:var(--text); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.hb-track{ height:22px; background:#eef1f5; border-radius:7px; overflow:hidden; }
-.hb-track i{ display:block; height:100%; border-radius:7px; }
-.hb-v{ text-align:right; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; }
+/* 가로 막대 순위 (시안 .hbar 그대로) */
+.hb-wrap{ display:flex; flex-direction:column; gap:5px; padding:4px 0; height:100%; justify-content:center; }
+.hb{ display:grid; grid-template-columns:140px 1fr 112px; align-items:center; gap:12px; font-size:13px; padding:8px 0; }
+.hb-n{ font-weight:600; color:var(--text-2); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
+.hb-track{ height:22px; background:var(--surface-3); border-radius:6px; overflow:hidden; }
+.hb-track i{ display:block; height:100%; border-radius:6px; }
+.hb-v{ text-align:right; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; font-size:13px; }
+/* 나란한 2열 카드는 같은 높이로 — 짧은 카드가 옆 카드에 맞춰 늘어남(작아 보임 방지) */
+[data-testid="stColumn"] [class*="st-key-scard-"]{ height:100% !important; }
+
+/* ── 시안과 동일한 CSS 차트 (Plotly 대체) ── */
+/* 도넛(conic-gradient) + 오른쪽 범례 */
+.donut-wrap{ display:flex; align-items:center; gap:18px; padding:2px 0; }
+.donut{ border-radius:50%; flex:0 0 auto; }
+.leg2{ display:flex; flex-direction:column; gap:8px; font-size:13px; flex:1; }
+.leg2 .row{ display:flex; align-items:center; gap:9px; color:var(--text); }
+.leg2 .row b{ margin-left:auto; font-weight:800; font-variant-numeric:tabular-nums; }
+.leg2 .sub{ color:var(--text-3); font-size:12px; }
+.dot{ width:10px; height:10px; border-radius:3px; display:inline-block; flex:0 0 auto; }
+/* 스택 막대 추이(flexbox) */
+.legend{ display:flex; gap:16px; font-size:12px; color:var(--text-2); margin-bottom:10px; flex-wrap:wrap; }
+.legend span{ display:inline-flex; align-items:center; gap:6px; }
+.chart{ display:flex; align-items:flex-end; height:200px; padding:6px 4px 0; border-bottom:1px solid var(--border); }
+.col{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
+.stack{ width:58%; max-width:70px; display:flex; flex-direction:column; justify-content:flex-end;
+        border-radius:5px 5px 0 0; overflow:hidden; }
+.seg-real{ background:var(--brand-2); } .seg-cp{ background:var(--sky); }
+.xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
+/* 시간대 막대 */
+.hours{ display:flex; align-items:flex-end; gap:5px; height:180px; border-bottom:1px solid var(--border); padding-top:8px; }
+.hours .hc{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
+.hours .hb2{ width:70%; border-radius:3px 3px 0 0; }
+.hours .hx{ font-size:9.5px; color:var(--text-3); margin-top:4px; }
+/* 정보 스트립(시안 .strip) */
+.strip{ font-size:12.5px; color:var(--text-2); background:var(--surface-2); border:1px solid var(--border);
+        border-radius:10px; padding:9px 14px; margin-top:12px; }
+.strip b{ color:var(--text); font-weight:700; }
+
+/* ── 즉시(hover) 매출 툴팁 — 딜레이 없이 커서 올리면 바로 박스 ── */
+/* 행 형태(가로막대·도넛 범례): 요소 위쪽에 즉시 박스 */
+.tip{ position:relative; }
+.tip::after{
+  content:attr(data-tip);
+  position:absolute; left:50%; bottom:100%; transform:translateX(-50%) translateY(-7px);
+  background:#1b2330; color:#fff; font-size:11.5px; font-weight:600; line-height:1.4;
+  padding:6px 10px; border-radius:8px; white-space:nowrap; text-align:center;
+  opacity:0; pointer-events:none; transition:opacity .07s ease;
+  box-shadow:0 6px 18px rgba(20,28,45,.22); z-index:60; }
+.tip::before{
+  content:""; position:absolute; left:50%; bottom:100%; transform:translateX(-50%) translateY(-1px);
+  border:5px solid transparent; border-top-color:#1b2330;
+  opacity:0; pointer-events:none; transition:opacity .07s ease; z-index:60; }
+.tip:hover::after, .tip:hover::before{ opacity:1; }
+/* 세로 막대(추이·시간대): 막대 바로 위에 뜨는 박스(막대 높이에 맞춤) */
+.col, .hours .hc{ position:relative; }
+.vtip{
+  position:absolute; left:50%; transform:translateX(-50%) translateY(-8px);
+  background:#1b2330; color:#fff; font-size:11.5px; font-weight:600; line-height:1.4;
+  padding:6px 10px; border-radius:8px; white-space:nowrap; text-align:center;
+  opacity:0; pointer-events:none; transition:opacity .07s ease;
+  box-shadow:0 6px 18px rgba(20,28,45,.22); z-index:60; }
+.vtip::after{
+  content:""; position:absolute; left:50%; top:100%; transform:translateX(-50%);
+  border:5px solid transparent; border-top-color:#1b2330; }
+.col:hover .vtip, .hours .hc:hover .vtip{ opacity:1; }
 
 /* 사이드바 변화 */
 .mv{ display:flex; align-items:center; gap:8px; font-size:12.5px; padding:6px 2px; border-bottom:1px solid #eef1f5; }
@@ -150,18 +222,121 @@ button[data-baseweb="tab"]{ padding:10px 15px; }
 button[data-baseweb="tab"] p{ font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
 button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !important; }
 [data-baseweb="tab-highlight"]{ background:var(--brand) !important; height:2.5px !important; }
+/* 첫 탭 '매출 한눈에' = 요약이라 연한 브랜드 배경으로 구분(시안 .homie) */
+[data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child{
+  background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
+[data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child p{ color:var(--brand) !important; }
+/* 스크롤해도 상단 탭 고정 — baseweb이 tab-list를 짧은 래퍼(높이 51px)로 감싸 sticky가
+   그 안에 갇히므로, 높은 Root의 직속 자식 래퍼(=tab-list 감싼 div)를 sticky로. 카드 안 내부탭은 제외. */
+[data-testid="stMain"] [data-testid="stTabs"] > div > div:has(> [data-baseweb="tab-list"]){
+  position:sticky !important; top:0 !important; z-index:50 !important;
+  background:var(--bg) !important; padding-top:8px !important;
+  box-shadow:0 6px 10px -7px rgba(20,28,45,.18) !important; }
+[data-testid="stMain"] [class*="st-key-scard-"] [data-testid="stTabs"] > div > div:has(> [data-baseweb="tab-list"]){
+  position:static !important; padding-top:0 !important; background:transparent !important; box-shadow:none !important; }
 
 /* 인라인 필터바 (시안 칩 느낌) */
-.fbar-label{ font-size:12.5px; font-weight:700; color:var(--text-2); margin:2px 0 6px; }
+.fbar-label{ font-size:12.5px; font-weight:700; color:var(--text-2); margin:4px 0 10px; }
+/* 필터 칩(팝오버) = 시안 .chip (작고 회색) */
 [data-testid="stPopover"] button, [data-testid="stPopoverButton"]{
   border:1px solid var(--border-strong) !important; background:var(--surface-2) !important;
-  border-radius:9px !important; font-weight:600 !important; color:var(--text) !important;
-  min-height:38px !important; }
+  border-radius:8px !important; font-weight:600 !important; color:var(--text-2) !important;
+  font-size:12px !important; min-height:31px !important; height:31px !important;
+  padding:2px 10px !important; }
+[data-testid="stPopover"] button p, [data-testid="stPopoverButton"] p{
+  white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; }
+/* 필터 라벨(.fbl) */
+.fbl{ font-size:11px !important; font-weight:700; color:var(--text-2); margin:0 0 3px 2px; line-height:1.2; }
+/* 필터바 팝오버 칩 = 칼럼 폭 꽉·높이 33 */
+.st-key-scard-filter [data-testid="stPopover"]{ width:100% !important; }
+.st-key-scard-filter [data-testid="stPopover"] button{
+  width:100% !important; min-height:33px !important; height:33px !important;
+  justify-content:space-between !important; }
+/* 팝오버 안 검색+체크리스트 컴팩트 */
+[data-testid="stPopover"] [data-testid="stCheckbox"]{ margin-bottom:0 !important; }
+[data-testid="stPopover"] [data-testid="stCheckbox"] label{ padding:3px 2px !important; gap:8px !important; align-items:center !important; }
+[data-testid="stPopover"] [data-testid="stCheckbox"] label p{ font-size:12.5px !important; }
+[data-testid="stPopover"] [data-testid="stTextInput"] input{ font-size:12.5px !important; }
+[data-testid="stPopover"] [data-testid="stButton"] button{ font-size:11px !important; padding:2px 6px !important;
+  min-height:28px !important; height:28px !important; }
+/* 필터바 '적용' 버튼(팝오버 밖) = 칩 높이와 정렬 */
+.st-key-scard-filter [data-testid="stButton"] button{ min-height:33px !important; height:33px !important;
+  font-size:12px !important; font-weight:700 !important; border-radius:8px !important; }
+/* 필터바: 간격 좁게·바닥정렬·높이 통일(34) */
+.st-key-scard-filter [data-testid="stHorizontalBlock"]{ align-items:flex-end !important; gap:0.5rem !important; }
+.st-key-scard-filter [data-testid="stPopover"] button,
+.st-key-scard-filter [data-testid="stDateInput"] div[data-baseweb="input"],
+.st-key-scard-filter [data-testid="stButton"] button{ height:34px !important; min-height:34px !important; }
+.st-key-scard-filter [data-testid="stColumn"]{ display:block !important; }
+.st-key-scard-filter label{
+  font-size:11px !important; font-weight:700 !important; color:var(--text-2) !important;
+  margin:0 0 3px 2px !important; padding:0 !important; min-height:0 !important; line-height:1.2 !important; }
+.st-key-scard-filter [data-testid="stSelectbox"],
+.st-key-scard-filter [data-testid="stMultiSelect"],
+.st-key-scard-filter [data-testid="stDateInput"]{ max-width:none !important; width:100% !important; }
+.st-key-scard-filter [data-testid="stDateInput"] div[data-baseweb="input"]{
+  min-height:33px !important; height:33px !important; border-radius:8px !important;
+  background:var(--surface-2) !important; border:1px solid var(--border-strong) !important; }
+.st-key-scard-filter [data-testid="stDateInput"] input{
+  font-size:12px !important; font-weight:600 !important; color:var(--text-2) !important; }
+.st-key-scard-filter [data-testid="stMultiSelect"] div[data-baseweb="select"]{
+  min-height:33px !important; background:var(--surface-2) !important;
+  border:1px solid var(--border-strong) !important; border-radius:8px !important; }
+.st-key-scard-filter [data-testid="stMultiSelect"] div[data-baseweb="select"] *{ font-size:12px !important; }
+
+/* 세그먼트 컨트롤(월/주/일·전체/아티스트/캐릭터) = 시안 .seg (작은 회색 pill·활성 흰색) */
+[data-testid="stButtonGroup"]{
+  display:inline-flex !important; gap:2px !important; background:var(--surface-3) !important;
+  border-radius:8px !important; padding:2px !important; width:auto !important; }
+[data-testid="stButtonGroup"] button{
+  border:none !important; background:transparent !important; box-shadow:none !important;
+  min-height:0 !important; height:auto !important; padding:4px 12px !important; border-radius:6px !important; }
+[data-testid="stButtonGroup"] button p{ font-size:12px !important; font-weight:600 !important; color:var(--text-2) !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"]{
+  background:var(--surface) !important; box-shadow:0 1px 3px rgba(20,28,45,.08) !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p{
+  color:var(--brand) !important; font-weight:700 !important; }
+
+/* 셀렉트박스(국가·카테고리) = 시안 .minisel (작은 회색) */
+[data-testid="stSelectbox"]{ max-width:210px !important; }
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
+  min-height:33px !important; height:33px !important; background:var(--surface-2) !important;
+  border:1px solid var(--border-strong) !important; border-radius:8px !important;
+  display:flex !important; align-items:center !important; }   /* 글자 세로 중앙정렬 */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child > div{
+  display:flex !important; align-items:center !important; }
+[data-testid="stSelectbox"] div[data-baseweb="select"] div{ font-size:12.5px !important; font-weight:600 !important; }
+/* 제목 옆 컨트롤(세그먼트·셀렉트)은 오른쪽 끝으로(시안 margin-left:auto) */
+[data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]),
+[data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+  display:flex !important; justify-content:flex-end !important; }
+/* 카드 헤더 드롭다운 = 카드 제목 옆(우상단)에 절대배치.
+   제목은 모든 카드 표준(card 타이틀)이라 카드끼리 높이 일치, 드롭다운만 겹쳐 올림. */
+.st-key-scard-hstore, .st-key-scard-prodsel, .st-key-scard-storesel{ position:relative; }
+.st-key-scard-hstore [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
+.st-key-scard-prodsel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
+.st-key-scard-storesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+  position:absolute !important; top:16px !important; right:18px !important; width:auto !important;
+  margin:0 !important; z-index:5 !important; }
+/* 드롭다운 박스를 내용 크기로 축소(글자+화살표 딱 붙게) — 시안 컴팩트 톤 */
+.st-key-scard-hstore [data-testid="stSelectbox"], .st-key-scard-prodsel [data-testid="stSelectbox"],
+.st-key-scard-storesel [data-testid="stSelectbox"]{ width:auto !important; min-width:0 !important; }
+.st-key-scard-hstore [data-testid="stSelectbox"] div[data-baseweb="select"],
+.st-key-scard-prodsel [data-testid="stSelectbox"] div[data-baseweb="select"],
+.st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"]{
+  width:fit-content !important; min-width:96px !important; }
 /* 칩 글자 한 줄 유지(줄바꿈 방지) */
 [data-testid="stPopover"] button p, [data-testid="stPopoverButton"] p{
   white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; }
-/* 기간 date_input 도 칩 높이에 맞춤 */
-.stDateInput input{ font-size:13px !important; }
+/* 기간 date_input = 다른 칩과 같은 모양(컴팩트) */
+[data-testid="stDateInput"] div[data-baseweb="input"]{
+  border-radius:9px !important; background:var(--surface-2) !important;
+  border:1px solid var(--border-strong) !important; }
+.stDateInput input{ font-size:12.5px !important; font-weight:600 !important; color:var(--text) !important; }
+/* 기간(date_input)이 라벨/헬퍼 공간을 아래에 예약해 칩보다 위로 뜨는 것 방지 → 박스만 남기고 정렬 */
+.st-key-scard-filter [data-testid="stDateInput"] label{ display:none !important; }
+.st-key-scard-filter [data-testid="stDateInput"] [data-testid="InputInstructions"]{ display:none !important; }
+.st-key-scard-filter [data-testid="stDateInput"] > div{ margin-bottom:0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -179,8 +354,8 @@ COUNTRY_ISO = {
     "대한민국": "kr", "한국": "kr", "일본": "jp", "중국": "cn", "대만": "tw",
     "인도네시아": "id", "홍콩": "hk", "태국": "th", "말레이시아": "my",
 }
-PAL = ["#3182f6", "#f2a63b", "#12b886", "#f06595", "#7048e8", "#22b8cf", "#e8590c", "#868e96"]
-BRAND, BRAND2, SKY = "#3182f6", "#4e8ef8", "#93c5fd"
+PAL = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#7c77ee", "#c98a2e", "#5f6b7a"]
+BRAND, BRAND2, SKY = "#4f46e5", "#6366f1", "#38a3e8"
 
 
 def flag_img(name, h=13):
@@ -255,29 +430,39 @@ def sec(n, title, q=""):
                 + (f'<div class="secq">{q}</div>' if q else ""), unsafe_allow_html=True)
 
 
+_CARDN = [0]
+
+
 @contextmanager
-def card(title=None):
-    c = st.container(border=True)
+def card(title=None, key=None):
+    # 실제 카드에만 st-key-scard-* 클래스를 달아 CSS에서 카드 테두리를 정확히 겨냥한다.
+    # (Streamlit 칼럼 래퍼가 같은 testid 라 leaf 판별로는 구분 불가)
+    if key is None:
+        _CARDN[0] += 1
+        key = f"scard-{_CARDN[0]}"
+    c = st.container(border=True, key=key)
     if title:
         c.markdown(f'<div class="ct">{title}</div>', unsafe_allow_html=True)
     with c:
         yield
 
 
-def style_fig(fig, height, legend=True):
+def style_fig(fig, height, legend=False):
+    """시안 Plotly 스타일 — 회색 격자 없음·투명 배경·여백 최소·y축 눈금 숨김."""
     fig.update_layout(
         height=height,
-        font=dict(family="Pretendard, Malgun Gothic, sans-serif", size=12, color="#2b2b3a"),
+        font=dict(family="Pretendard, Malgun Gothic, sans-serif", size=12, color="#5b6573"),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(t=18, b=4, l=4, r=8),
+        margin=dict(t=26 if legend else 10, b=6, l=8, r=8),
+        showlegend=legend,
         hoverlabel=dict(font_size=12, font_family="Pretendard, Malgun Gothic, sans-serif"),
     )
     if legend:
-        fig.update_layout(legend=dict(orientation="h", y=1.12, x=0, bgcolor="rgba(0,0,0,0)", font_size=11))
-    else:
-        fig.update_layout(showlegend=False)
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(gridcolor="#eef1f6", zeroline=False)
+        fig.update_layout(legend=dict(orientation="h", y=1.16, x=0, bgcolor="rgba(0,0,0,0)", font_size=11))
+    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, ticks="",
+                     tickfont=dict(size=11, color="#98a0af"), title=None)
+    fig.update_yaxes(showgrid=False, zeroline=False, showline=False, ticks="",
+                     showticklabels=False, title=None)
     return fig
 
 
@@ -287,8 +472,8 @@ def cat3(series):
 
 
 def donut(dfg, names, values, height=250, showlegend=True):
-    fig = px.pie(dfg, names=names, values=values, hole=0.58, color_discrete_sequence=PAL)
-    fig.update_traces(sort=False, textposition="inside", texttemplate="%{percent}",
+    fig = px.pie(dfg, names=names, values=values, hole=0.62, color_discrete_sequence=PAL)
+    fig.update_traces(sort=False, textinfo="none",
                       marker=dict(line=dict(color="#fff", width=2)),
                       hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
     style_fig(fig, height, legend=showlegend)
@@ -309,39 +494,137 @@ def legend_list(dframe, name_col):
     st.markdown(html + "</div>", unsafe_allow_html=True)
 
 
-def hbar_list(dframe, name_col, top=None):
-    """시안 TOP 스타일 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루."""
+def hbar_list(dframe, name_col, top=None, collapse_after=None):
+    """시안 TOP 스타일 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루.
+    collapse_after=N 이면 상위 N개만 보이고 나머지는 '더보기' 접기."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
     mx = d["매출"].max() or 1
-    html = '<div class="hb-wrap">'
-    for i, r in d.iterrows():
-        w = max(3, r["매출"] / mx * 100)
-        col = BRAND if i == 0 else "#bcd3fb"
-        html += (f'<div class="hb"><span class="hb-n">{r[name_col]}</span>'
-                 f'<span class="hb-track"><i style="width:{w:.0f}%;background:{col}"></i></span>'
-                 f'<span class="hb-v">{fmt_krw(r["매출"])}</span></div>')
-    st.markdown(html + "</div>", unsafe_allow_html=True)
+
+    def _rows(sub):
+        h = '<div class="hb-wrap">'
+        for i, r in sub.iterrows():
+            w = max(3, r["매출"] / mx * 100)
+            col = BRAND if i == 0 else "#a9c7ef"   # 전체 1위만 브랜드색(원본 인덱스 유지)
+            _t = f'{r[name_col]} · {fmt_krw(r["매출"])}'
+            if "건수" in sub.columns:
+                _t += f' · {int(r["건수"]):,}건'
+            h += (f'<div class="hb tip" data-tip="{_t}"><span class="hb-n">{r[name_col]}</span>'
+                  f'<span class="hb-track"><i style="width:{w:.0f}%;background:{col}"></i></span>'
+                  f'<span class="hb-v">{fmt_krw(r["매출"])}</span></div>')
+        return h + '</div>'
+
+    if collapse_after and len(d) > collapse_after:
+        st.markdown(_rows(d.iloc[:collapse_after]), unsafe_allow_html=True)
+        with st.expander(f"나머지 {len(d) - collapse_after:,}개 더보기  ·  {collapse_after + 1}~{len(d):,}위"):
+            st.markdown(_rows(d.iloc[collapse_after:]), unsafe_allow_html=True)
+    else:
+        st.markdown(_rows(d), unsafe_allow_html=True)
 
 
-def rank_table(dframe, name_col, top=None):
-    """비중막대 내장 순위표(.ntbl)."""
+def rank_table(dframe, name_col, top=None, collapse_after=None):
+    """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개만 보이고 나머지는 '더보기' 접기."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
     tot = d["매출"].sum()
     mx = (d["매출"] / tot).max() if tot else 1.0
-    grid = "grid-template-columns:36px 1.7fr 1.2fr 1.5fr"
-    html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
-            '<span>#</span><span>이름</span><span class="r">매출</span><span>비중</span></div>')
-    for i, r in d.iterrows():
-        frac = (r["매출"] / tot) if tot else 0
-        rk = f'<span class="rk {"top" if i == 0 else ""}">{i + 1}</span>'
-        html += (f'<div class="ntr" style="{grid}">{rk}'
-                 f'<span class="nname">{r[name_col]}</span>'
-                 f'<span class="r num">{fmt_krw(r["매출"])}</span>{pct_bar(frac, mx)}</div>')
-    st.markdown(html + "</div>", unsafe_allow_html=True)
+    has_cnt = "건수" in d.columns
+    if has_cnt:
+        grid = "grid-template-columns:34px 1.7fr 1.3fr .8fr 1.5fr"
+        head = (f'<div class="ntr nth" style="{grid}">'
+                '<span>#</span><span>이름</span><span class="r">매출</span>'
+                '<span class="r">건수</span><span>비중</span></div>')
+    else:
+        grid = "grid-template-columns:36px 1.7fr 1.2fr 1.5fr"
+        head = (f'<div class="ntr nth" style="{grid}">'
+                '<span>#</span><span>이름</span><span class="r">매출</span><span>비중</span></div>')
+
+    def _rows(sub):
+        h = ""
+        for i, r in sub.iterrows():
+            frac = (r["매출"] / tot) if tot else 0
+            rk = f'<span class="rk {"top" if i == 0 else ""}">{i + 1}</span>'
+            cnt = (f'<span class="r num" style="color:var(--text-2)">{int(r["건수"]):,}</span>'
+                   if has_cnt else "")
+            h += (f'<div class="ntr" style="{grid}">{rk}'
+                  f'<span class="nname">{r[name_col]}</span>'
+                  f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{pct_bar(frac, mx)}</div>')
+        return h
+
+    if collapse_after and len(d) > collapse_after:
+        top_d, rest_d = d.iloc[:collapse_after], d.iloc[collapse_after:]
+        st.markdown(f'<div class="ntbl">{head}{_rows(top_d)}</div>', unsafe_allow_html=True)
+        with st.expander(f"나머지 {len(rest_d):,}개 더보기  ·  {collapse_after + 1}~{len(d):,}위"):
+            st.markdown(f'<div class="ntbl">{head}{_rows(rest_d)}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="ntbl">{head}{_rows(d)}</div>', unsafe_allow_html=True)
+
+
+def css_donut(pairs, colors, size=128, hole=38, legend_fs=13, sub=None):
+    """시안과 동일한 CSS conic-gradient 도넛 + 오른쪽 범례.
+    pairs=[(name, value)] (그리는 순서), colors=슬라이스별 색."""
+    total = sum(v for _, v in pairs) or 1
+    segs, acc = [], 0.0
+    for i, (_, v) in enumerate(pairs):
+        f0 = acc / total * 100
+        acc += v
+        segs.append(f"{colors[i % len(colors)]} {f0:.2f}% {acc / total * 100:.2f}%")
+    grad = "conic-gradient(" + ",".join(segs) + ")"
+    mask = f"radial-gradient(circle {hole}px at center,transparent 98%,#000 100%)"
+    rows = ""
+    for i, (name, v) in enumerate(pairs):
+        rows += (f'<div class="row tip" data-tip="{name} · {fmt_krw(v)} ({v / total * 100:.1f}%)">'
+                 f'<i class="dot" style="background:{colors[i % len(colors)]}"></i>'
+                 f'{name} <b>{v / total * 100:.1f}%</b></div>')
+    if sub:
+        rows += f'<div class="row sub">{sub}</div>'
+    st.markdown(
+        f'<div class="donut-wrap"><div class="donut" style="width:{size}px;height:{size}px;'
+        f'-webkit-mask:{mask};mask:{mask};background:{grad}"></div>'
+        f'<div class="leg2" style="font-size:{legend_fs}px">{rows}</div></div>',
+        unsafe_allow_html=True)
+
+
+def css_trend(rows, gran):
+    """시안과 동일한 CSS 스택 막대 추이. rows=[(label, 실결제, 쿠폰)]."""
+    if not rows:
+        st.info("선택한 조건에 맞는 데이터가 없어요. 기간·필터를 바꿔 보세요.")
+        return
+    mx = max((r[1] + r[2]) for r in rows) or 1
+    gap = "6px" if gran == "일" else ("12px" if gran == "주" else "26px")
+    fs = "10px" if gran == "일" else "11px"
+    cols = ""
+    for label, real, cp in rows:
+        tot = real + cp
+        h = max(2, round(tot / mx * 100))
+        cpp = round(cp / tot * 100) if tot else 0
+        _tb = min(h, 80)   # 막대가 아주 높으면 툴팁이 카드 밖으로 나가지 않게 상한
+        _tip = f'{label} · 실결제 {fmt_krw(real)}' + (f' · 쿠폰 {fmt_krw(cp)}' if cp else '')
+        cols += (f'<div class="col"><div class="vtip" style="bottom:{_tb}%">{_tip}</div>'
+                 f'<div class="stack" style="height:{h}%">'
+                 f'<div class="seg-cp" style="height:{cpp}%"></div>'
+                 f'<div class="seg-real" style="height:{100 - cpp}%"></div></div>'
+                 f'<div class="xlab" style="font-size:{fs}">{label}</div></div>')
+    st.markdown(
+        '<div class="legend"><span><i class="dot" style="background:var(--brand-2)"></i>실결제</span>'
+        '<span><i class="dot" style="background:var(--sky)"></i>쿠폰 할인</span></div>'
+        f'<div class="chart" style="gap:{gap}">{cols}</div>', unsafe_allow_html=True)
+
+
+def css_hours(vals):
+    """시안과 동일한 시간대(00~23) 막대. 최고 시간대만 진하게. vals=길이24."""
+    mx = max(vals) or 1
+    cols = ""
+    for h, v in enumerate(vals):
+        hp = round(v / mx * 100)
+        col = "var(--brand)" if (v >= mx and mx > 0) else "var(--brand-2)"
+        _tb = min(hp, 80)
+        cols += (f'<div class="hc"><div class="vtip" style="bottom:{_tb}%">{h:02d}:00 · {fmt_krw(v)}</div>'
+                 f'<div class="hb2" style="height:{hp}%;background:{col}"></div>'
+                 f'<div class="hx">{h:02d}</div></div>')
+    st.markdown(f'<div class="hours">{cols}</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -374,28 +657,102 @@ def _uniq(col):
 
 
 _country_opts = sorted(set(_uniq("국가")) | set(KNOWN_COUNTRIES)) if "국가" in df_all.columns else []
+_store_all = _uniq("매장 이름")
+_prod_opts = _uniq("상품 카테고리")
+_ip_opts = _uniq("프레임 이름")
 
-# ── 인라인 필터바 (시안 상단 칩) ──
-st.markdown('<div class="fbar-label">🔎 필터 — 여러 개 고르면 그 값들로 전 화면이 좁혀져요 (안 고르면 전체)</div>',
-            unsafe_allow_html=True)
+
+@st.cache_data(ttl=900)
+def _stores_by_country(_v):
+    """국가 → 매장 목록 (매장 필터를 선택 국가로 좁히기용)."""
+    if "국가" not in df_all.columns or "매장 이름" not in df_all.columns:
+        return {}
+    out = {}
+    for c, grp in df_all.dropna(subset=["국가"]).groupby("국가"):
+        vals = sorted(str(v) for v in grp["매장 이름"].dropna().unique())
+        out[str(c)] = [v for v in vals if v and v != "nan"]
+    return out
+
+
+_sbc = _stores_by_country(data_io.file_version(MASTER_FILE))
+
+
+def cbfilter(col, label, options, key):
+    """검색 + 체크박스 다중선택 필터. 선택 단일출처 = 각 체크박스 위젯(key=…__cb__옵션).
+    목록을 항상 펼쳐 보여주고(상위 200개), 검색은 좁히는 용도. 선택 리스트 반환."""
+    options = list(options)
+    pfx = f"{key}__cb__"
+
+    def _sel():
+        return [o for o in options if st.session_state.get(pfx + str(o), False)]
+
+    sel = _sel()
+    cap = "전체" if not sel else (str(sel[0]) if len(sel) == 1 else f"{len(sel)}개 선택")
+    col.markdown(f'<div class="fbl">{label}</div>', unsafe_allow_html=True)
+    with col.popover(cap, use_container_width=True):
+        q = ""
+        if len(options) > 6:
+            q = st.text_input("검색", key=f"{key}__q", placeholder=f"🔍 {label} 검색",
+                              label_visibility="collapsed").strip().lower()
+        pool = [o for o in options if q in str(o).lower()] if q else list(options)
+        merged = list(dict.fromkeys([*sel, *pool]))
+        shown = merged[:200]
+        over = len(merged) - len(shown)
+        _b = st.columns(2)
+        if _b[0].button("전체", key=f"{key}__all", use_container_width=True, disabled=not pool):
+            for o in pool:
+                st.session_state[pfx + str(o)] = True
+        if _b[1].button("해제", key=f"{key}__clr", use_container_width=True, disabled=not sel):
+            for o in options:
+                st.session_state[pfx + str(o)] = False
+        if not shown:
+            st.caption("옵션이 없어요.")
+        elif over:
+            st.caption(f"상위 200개 표시 · 나머지 {over}개는 검색해서 찾아요.")
+        for o in shown:
+            st.checkbox(str(o), key=pfx + str(o))
+    return _sel()
+
+
+# ── 필터바를 @st.fragment 로 격리 → 체크는 이 조각만 가볍게 재실행, '적용'에서 본문 갱신 ──
 default_start = max(last_date - timedelta(days=29), first_date)
-_fb = st.columns([1.6, 1, 1, 1, 1])
-with _fb[0]:
-    date_range = st.date_input("기간", value=[default_start, last_date],
-                               min_value=first_date, max_value=last_date, label_visibility="collapsed")
 
 
-def _fpop(col, label, key, options):
-    prev = [v for v in st.session_state.get(key, []) if v in options]
-    cap = "전체" if not prev else (prev[0] if len(prev) == 1 else f"{len(prev)}개")
-    with col.popover(f"{label} · {cap}", use_container_width=True):
-        return st.multiselect(label, options, key=key, placeholder="전체 (선택 안 함)")
+@st.fragment
+def _filterbar():
+    with st.container(border=True, key="scard-filter"):
+        # 필터(5개)는 폭을 넉넉히 채우고 오른쪽 스페이서는 작게(포토이즘 톤)
+        _fb = st.columns([1.05, 0.95, 0.95, 0.95, 0.95, 0.55, 1.35], gap="small")
+        with _fb[0]:
+            st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
+            st.date_input("기간", value=[default_start, last_date],
+                          min_value=first_date, max_value=last_date,
+                          key="f_date", label_visibility="collapsed")
+        cbfilter(_fb[1], "국가", _country_opts, "f_country")
+        _dc = [c for c in _country_opts if st.session_state.get(f"f_country__cb__{c}", False)]
+        _std = (sorted(set().union(*[set(_sbc.get(c, [])) for c in _dc])) if _dc else _store_all)
+        cbfilter(_fb[2], "매장", _std, "f_store")
+        cbfilter(_fb[3], "상품", _prod_opts, "f_prod")
+        cbfilter(_fb[4], "IP", _ip_opts, "f_ip")
+        with _fb[5]:
+            st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
+            if st.button("✓ 적용", key="f_apply", use_container_width=True, type="primary"):
+                st.rerun()
 
 
-sel_country = _fpop(_fb[1], "국가", "f_country", _country_opts)
-sel_store = _fpop(_fb[2], "매장", "f_store", _uniq("매장 이름"))
-sel_prod = _fpop(_fb[3], "상품", "f_prod", _uniq("상품 카테고리"))
-sel_ip = _fpop(_fb[4], "IP", "f_ip", _uniq("프레임 이름"))
+_filterbar()
+
+# ── 적용된 필터 = 현재 위젯 상태 (체크 중엔 본문 안 바뀜) ──
+_dv = st.session_state.get("f_date", [default_start, last_date])
+date_range = list(_dv) if isinstance(_dv, (list, tuple)) else [default_start, last_date]
+sel_country = [o for o in _country_opts if st.session_state.get(f"f_country__cb__{o}", False)]
+if sel_country:
+    _store_opts = sorted(set().union(*[set(_sbc.get(c, [])) for c in sel_country]))
+else:
+    _store_opts = _store_all
+sel_store = [o for o in _store_opts if st.session_state.get(f"f_store__cb__{o}", False)]
+sel_prod = [o for o in _prod_opts if st.session_state.get(f"f_prod__cb__{o}", False)]
+sel_ip = [o for o in _ip_opts if st.session_state.get(f"f_ip__cb__{o}", False)]
 
 _cfg = load_config()
 
@@ -415,6 +772,28 @@ if sel_ip:
 sales = paid_sales(df)
 coupons = coupon_txns(df)
 cpn_all = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
+
+# ══════════════════════════════════════════════════════════════
+#  관리자 전용: '계산 방식 설명' 토글 + helpbox 헬퍼
+#  - 소유자(auth.is_owner)에게만 사이드바 체크박스를 노출.
+#  - 체크 시에만 각 카드 아래에 '이 값이 어떻게 계산되는지'를 접기(expander)로 표시.
+#  - 일반 사용자/토글 OFF면 아예 렌더링 안 됨(흔적·부하 없음).
+#  ※ expander 중첩 불가 → helpbox 는 다른 expander(더보기·원본) 바깥(카드/섹션 레벨)에 둔다.
+# ══════════════════════════════════════════════════════════════
+_is_owner = auth.is_owner(getattr(getattr(st, "user", None), "email", None))
+if _is_owner:
+    st.sidebar.markdown("---")
+    st.sidebar.checkbox(
+        "🔧 계산 방식 설명 표시", key="show_calc_help",
+        help="각 카드 아래에 '이 값이 어떻게 계산·검증되는지' 설명을 접기로 보여줘요. 관리자에게만 보입니다.")
+
+
+def helpbox(md):
+    """관리자가 토글을 켰을 때만, 접기로 '이 값 계산 방식'을 보여준다."""
+    if _is_owner and st.session_state.get("show_calc_help"):
+        with st.expander("ℹ️ 이 값은 어떻게 계산되나요?", expanded=False):
+            st.markdown(md)
+
 
 # ══════════════════════════════════════════════════════════════
 #  KPI 3카드 + 범위 배너
@@ -449,89 +828,56 @@ if sel_ip:
 if _scope_bits:
     st.markdown('<div class="scope">🌐 범위 — ' + "  |  ".join(_scope_bits) + '</div>', unsafe_allow_html=True)
 
+helpbox("""
+**KPI 3카드 — 조회기간 매출 · 쿠폰 매출 · 취소 매출**
+
+**공통 기준 (이하 모든 카드 동일)**
+- **원본**: 스내피즘 매장 거래 상세(매일 오전 9시 자동 수집) · 15분 캐시(`ttl=900`).
+- **환율**: `config.json` 실시간 환율표로 결제 통화(`결제 단위`)를 원화 환산 → `KRW환산금액 = 최종 결제 금액 × 환율`.
+- **필터 반영**: 필터바(기간·국가·매장·상품·IP)로 거른 뒤 계산. 미선택 = 전체.
+
+**각 카드 계산**
+- **조회기간 매출(합계)** = `실결제` 합. 실결제 = *취소 아님* & *최종 결제 금액 > 0* 거래의 `KRW환산금액` 합 → **쿠폰·취소는 제외**.
+- **쿠폰 매출(할인)** = 쿠폰이 붙은 모든 거래(`cpn_all`)의 `쿠폰KRW`(= 쿠폰 할인 금액 × 환율) 합. 건수 = 해당 거래 수.
+- **취소 매출** = `취소 여부 = True` 거래의 `KRW환산금액` 합 (참고용 — 매출에는 이미 미포함).
+
+**검증** — 이 '조회기간 매출'이 아래 모든 매출 차트·표의 기준값이에요. 각 차트를 국가/카테고리 등으로 쪼갠 합계를 더하면 이 값과 일치해야 정상.
+""")
+
 # ══════════════════════════════════════════════════════════════
-#  사이드바: 이번 달 변화 (국가별) — 전월 동기(1일~같은날) 기준
+#  사이드바: 실시간 환율 (접기) — 소유자(본인)만 노출
+#  ※ '이번 달 변화'는 잠시 제거 — 나중에 사이드에 다시 추가 예정
+#    (전월 동기 대비 mover 로직·`.mv` CSS 는 그대로 남겨둠)
 # ══════════════════════════════════════════════════════════════
-st.sidebar.divider()
-st.sidebar.subheader("🔺 이번 달 변화")
-_mv_country = st.sidebar.selectbox("국가별로 보기", ["전체"] + _country_opts, key="mv_country")
-st.sidebar.caption("전월 같은 기간(1일~오늘) 대비예요.")
-
-_today = date.today()
-_mstart = _today.replace(day=1)
-_py = _today.year if _today.month > 1 else _today.year - 1
-_pm = _today.month - 1 if _today.month > 1 else 12
-_pmstart = date(_py, _pm, 1)
-_pdays = pd.Period(f"{_py}-{_pm:02d}", freq="M").days_in_month
-_psame_end = date(_py, _pm, min(_today.day, _pdays))
-
-if _mv_country != "전체" and "국가" in df_all.columns:
-    _mv_src = df_all[df_all["국가"] == _mv_country]
-else:
-    _mv_src = df_all
-_cur_m = paid_sales(_mv_src[(_mv_src["날짜"] >= _mstart) & (_mv_src["날짜"] <= _today)])
-_prev_m = paid_sales(_mv_src[(_mv_src["날짜"] >= _pmstart) & (_mv_src["날짜"] <= _psame_end)])
-
-
-def _movers(dim):
-    a = _cur_m.groupby(dim)["KRW환산금액"].sum()
-    b = _prev_m.groupby(dim)["KRW환산금액"].sum()
-    idx = a.index.union(b.index)
-    a = a.reindex(idx, fill_value=0)
-    b = b.reindex(idx, fill_value=0)
-    out = []
-    for name in idx:
-        name_s = str(name).strip()
-        if not name_s or name_s == "nan":
-            continue
-        cur_v, prev_v = int(a[name]), int(b[name])
-        if prev_v <= 0 and cur_v <= 0:
-            continue
-        pct = 100.0 if prev_v <= 0 else (cur_v - prev_v) / prev_v * 100
-        out.append((name_s, pct))
-    return out
-
-
-_mv = _movers("프레임 이름")
-_up = sorted([m for m in _mv if m[1] > 0], key=lambda x: -x[1])[:5]
-_down = sorted([m for m in _mv if m[1] < 0], key=lambda x: x[1])[:5]
-
-
-def _mv_rows(items, cls):
-    if not items:
-        return '<div class="mv" style="color:#98a0af">해당 없음</div>'
-    r = ""
-    for name, pct in items:
-        nm = name if len(name) <= 12 else name[:11] + "…"
-        r += (f'<div class="mv"><span class="t">IP</span><span class="n">{nm}</span>'
-              f'<span class="p {cls}">{pct:+.0f}%</span></div>')
-    return r
-
-
-st.sidebar.markdown('<div style="font-size:12px;font-weight:700;color:#15803d;margin:6px 0 2px">▲ 오른 IP</div>'
-                    + _mv_rows(_up, "up"), unsafe_allow_html=True)
-st.sidebar.markdown('<div style="font-size:12px;font-weight:700;color:#c0322b;margin:10px 0 2px">▼ 내린 IP</div>'
-                    + _mv_rows(_down, "down"), unsafe_allow_html=True)
-
-st.sidebar.divider()
-st.sidebar.caption(f"💱 실시간 환율{'  ·  ' + _cfg.get('rates_updated', '') if _cfg.get('rates_updated') else ''}")
-for _cur, _rate in ex_rates.items():
-    if _cur != "KRW":
-        st.sidebar.caption(f"  1 {_cur} = ₩{_rate:,.2f}")
+if _is_owner:
+    with st.sidebar.expander("💱 실시간 환율", expanded=False):
+        if _cfg.get("rates_updated"):
+            st.caption(f"업데이트 {_cfg.get('rates_updated')}")
+        for _cur, _rate in ex_rates.items():
+            if _cur != "KRW":
+                st.caption(f"1 {_cur} = ₩{_rate:,.2f}")
 
 # ══════════════════════════════════════════════════════════════
 #  탭 5개
 # ══════════════════════════════════════════════════════════════
-tab_home, tab_cat, tab_nat, tab_store, tab_etc = st.tabs([
-    "📊 매출 한눈에", "🧩 상품 카테고리 분석", "🌏 국가별 분석", "🏬 매장별 분석", "⏰ 시간대 · 데이터",
-])
+# [보류] '시간대 · 데이터' 탭 — 숨김 처리(코드·데이터는 그대로 보존).
+#         다시 살리려면 SHOW_TAB_ETC = True 로만 바꾸면 됨.
+SHOW_TAB_ETC = False
+_tab_labels = ["📊 매출 한눈에", "🧩 상품 카테고리 분석", "🌏 국가별 분석", "🏬 매장별 분석"]
+if SHOW_TAB_ETC:
+    _tab_labels.append("⏰ 시간대 · 데이터")
+_tabs = st.tabs(_tab_labels)
+tab_home, tab_cat, tab_nat, tab_store = _tabs[0], _tabs[1], _tabs[2], _tabs[3]
+tab_etc = _tabs[4] if SHOW_TAB_ETC else None
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
 with tab_home:
     sec("1", "매출 동향", "잘 가고 있나? — 기간별 실결제·쿠폰 흐름")
-    with card("📈 매출 추이"):
-        _, _h2 = st.columns([3, 1])
-        with _h2:
+    with card():
+        _th, _tg = st.columns([2.4, 1])
+        with _th:
+            st.markdown('<div class="ct" style="margin-bottom:0">📈 매출 추이</div>', unsafe_allow_html=True)
+        with _tg:
             gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
                                         key="trend_gran", label_visibility="collapsed") or "월"
 
@@ -543,7 +889,7 @@ with tab_home:
         _cp = cpn_all.assign(_p=_pkey(cpn_all["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum().rename("쿠폰")
         trend = pd.concat([s_paid, _cp], axis=1).fillna(0).sort_index()
         if trend.empty:
-            st.info("선택한 조건에 맞는 데이터가 없어요. 기간·필터를 바꿔 보세요.")
+            css_trend([], gran)
         else:
             trend = trend.reset_index()
             if gran == "월":
@@ -552,15 +898,27 @@ with tab_home:
                 trend["label"] = trend["_p"].apply(lambda p: p.start_time.strftime("%m/%d") + "주")
             else:
                 trend["label"] = trend["_p"].astype(str)
-            fig = go.Figure()
-            fig.add_trace(go.Bar(x=trend["label"], y=trend["실결제"], name="실결제",
-                                 marker_color=BRAND2, hovertemplate="%{x}<br>실결제 %{y:,}원<extra></extra>"))
-            fig.add_trace(go.Bar(x=trend["label"], y=trend["쿠폰"], name="쿠폰 할인",
-                                 marker_color=SKY, hovertemplate="%{x}<br>쿠폰 %{y:,}원<extra></extra>"))
-            fig.update_layout(barmode="stack", yaxis_tickformat=",", bargap=0.55, barcornerradius=6)
-            style_fig(fig, 320)
-            fig.update_xaxes(type="category")
-            st.plotly_chart(fig, use_container_width=True, key="ch_trend")
+            css_trend(list(zip(trend["label"], trend["실결제"].astype(int),
+                               trend["쿠폰"].astype(int))), gran)
+            # 시안: 차트 아래 인사이트 한 줄 (예: 월 단위 · 6월 ₩329M → 7월(10일) ₩45M, 월초라 낮아요)
+            if gran == "월" and len(trend) >= 2:
+                _pp, _lp = trend["_p"].iloc[-2], trend["_p"].iloc[-1]
+                _pv, _cv = int(trend["실결제"].iloc[-2]), int(trend["실결제"].iloc[-1])
+                _end = date_range[1] if len(date_range) == 2 else last_date
+                _partial = (_lp.year == _end.year and _lp.month == _end.month
+                            and _end.day < _lp.days_in_month)
+                _txt = (f"월 단위 · {_pp.month}월 ₩{_pv / 1e6:,.0f}M → "
+                        f"{_lp.month}월{f'({_end.day}일)' if _partial else ''} ₩{_cv / 1e6:,.0f}M")
+                if _partial and _cv < _pv:
+                    _txt += ", 월초라 낮아요" if _end.day <= 12 else " (진행 중이에요)"
+                st.caption(_txt)
+        helpbox("""
+**매출 추이 (실결제 + 쿠폰, 월/주/일)**
+- **실결제 막대** = `실결제` 거래를 기간(월=`to_period('M')`, 주=`to_period('W')`, 일=날짜)으로 묶어 `KRW환산금액` 합.
+- **쿠폰 할인 막대** = 같은 기간으로 `cpn_all`의 `쿠폰KRW` 합. 실결제 위에 쌓아 정가 대비 할인 규모를 표시.
+- **하단 인사이트** = '월' 보기에서 직전월 → 최근월 실결제 증감. 최근월이 진행 중이면 `(N일)`로 부분집계임을 표기.
+- ※ 공통 기준(원본·환율·실결제 정의)은 상단 'KPI 카드' 설명 참고.
+""")
 
     sec("2", "무엇이 매출을 만드나", "비중 — 어떤 상품·종류가 매출을 끄나")
     _c1, _c2 = st.columns(2)
@@ -568,32 +926,42 @@ with tab_home:
         with card("🧩 상품 카테고리 비중"):
             pc = (sales.groupby("상품 카테고리")["KRW환산금액"].sum().rename("매출")
                   .reset_index().sort_values("매출", ascending=False))
+            if len(pc) > 4:   # 시안: 요약에선 TOP3 + '기타 N종' 묶음 (전체는 상세 탭)
+                pc = pd.concat([pc.head(3), pd.DataFrame([{
+                    "상품 카테고리": f"기타 {len(pc) - 3}종",
+                    "매출": int(pc.iloc[3:]["매출"].sum())}])], ignore_index=True)
+                pc = pc.sort_values("매출", ascending=False).reset_index(drop=True)
             if pc["매출"].sum() > 0:
-                _dd, _ll = st.columns([1, 1])
-                with _dd:
-                    st.plotly_chart(donut(pc, "상품 카테고리", "매출", showlegend=False),
-                                    use_container_width=True, key="ch_home_prodcat")
-                with _ll:
-                    legend_list(pc, "상품 카테고리")
+                css_donut(list(zip(pc["상품 카테고리"], pc["매출"])),
+                          ["var(--brand-2)", "var(--amber)", "#7c77ee", "#c7ccd6"])
             else:
                 st.info("데이터가 없어요.")
+            helpbox("""
+**상품 카테고리 비중**
+- 실결제 거래를 `상품 카테고리`로 묶어 `KRW환산금액` 합 → 비중(도넛).
+- 요약 화면이라 **매출 상위 3종 + '기타 N종' 묶음**만 표시. 전체는 '상품 카테고리 분석' 탭.
+""")
     with _c2:
         with card("🎨 아티스트/캐릭터 비중"):
             _s = sales.assign(_c=cat3(sales["카테고리"]))
-            ac = (_s.groupby("_c")["KRW환산금액"].sum().rename("매출").reset_index()
-                  .sort_values("매출", ascending=False))
-            ac = ac[ac["매출"] > 0]
+            ac_full = (_s.groupby("_c")["KRW환산금액"].sum().rename("매출").reset_index()
+                       .sort_values("매출", ascending=False))
+            # 시안: 도넛은 아티스트·캐릭터 딱 2조각(기타는 캡션으로만)
+            ac = ac_full[ac_full["_c"].isin(["아티스트", "캐릭터"]) & (ac_full["매출"] > 0)]
             if not ac.empty:
-                _dd, _ll = st.columns([1, 1])
-                with _dd:
-                    st.plotly_chart(donut(ac, "_c", "매출", showlegend=False),
-                                    use_container_width=True, key="ch_home_ac")
-                with _ll:
-                    legend_list(ac, "_c")
-                _m = {r["_c"]: int(r["매출"]) for _, r in ac.iterrows()}
-                st.caption("아티스트 " + fmt_krw(_m.get("아티스트", 0)) + " · 캐릭터 " + fmt_krw(_m.get("캐릭터", 0)))
+                _m = {r["_c"]: int(r["매출"]) for _, r in ac_full.iterrows()}
+                _sub = "아티스트 " + fmt_krw(_m.get("아티스트", 0)) + " · 캐릭터 " + fmt_krw(_m.get("캐릭터", 0))
+                if _m.get("기타", 0) > 0:
+                    _sub += f" · 기타 {fmt_krw(_m['기타'])} 제외"
+                css_donut(list(zip(ac["_c"], ac["매출"])),
+                          ["var(--brand-2)", "var(--teal)"], sub=_sub)
             else:
                 st.info("데이터가 없어요.")
+            helpbox("""
+**아티스트/캐릭터 비중**
+- 거래의 `카테고리` 값을 `cat3()`으로 **아티스트 / 캐릭터 / 기타** 3분류로 정규화한 뒤 `KRW환산금액` 합.
+- 도넛은 **아티스트·캐릭터 2조각만** 그리고, '기타'는 조각에서 빼고 캡션에 금액만 표기.
+""")
 
     with card("🖼 카테고리별 TOP 프레임(IP)"):
         _fsrc = sales[sales["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
@@ -603,96 +971,131 @@ with tab_home:
             hbar_list(fr, "프레임 이름", top=5)
         else:
             st.info("프레임 데이터가 없어요.")
+        helpbox("""
+**카테고리별 TOP 프레임(IP)**
+- 실결제 거래 중 `프레임 이름`이 비어있지 않은 것만 대상으로 `KRW환산금액` 합 → 상위 5개.
+- '프레임 이름' = 사진 프레임(=IP) 식별자.
+""")
 
     sec("3", "어디서 파나", "지역 — 국가·매장별 매출 (원화 기준)")
     _n1, _n2 = st.columns(2)
     with _n1:
         with card("🌏 국가별 매출 TOP 6"):
             nat6 = (sales.groupby("국가")["KRW환산금액"].sum().rename("매출").reset_index()
-                    .sort_values("매출", ascending=False).head(6)) if "국가" in sales.columns else pd.DataFrame()
+                    ) if "국가" in sales.columns else pd.DataFrame()
             if not nat6.empty and nat6["매출"].sum() > 0:
-                figb = px.bar(nat6.sort_values("매출"), x="매출", y="국가", orientation="h",
-                              color_discrete_sequence=[BRAND2])
-                figb.update_traces(hovertemplate="%{y}<br>%{x:,}원<extra></extra>")
-                figb.update_layout(xaxis_tickformat=",", yaxis_title="", bargap=0.45)
-                style_fig(figb, 300, legend=False)
-                st.plotly_chart(figb, use_container_width=True, key="ch_home_nat6")
+                hbar_list(nat6, "국가", top=6)
             else:
                 st.info("데이터가 없어요.")
+            helpbox("""
+**국가별 매출 TOP 6**
+- 실결제 거래를 `국가`로 묶어 `KRW환산금액`(원화) 합 → 상위 6개국. 나라 비교는 항상 원화 기준.
+""")
     with _n2:
-        with card("🏬 국가별 매출 TOP 5 매장"):
+        with card("🏬 국가별 매출 TOP 5 매장", key="scard-hstore"):
             _opts = (sales.groupby("국가")["KRW환산금액"].sum().sort_values(ascending=False).index.tolist()
                      if "국가" in sales.columns else [])
             if _opts:
-                _pick = st.selectbox("국가 선택", _opts, key="home_store_country", label_visibility="collapsed")
-                _ss = (sales[sales["국가"] == _pick].groupby("매장 이름")["KRW환산금액"].sum().rename("매출")
+                _pick = st.selectbox("국가", _opts, key="home_store_country", label_visibility="collapsed")
+                _ss = (sales[sales["국가"] == _pick].groupby("매장 이름")
+                       .agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count"))
                        .reset_index().sort_values("매출", ascending=False).head(5))
                 if not _ss.empty:
-                    rank_table(_ss, "매장 이름")
+                    hbar_list(_ss, "매장 이름", top=5)
+                    st.caption("선택한 국가의 매출 상위 5개 매장")
                 else:
                     st.info("이 국가의 매장 데이터가 없어요.")
             else:
                 st.info("데이터가 없어요.")
+            helpbox("""
+**국가별 매출 TOP 5 매장**
+- 위 셀렉트박스에서 고른 국가의 실결제 거래를 `매장 이름`으로 묶어 `KRW환산금액` 합·건수 → 상위 5개 매장.
+""")
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '상품 카테고리 분석'·'매장별 분석' 탭에서 봐요.")
 
 # ════════════ 탭 2: 상품 카테고리 분석 (상세, 전체) ════════════
 with tab_cat:
-    with card("🎨 아티스트/캐릭터 · 프레임(IP) 전체 순위"):
+    with card("🎨 아티스트/캐릭터 비중 · 🖼 프레임(IP) 전체 순위"):
         _s = sales.assign(_c=cat3(sales["카테고리"]))
-        _ta, _ = st.columns([3, 7])
-        with _ta:
+        # 시안: 도넛(아티스트/캐릭터) 상단 전체폭
+        ac = _s.groupby("_c")["KRW환산금액"].sum().rename("매출").reset_index()
+        ac2 = (ac[ac["_c"].isin(["아티스트", "캐릭터"]) & (ac["매출"] > 0)]
+               .sort_values("매출", ascending=False))
+        if not ac2.empty:
+            _m = {r["_c"]: int(r["매출"]) for _, r in ac.iterrows()}
+            _sub = "아티스트 " + fmt_krw(_m.get("아티스트", 0)) + " · 캐릭터 " + fmt_krw(_m.get("캐릭터", 0))
+            css_donut(list(zip(ac2["_c"], ac2["매출"])), ["var(--brand-2)", "var(--teal)"], sub=_sub)
+        # 구분선 + 프레임 전체 순위(토글 + 전체폭 표)
+        st.markdown('<div style="border-top:1px solid var(--border);margin-top:16px"></div>',
+                    unsafe_allow_html=True)
+        _hh, _tt = st.columns([5, 5], vertical_alignment="center")
+        with _hh:
+            st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
+                        '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
+        with _tt:
             _tog = st.segmented_control("구분", ["전체", "아티스트", "캐릭터"], default="전체",
                                         key="cat_frame_tog", label_visibility="collapsed") or "전체"
         _fs = _s if _tog == "전체" else _s[_s["_c"] == _tog]
         fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
-                  .groupby("프레임 이름")["KRW환산금액"].sum().rename("매출").reset_index())
+                  .groupby("프레임 이름").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count")).reset_index())
         fr_all = fr_all[fr_all["매출"] > 0]
-        _d1, _d2 = st.columns([5, 5])
-        with _d1:
-            ac = _s.groupby("_c")["KRW환산금액"].sum().rename("매출").reset_index()
-            ac = ac[ac["매출"] > 0]
-            if not ac.empty:
-                st.plotly_chart(donut(ac, "_c", "매출", height=240), use_container_width=True, key="ch_cat_ac")
-        with _d2:
-            st.caption(f"프레임(IP) {len(fr_all):,}개 · 매출순 전체")
-            if not fr_all.empty:
-                rank_table(fr_all, "프레임 이름")
-            else:
-                st.info("데이터가 없어요.")
+        st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
+        if not fr_all.empty:
+            rank_table(fr_all, "프레임 이름", collapse_after=10)
+        else:
+            st.info("데이터가 없어요.")
+        helpbox("""
+**아티스트/캐릭터 비중 · 프레임(IP) 전체 순위**
+- 상단 도넛 = 탭1과 동일(아티스트·캐릭터 2조각, `cat3()` 분류).
+- 하단 표 = `전체 / 아티스트 / 캐릭터` 토글로 거른 뒤 `프레임 이름`별 `KRW환산금액` 합·건수. TOP 10 + 나머지 접기.
+""")
 
     with card("🧩 상품 카테고리 (비중 · 매출)"):
-        pc = (sales.groupby("상품 카테고리")["KRW환산금액"].sum().rename("매출")
+        pc = (sales.groupby("상품 카테고리").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count"))
               .reset_index().sort_values("매출", ascending=False))
         _p1, _p2 = st.columns([5, 5])
         with _p1:
             if pc["매출"].sum() > 0:
-                st.plotly_chart(donut(pc, "상품 카테고리", "매출", height=250), use_container_width=True, key="ch_cat_prodcat")
+                _pcd = pc.copy()
+                if len(_pcd) > 4:
+                    _pcd = pd.concat([_pcd.head(3), pd.DataFrame([{
+                        "상품 카테고리": f"기타 {len(_pcd) - 3}종", "매출": int(_pcd.iloc[3:]["매출"].sum())}])],
+                        ignore_index=True)
+                css_donut(list(zip(_pcd["상품 카테고리"], _pcd["매출"])),
+                          ["var(--brand-2)", "var(--amber)", "#7c77ee", "#c7ccd6"])
         with _p2:
             if not pc.empty:
-                rank_table(pc, "상품 카테고리")
+                hbar_list(pc, "상품 카테고리")   # 시안: 비중(도넛)+매출액(막대)
             else:
                 st.info("데이터가 없어요.")
+        helpbox("""
+**상품 카테고리 (비중 · 매출) — 전체**
+- 실결제를 `상품 카테고리`로 묶어 `KRW환산금액` 합·건수.
+- 왼쪽 도넛 = 비중(상위 3 + 기타 묶음), 오른쪽 막대 = 카테고리별 매출액 전체.
+""")
 
     @st.fragment
     def _prod_rank():
-        with card("📦 카테고리별 상품 순위"):
+        with card("📦 카테고리별 상품 순위", key="scard-prodsel"):
             cats = [c for c in sorted(sales["상품 카테고리"].dropna().astype(str).unique().tolist())
                     if c and c != "nan"]
             if not cats:
                 st.info("데이터가 없어요.")
                 return
             _d = "미니스티커" if "미니스티커" in cats else cats[0]
-            _ca, _ = st.columns([3, 7])
-            with _ca:
-                pick = st.selectbox("카테고리", cats, index=cats.index(_d),
-                                    key="prod_rank_pick", label_visibility="collapsed")
-            pr = (sales[sales["상품 카테고리"] == pick].groupby("상품 이름")["KRW환산금액"].sum()
-                  .rename("매출").reset_index())
+            pick = st.selectbox("카테고리", cats, index=cats.index(_d),
+                                key="prod_rank_pick", label_visibility="collapsed")
+            pr = (sales[sales["상품 카테고리"] == pick].groupby("상품 이름")
+                  .agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count")).reset_index())
             pr = pr[pr["매출"] > 0]
             if pr.empty:
                 st.info("이 카테고리에는 데이터가 없어요.")
             else:
-                rank_table(pr, "상품 이름")
+                rank_table(pr, "상품 이름", collapse_after=10)
+            helpbox("""
+**카테고리별 상품 순위**
+- 위에서 고른 `상품 카테고리`에 속한 실결제 거래를 `상품 이름`으로 묶어 `KRW환산금액` 합·건수 → 순위. TOP 10 + 나머지 접기.
+""")
 
     _prod_rank()
 
@@ -722,6 +1125,12 @@ with tab_nat:
                          f'<span class="r num">{fmt_orig(r["현지"], r["결제 단위"])}</span>'
                          f'<span class="r num">{fmt_krw(r["매출"])}</span>{pct_bar(frac, mx)}</div>')
             st.markdown(html + "</div>", unsafe_allow_html=True)
+            helpbox("""
+**국가별 매출 표**
+- 실결제 + 순수 쿠폰거래(`coupons`)를 합쳐 `국가`·`결제 단위`(통화)로 묶음.
+- **건수** = 거래 수 · **현지 매출** = `총원화금액`(= 최종 결제 금액 + 쿠폰 할인 금액, 현지통화 정가) 합 · **KRW 매출** = `KRW환산금액` 합 · **비중** = 그 나라 KRW 매출 ÷ 전체.
+- '현지 매출'은 통화가 달라 나라끼리 비교 불가 → 비교는 KRW 매출로.
+""")
 
         with card("🍩 국가별 매출 비중"):
             _pie = nat[["국가", "매출"]].copy()
@@ -729,59 +1138,98 @@ with tab_nat:
                 _pie = pd.concat([_pie.head(7), pd.DataFrame(
                     [{"국가": f"기타 {len(nat) - 7}개국", "매출": int(nat.iloc[7:]["매출"].sum())}])],
                     ignore_index=True)
-            fig = px.pie(_pie, names="국가", values="매출", hole=0.5, color_discrete_sequence=PAL)
-            fig.update_traces(sort=False, textposition="inside", texttemplate="%{percent}",
-                              hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
-            style_fig(fig, 340)
-            fig.update_layout(legend=dict(orientation="h", y=-0.05, x=0.5, xanchor="center", font_size=10))
-            st.plotly_chart(fig, use_container_width=True, key="ch_nat_pie")
+            _pie = _pie.sort_values("매출", ascending=False).reset_index(drop=True)
+            css_donut(list(zip(_pie["국가"], _pie["매출"])), PAL, size=190, hole=62, legend_fs=14)
+            cpn_by = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
+            if not cpn_by.empty:
+                st.markdown(f'<div class="strip">🎟 쿠폰 총 할인 '
+                            f'<b>{fmt_krw(int(cpn_by["쿠폰KRW"].sum()))}</b> · {len(cpn_by):,}건</div>',
+                            unsafe_allow_html=True)
+            helpbox("""
+**국가별 매출 비중 (도넛)**
+- 위 표의 국가별 KRW 매출로 비중 계산. 상위 7개국 + '기타 N개국' 묶음.
+- 하단 🎟 스트립 = 쿠폰 붙은 전체 거래의 `쿠폰KRW` 합·건수.
+""")
 
-        cpn_by = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
-        if not cpn_by.empty:
-            st.info(f"🎟 쿠폰 총 할인 **{fmt_krw(int(cpn_by['쿠폰KRW'].sum()))}**  ·  {len(cpn_by):,}건")
+        # 키오스크당 매출 — 대당 효율. 키오스크 대수 데이터 미적재라 대수·당매출은 '준비중' 표기.
+        _pend_badge = ('<span style="font-size:11px;font-weight:700;color:#b45309;'
+                       'background:#fdf3e7;padding:2px 8px;border-radius:6px;margin-left:7px">준비중</span>')
+        with card("🖥 키오스크당 매출 (대당 효율)" + _pend_badge):
+            st.caption("키오스크 대수 데이터를 준비 중이에요. 대수가 연결되면 '키오스크당 매출'과 "
+                       "'총매출 1위 ≠ 대당 효율 1위' 인사이트가 자동으로 채워져요.")
+            kdf = (sales.groupby("국가")["KRW환산금액"].sum().rename("매출").reset_index()
+                   .sort_values("매출", ascending=False)) if "국가" in sales.columns else pd.DataFrame()
+            kdf = kdf[kdf["매출"] > 0] if not kdf.empty else kdf
+            if kdf.empty:
+                st.info("데이터가 없어요.")
+            else:
+                _pend = '<span class="cur" style="color:#b45309;background:#fdf3e7">준비중</span>'
+                grid = "grid-template-columns:1.5fr 1.5fr 1.1fr 1.4fr"
+                khtml = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
+                         '<span>국가</span><span class="r">총 매출</span>'
+                         '<span class="c">키오스크 대수</span><span class="r">키오스크당 매출</span></div>')
+                for _, r in kdf.iterrows():
+                    khtml += (f'<div class="ntr" style="{grid}">'
+                              f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
+                              f'<span class="r num">{fmt_krw(r["매출"])}</span>'
+                              f'<span class="c">{_pend}</span>'
+                              f'<span class="r">{_pend}</span></div>')
+                st.markdown(khtml + "</div>", unsafe_allow_html=True)
+            helpbox("""
+**키오스크당 매출 (준비중)**
+- '총 매출' = 국가별 실결제 `KRW환산금액` 합.
+- **키오스크 대수 데이터가 아직 적재 안 됨** → '대당 매출'은 계산 불가라 '준비중' 표기. 대수가 연결되면 `총매출 ÷ 대수`로 자동 계산돼요.
+""")
 
 # ════════════ 탭 4: 매장별 분석 (상세, 전체) ════════════
 with tab_store:
-    with card("🏬 국가별 매장 전체 순위"):
+    with card("🏬 국가별 매장 전체 순위", key="scard-storesel"):
         _opts = (sales.groupby("국가")["KRW환산금액"].sum().sort_values(ascending=False).index.tolist()
                  if "국가" in sales.columns else [])
         if not _opts:
             st.info("데이터가 없어요.")
         else:
-            _ca, _ = st.columns([3, 7])
-            with _ca:
-                pick = st.selectbox("국가", ["전체"] + _opts, key="store_country", label_visibility="collapsed")
+            pick = st.selectbox("국가", ["전체"] + _opts, key="store_country", label_visibility="collapsed")
             _src = sales if pick == "전체" else sales[sales["국가"] == pick]
-            ss = _src.groupby("매장 이름")["KRW환산금액"].sum().rename("매출").reset_index()
+            ss = (_src.groupby("매장 이름").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count"))
+                  .reset_index())
             ss = ss[ss["매출"] > 0]
-            st.caption(f"매장 {len(ss):,}개 · 매출순 전체" + ("" if pick == "전체" else f" · {pick}"))
+            st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기" + ("" if pick == "전체" else f" · {pick}"))
             if ss.empty:
                 st.info("이 국가의 매장 데이터가 없어요.")
             else:
-                rank_table(ss, "매장 이름")
+                hbar_list(ss, "매장 이름", collapse_after=10)   # 시안: 가로 막대
+        helpbox("""
+**국가별 매장 전체 순위**
+- '전체' 또는 선택 국가의 실결제 거래를 `매장 이름`으로 묶어 `KRW환산금액` 합·건수 → 순위. TOP 10 + 나머지 접기.
+""")
 
-# ════════════ 탭 5: 시간대 · 데이터 ════════════
-with tab_etc:
-    with card("⏰ 시간대별 매출 분포"):
-        hourly = (sales.assign(시간대=sales["결제일시"].dt.hour).groupby("시간대")["KRW환산금액"].sum()
-                  .reindex(range(24), fill_value=0).reset_index()
-                  .rename(columns={"시간대": "시간", "KRW환산금액": "매출"}))
-        hourly["label"] = hourly["시간"].apply(lambda h: f"{h:02d}:00")
-        _peak = hourly["매출"].max()
-        hourly["clr"] = hourly["매출"].apply(lambda v: BRAND if (v == _peak and _peak > 0) else "#c7cbf5")
-        fig = go.Figure(go.Bar(x=hourly["label"], y=hourly["매출"], marker_color=hourly["clr"],
-                               hovertemplate="%{x}<br>%{y:,}원<extra></extra>"))
-        fig.update_layout(yaxis_tickformat=",", xaxis_title="")
-        style_fig(fig, 260, legend=False)
-        st.plotly_chart(fig, use_container_width=True, key="ch_hourly")
+# ════════════ 탭 5: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
+if SHOW_TAB_ETC:
+    with tab_etc:
+        with card("⏰ 시간대별 매출 분포"):
+            _hv = (sales.assign(시간대=sales["결제일시"].dt.hour).groupby("시간대")["KRW환산금액"].sum()
+                   .reindex(range(24), fill_value=0))
+            css_hours([int(v) for v in _hv.tolist()])
+            st.caption("최고 시간대만 진하게 강조했어요.")
+            helpbox("""
+**시간대별 매출 분포**
+- 실결제 거래의 `결제일시`에서 **시(hour)** 만 뽑아 0~23시로 묶어 `KRW환산금액` 합(빈 시간대는 0).
+- 매출이 가장 큰 시간대만 진하게 강조.
+""")
 
-    with st.expander("🗃 원본 데이터 보기 / 내려받기"):
-        cols = ["날짜", "결제일시", "국가", "매장 이름", "상품 카테고리", "상품 이름",
-                "상품 단가", "쿠폰 할인 금액", "최종 결제 금액", "결제 단위",
-                "KRW환산금액", "결제 수단", "프레임 이름", "카테고리", "취소 여부"]
-        avail = [c for c in cols if c in df.columns]
-        st.dataframe(df[avail].sort_values("결제일시", ascending=False).reset_index(drop=True),
-                     use_container_width=True, height=400)
-        st.download_button("CSV 다운로드",
-                           df[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
-                           "snapism_filtered.csv", "text/csv")
+        helpbox("""
+**원본 데이터**
+- 현재 필터가 적용된 거래 전체(`df`)를 결제일시 내림차순으로 표시. CSV로 내려받기 가능.
+- 표시 컬럼: 날짜·결제일시·국가·매장·카테고리·상품·단가·쿠폰·최종결제·통화·KRW환산·결제수단·프레임·카테고리·취소여부.
+""")
+        with st.expander("🗃 원본 데이터 보기 / 내려받기"):
+            cols = ["날짜", "결제일시", "국가", "매장 이름", "상품 카테고리", "상품 이름",
+                    "상품 단가", "쿠폰 할인 금액", "최종 결제 금액", "결제 단위",
+                    "KRW환산금액", "결제 수단", "프레임 이름", "카테고리", "취소 여부"]
+            avail = [c for c in cols if c in df.columns]
+            st.dataframe(df[avail].sort_values("결제일시", ascending=False).reset_index(drop=True),
+                         use_container_width=True, height=400)
+            st.download_button("CSV 다운로드",
+                               df[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
+                               "snapism_filtered.csv", "text/csv")

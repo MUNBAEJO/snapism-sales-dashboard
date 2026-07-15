@@ -31,42 +31,77 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
 
-INK = "#1a1a2e"; PRIMARY = "#4361ee"; SECONDARY = "#7209b7"; PINK = "#f72585"
-st.markdown(f"""
+INK = "#1b2330"; PRIMARY = "#4f46e5"; SECONDARY = "#6366f1"; PINK = "#d24d8b"
+st.markdown("""
 <style>
-html, body, [class*="css"], [data-testid="stAppViewContainer"] {{
-    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
-                 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
-}}
-[data-testid="stAppViewContainer"] .main .block-container {{
-    padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1500px;
-}}
-h1 {{ font-weight: 800 !important; letter-spacing: -0.5px; color: {INK}; }}
-.section-title {{
-    font-size: 1.15rem; font-weight: 700; color: {INK};
-    margin: 6px 0 12px; padding-left: 12px; border-left: 4px solid {PRIMARY}; line-height: 1.4;
-}}
-.section-title.purple {{ border-left-color: {SECONDARY}; }}
-.section-title.pink   {{ border-left-color: {PINK}; }}
-/* KPI 카드 (TV 가독성 위해 값 글씨 크게 유지) */
-[data-testid="stMetric"], [data-testid="metric-container"] {{
-    background: linear-gradient(135deg, #ffffff 0%, #f5f8ff 100%);
-    border: 1px solid #e7ecf7; border-radius: 16px; padding: 16px 24px;
-    box-shadow: 0 2px 10px rgba(67,97,238,0.06);
-    transition: transform .15s ease, box-shadow .15s ease;
-}}
-[data-testid="stMetric"]:hover, [data-testid="metric-container"]:hover {{
-    transform: translateY(-3px); box-shadow: 0 8px 20px rgba(67,97,238,0.14);
-}}
-[data-testid="stMetricLabel"] p {{ font-size: 1.0rem !important; font-weight: 600 !important; color: #6b7280; }}
-[data-testid="stMetricValue"] {{ font-size: 2.0rem !important; font-weight: 800 !important; color: {INK} !important; letter-spacing: -0.5px; }}
-[data-testid="stMetricDelta"] {{ font-size: 0.9rem !important; }}
-hr {{ margin: 1.4rem 0 1.2rem; border: none; border-top: 1px solid #e9edf5; }}
-[data-testid="stDeployButton"] {{ display: none !important; }}
-[data-testid="stElementToolbar"] {{ display: none; }}
-[data-testid="stSidebar"] {{ background: #fbfcfe; border-right: 1px solid #eceff5; }}
-[data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; }}
-button[data-baseweb="tab"] p {{ font-size: 1.0rem !important; font-weight: 700 !important; }}
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
+:root{
+  --bg:#f4f5f7; --surface:#fff; --surface-2:#f8fafc; --surface-3:#eef1f5;
+  --border:#e7e9ee; --border-strong:#d7dae1;
+  --text:#1b2330; --text-2:#5b6573; --text-3:#98a0af;
+  --brand:#4f46e5; --brand-2:#6366f1; --brand-soft:#eef0fe;
+  --green:#15803d; --red:#c0322b; --amber:#b45309; --teal:#0f9d77; --sky:#38a3e8;
+}
+/* Pretendard 강제 (시안 톤) */
+html, body, [class*="css"], [data-testid="stAppViewContainer"], [data-testid="stSidebar"],
+button, input, select, textarea, label, p, span, div, h1, h2, h3, h4, li, a,
+[data-baseweb], [data-testid="stMarkdownContainer"], [data-testid="stMetricValue"]{
+  font-family:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,
+              'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif !important;
+}
+html, body{ letter-spacing:-0.02em; }
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stMain, section.main{ background:var(--bg) !important; }
+[data-testid="stMainBlockContainer"], .block-container{ background:transparent !important;
+  max-width:1680px !important; padding-top:1.6rem !important; padding-bottom:3rem !important; }
+h1{ font-size:24px !important; font-weight:800 !important; letter-spacing:-0.03em !important; color:var(--text) !important; }
+h2,h3{ letter-spacing:-0.02em !important; }
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{ font-size:13.5px !important; color:#8b95a1 !important; }
+[data-testid="stDeployButton"], [data-testid="stElementToolbar"]{ display:none !important; }
+
+/* 카드 = st.container(border=True) → 시안 카드(중첩은 테두리 제거) */
+[data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"]{
+  border:1px solid var(--border) !important; border-radius:14px !important; background:#fff !important;
+  box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06) !important;
+  padding:16px 20px !important; margin-bottom:14px !important; }
+[data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"]{
+  border:none !important; box-shadow:none !important; padding:0 !important; margin:0 !important; background:transparent !important; }
+
+/* 섹션 제목 = 인디고 좌측 액센트 */
+.section-title{ font-size:1.02rem !important; font-weight:800 !important; color:var(--text) !important;
+  margin:6px 0 13px !important; padding-left:11px !important; border-left:4px solid var(--brand) !important;
+  line-height:1.4 !important; letter-spacing:-0.02em !important; }
+.section-title.purple{ border-left-color:var(--brand-2) !important; }
+.section-title.pink{ border-left-color:#d24d8b !important; }
+.sub-label{ font-weight:700 !important; color:var(--text-2) !important; margin:14px 0 6px !important;
+  padding-left:9px !important; border-left:3px solid #c7cbf3 !important; }
+
+/* st.metric = 시안 톤 카드 */
+[data-testid="stMetric"], [data-testid="metric-container"]{ background:var(--surface) !important;
+  border:1px solid var(--border) !important; border-radius:12px !important; padding:14px 18px !important;
+  box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06) !important; }
+[data-testid="stMetricLabel"] p{ font-size:12.5px !important; font-weight:600 !important; color:var(--text-2) !important; }
+[data-testid="stMetricValue"]{ font-size:1.7rem !important; font-weight:800 !important; color:var(--text) !important; letter-spacing:-0.02em !important; }
+[data-testid="stMetricDelta"]{ font-size:12px !important; }
+
+/* 탭 = 시안 언더라인 */
+[data-baseweb="tab-list"]{ gap:2px; border-bottom:1px solid var(--border); }
+button[data-baseweb="tab"]{ padding:10px 15px; }
+button[data-baseweb="tab"] p{ font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
+button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !important; }
+[data-baseweb="tab-highlight"]{ background:var(--brand) !important; height:2.5px !important; }
+[data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child{ background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
+[data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child p{ color:var(--brand) !important; }
+
+/* 컴팩트 위젯 */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
+  min-height:34px !important; background:var(--surface-2) !important;
+  border:1px solid var(--border-strong) !important; border-radius:8px !important; }
+[data-testid="stButtonGroup"]{ background:var(--surface-3) !important; border-radius:8px !important; padding:2px !important; }
+[data-testid="stButtonGroup"] button{ border:none !important; background:transparent !important; box-shadow:none !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"]{ background:var(--surface) !important; box-shadow:0 1px 3px rgba(20,28,45,.08) !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p{ color:var(--brand) !important; font-weight:700 !important; }
+[data-testid="stDataFrame"]{ border-radius:12px; overflow:hidden; }
+hr{ margin:1.2rem 0 !important; border:none !important; border-top:1px solid var(--border) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -240,6 +275,17 @@ def load_yoy() -> pd.DataFrame:
     return df
 
 
+def _clear_target_caches():
+    """목표/실적 CSV 관련 캐시만 무효화. 전역 st.cache_data.clear() 는 접속 중인 모든
+    사용자의 무거운 매출 캐시(포토이즘 agg·스내피즘 master 등)까지 날려 동시 재로딩(프리징)을
+    유발하므로 쓰지 않는다. 무거운 캐시는 파일 mtime 키라 원본이 바뀌면 알아서 무효화됨."""
+    for _f in (load_targets, load_monthly_actual, load_yoy):
+        try:
+            _f.clear()
+        except Exception:
+            pass
+
+
 # ══════════════════════════════════════════════════════════════
 # 사업부 실적 (A팀=아티스트 · C팀=캐릭터 · 픽=PICK · 스내피즘) — 실시간 산출
 #   · A/C팀: 포토이즘 CMS의 IP구분으로 산출 (CMS엔 팀 컬럼이 없음)
@@ -254,7 +300,7 @@ SNAP_MASTER = BASE_DIR / "data" / "master.csv"
 #   픽(PICK)은 A·C(아티스트/캐릭터)로 나뉘지 않아 하나로 묶은 독립 팀/항목.
 TEAM_GUBUN = {"A팀": ["아티스트"], "C팀": ["캐릭터"], "픽": ["PICK"]}
 DIV_ORDER  = ["A팀", "C팀", "픽", "스내피즘"]
-DIV_COLORS = {"A팀": "#7209b7", "C팀": "#f72585", "픽": "#f9a826", "스내피즘": "#4cc9f0"}
+DIV_COLORS = {"A팀": "#6366f1", "C팀": "#0f9d77", "픽": "#b45309", "스내피즘": "#38a3e8"}
 DIV_LABEL  = {"A팀": "A팀 (아티스트)", "C팀": "C팀 (캐릭터)", "픽": "픽 (PICK)", "스내피즘": "스내피즘"}
 
 
@@ -854,7 +900,7 @@ if uploaded:
                 st.sidebar.caption(f"미리보기: **{cur_seg}**")
                 st.sidebar.dataframe(preview[["월","목표","실적","달성률"]], use_container_width=True, height=280)
 
-            st.cache_data.clear()
+            _clear_target_caches()
             st.rerun()
 
         elif ext == ".csv":
@@ -864,7 +910,7 @@ if uploaded:
             else:
                 new_tgt.to_csv(KPI_FILE, index=False, encoding="utf-8-sig")
                 st.sidebar.success("✅ 목표 CSV를 저장했어요. 대시보드에 바로 반영돼요.")
-                st.cache_data.clear()
+                _clear_target_caches()
                 st.rerun()
 
     except Exception as e:
@@ -873,7 +919,7 @@ if uploaded:
 if _is_owner:
     if ACTUALS_FILE.exists() and st.sidebar.button("🗑 엑셀 실적 초기화 (CMS로 전환)"):
         ACTUALS_FILE.unlink()
-        st.cache_data.clear()
+        _clear_target_caches()
         st.rerun()
 
     _template = pd.DataFrame({"연도": [2026]*12, "월": list(range(1, 13)), "매출목표": [0]*12})
@@ -921,7 +967,7 @@ if _is_owner:
             _out_t["매출목표"] = pd.to_numeric(_out_t["매출목표"], errors="coerce").fillna(0).astype("int64")
             _out_t = _out_t.sort_values(["구분", "연도", "월"])
             _out_t.to_csv(KPI_FILE, index=False, encoding="utf-8-sig")
-            st.cache_data.clear()
+            _clear_target_caches()
             st.toast(f"✅ {int(_ey)}년 {_es} 목표를 저장했어요.")
             st.rerun()
 
@@ -1019,9 +1065,13 @@ try:
                 return '<div class="kbz-goal muted">🎯 목표 미설정</div>'
             mtd  = cur / tg * 100
             proj = _runrate(cur) / tg * 100
-            pc   = "#1d8a4e" if proj >= 100 else ("#c77700" if proj >= 85 else "#c0392b")
-            return (f'<div class="kbz-goal">🎯 목표 {fmt_krw(tg)} · 달성 {mtd:.0f}% '
-                    f'<span style="color:{pc};">· 예상 {proj:.0f}%</span></div>')
+            pc   = "#15803d" if proj >= 100 else ("#b45309" if proj >= 85 else "#c0322b")
+            _fill = min(100, max(2, mtd))     # 달성 채움(0~100 시각, 초과는 100)
+            _mark = min(99, max(0, proj))     # 월말 예상 마커 위치
+            return (f'<div class="kbz-goal">🎯 목표 {fmt_krw(tg)} · 달성 <b style="color:{pc}">{mtd:.0f}%</b> '
+                    f'<span style="color:{pc};">· 예상 {proj:.0f}%</span></div>'
+                    f'<div class="kbz-gauge"><i style="width:{_fill:.0f}%;background:{pc};"></i>'
+                    f'<u style="left:{_mark:.0f}%;" title="월말 예상 {proj:.0f}%"></u></div>')
 
         _segbar = "".join(
             f'<div style="width:{(_vals[s]/_tot_c*100) if _tot_c else 0:.2f}%;'
@@ -1052,41 +1102,46 @@ try:
         _seg_note = "" if _seg == "TTL" else f" · {_seg}"
         st.markdown(f"""
 <style>
-#kpi-bento .kbz-grid{{display:grid;grid-template-columns:1.7fr 1fr 1fr;gap:14px;
+#kpi-bento .kbz-grid{{display:grid;grid-template-columns:1.7fr 1fr 1fr;gap:12px;
   grid-template-areas:"hero a c" "hero pick snap";margin:4px 0 6px;}}
-#kpi-bento .kbz-tile{{background:#ffffff;border:1px solid #e7ecf7;border-radius:18px;
-  padding:18px 20px;box-shadow:0 3px 14px rgba(67,97,238,0.07);min-height:108px;
+#kpi-bento .kbz-tile{{background:#ffffff;border:1px solid #e7e9ee;border-radius:14px;
+  padding:16px 18px;box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06);min-height:104px;
   display:flex;flex-direction:column;justify-content:center;}}
-#kpi-bento .kbz-hero{{grid-area:hero;background:#eef2fe;border:none;padding:24px 28px;
-  justify-content:center;}}
+#kpi-bento .kbz-hero{{grid-area:hero;background:linear-gradient(180deg,#fbfbff,#f4f5ff);
+  border:1px solid #dcdcfb;padding:22px 26px;justify-content:center;}}
 #kpi-bento .kbz-row{{display:flex;align-items:center;gap:6px;margin-bottom:7px;}}
-#kpi-bento .kbz-dot{{width:10px;height:10px;border-radius:50%;display:inline-block;}}
-#kpi-bento .kbz-lbl{{font-size:12.5px;color:#6b7280;}}
-#kpi-bento .kbz-val{{font-size:1.25rem;font-weight:800;color:#1a1a2e;
-  letter-spacing:-0.3px;line-height:1.1;margin-bottom:5px;}}
-#kpi-bento .kbz-bar{{display:flex;height:14px;border-radius:7px;overflow:hidden;
+#kpi-bento .kbz-dot{{width:10px;height:10px;border-radius:3px;display:inline-block;}}
+#kpi-bento .kbz-lbl{{font-size:12.5px;color:#5b6573;font-weight:600;}}
+#kpi-bento .kbz-val{{font-size:1.3rem;font-weight:800;color:#1b2330;
+  letter-spacing:-0.02em;line-height:1.1;margin-bottom:5px;}}
+#kpi-bento .kbz-bar{{display:flex;height:13px;border-radius:6px;overflow:hidden;
   gap:2px;margin-top:16px;}}
 #kpi-bento .kbz-bar>div{{height:100%;}}
 #kpi-bento .kbz-leg{{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px;}}
-#kpi-bento .kbz-leg span{{font-size:12px;color:#6b7280;display:flex;align-items:center;gap:6px;}}
-#kpi-bento .kbz-goal{{font-size:11px;color:#5b6470;font-weight:600;margin-top:5px;}}
-#kpi-bento .kbz-goal.muted{{color:#b3b9c4;font-weight:500;}}
-#kpi-bento .kbz-rr{{font-size:13px;color:#185FA5;font-weight:700;margin-top:9px;}}
+#kpi-bento .kbz-leg span{{font-size:12px;color:#5b6573;display:flex;align-items:center;gap:6px;}}
+#kpi-bento .kbz-goal{{font-size:11px;color:#5b6573;font-weight:600;margin-top:8px;}}
+#kpi-bento .kbz-goal.muted{{color:#98a0af;font-weight:500;}}
+/* 목표 달성 미니 게이지 (채움=현재 달성률, 세로 마커=월말 예상) */
+#kpi-bento .kbz-gauge{{position:relative;height:6px;background:#eef1f5;border-radius:4px;margin-top:6px;}}
+#kpi-bento .kbz-gauge i{{display:block;height:100%;border-radius:4px;transition:width .3s ease;}}
+#kpi-bento .kbz-gauge u{{position:absolute;top:-2px;width:2px;height:10px;background:#1b2330;
+  border-radius:1px;opacity:.65;}}
+#kpi-bento .kbz-rr{{font-size:13px;color:#4f46e5;font-weight:700;margin-top:9px;}}
 #kpi-bento .kbz-rr span{{font-weight:500;opacity:.7;}}
 #kpi-bento a.kbz-tile{{text-decoration:none;color:inherit;cursor:pointer;
   transition:transform .08s ease, box-shadow .08s ease;}}
 #kpi-bento a.kbz-tile:hover{{transform:translateY(-2px);
-  box-shadow:0 7px 22px rgba(67,97,238,0.17);}}
-#kpi-bento .kbz-go{{font-size:11px;color:#9aa3b2;font-weight:600;margin-left:auto;}}
-#kpi-bento a.kbz-tile:hover .kbz-go{{color:#4361ee;}}
+  box-shadow:0 6px 18px rgba(79,70,229,0.14);}}
+#kpi-bento .kbz-go{{font-size:11px;color:#98a0af;font-weight:600;margin-left:auto;}}
+#kpi-bento a.kbz-tile:hover .kbz-go{{color:#4f46e5;}}
 @media (max-width:760px){{#kpi-bento .kbz-grid{{grid-template-columns:1fr 1fr;
   grid-template-areas:"hero hero" "a c" "pick snap";}}}}
 </style>
 <div id="kpi-bento"><div class="kbz-grid">
   <div class="kbz-tile kbz-hero">
-    <div style="font-size:12.5px;color:#185FA5;">{today.month}월 합계 실적
-      <span style="color:#85B7EB;">(1일~{today.day}일 · 진행 중){_seg_note}</span></div>
-    <div style="font-size:2.1rem;font-weight:800;color:#1a1a2e;letter-spacing:-0.8px;line-height:1.05;margin:7px 0 6px;">
+    <div style="font-size:12.5px;color:#5b6573;font-weight:600;">{today.month}월 합계 실적
+      <span style="color:#98a0af;">(1일~{today.day}일 · 진행 중){_seg_note}</span></div>
+    <div style="font-size:2.1rem;font-weight:800;color:#4f46e5;letter-spacing:-0.02em;line-height:1.05;margin:7px 0 6px;">
       {fmt_krw(_tot_c)}</div>
     {_delta(_tot_c, _tot_p, big=True)}
     <div class="kbz-rr">🎯 월말 예상 {fmt_krw(_runrate(_tot_c))}

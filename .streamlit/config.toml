@@ -2,7 +2,8 @@
 # OS 다크모드(특히 macOS)에서 커스텀 CSS의 진한 글자색이 어두운 배경에
 # 묻혀 안 보이는 문제 방지 — OS 설정과 무관하게 라이트 테마로 고정한다.
 base = "light"
-primaryColor = "#4361ee"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f5f8ff"
-textColor = "#1a1a2e"
+# 재디자인(시안): 포인트 인디고, 페이지 배경 회색(#f4f5f7) — 흰 카드가 떠 보이게
+primaryColor = "#4f46e5"
+backgroundColor = "#f4f5f7"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1b2330"

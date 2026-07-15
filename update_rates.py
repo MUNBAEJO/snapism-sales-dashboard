@@ -7,6 +7,7 @@
 실행: python update_rates.py
 """
 import json
+import os
 import re
 import sys
 import urllib.parse
@@ -221,8 +222,12 @@ def update_exchange_rates() -> bool:
     config["exchange_rates"] = rates
     config["rates_updated"]  = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+    # 원자적 저장(임시파일 → os.replace): 대시보드가 읽는 순간과 겹쳐도
+    # 반쯤 쓰인 config.json 을 읽어 환율이 1로 왜곡되는 사고를 방지.
+    _tmp = str(CONFIG_FILE) + ".tmp"
+    with open(_tmp, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
+    os.replace(_tmp, CONFIG_FILE)
 
     log(f"[환율 업데이트 완료] {config['rates_updated']}")
     for cur, rate in rates.items():

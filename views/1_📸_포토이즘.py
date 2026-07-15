@@ -1,57 +1,301 @@
+# -*- coding: utf-8 -*-
+"""포토이즘 매출 대시보드 — 재디자인(시안 snapism-hybrid 기준, 스내피즘과 동일 디자인 시스템).
+
+구조: 인라인 필터바(컴팩트 칩) + KPI 3카드 + 6탭
+      (매출 한눈에·IP·타이틀 분석·국가별·매장별·세부 항목·시간대/데이터).
+매출 = 실결제 + 쿠폰기여 + 코인기여(지정 국가만 가산). 데이터 로직·로더·DuckDB 세부검색은
+기존 그대로 보존(비파괴). 표현 계층만 스내피즘 시안형(CSS 차트·카드key·컴팩트 위젯)으로 교체.
+"""
 import json
-import pyarrow.parquet as pq
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import sys
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import date, timedelta
 
+import pyarrow.parquet as pq
+import pandas as pd
+import streamlit as st
+
 # set_page_config 는 라우터(스내피즘.py)에서 처리
-import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
 import ip_classify  # IP구분/IP명 분류 공용 모듈
+import auth
 
-# ── 디자인 시스템 (스내피즘과 동일) ──
-PRIMARY = "#4361ee"; SECONDARY = "#7209b7"; ACCENT = "#4cc9f0"; PINK = "#f72585"; INK = "#1a1a2e"
-
-st.markdown(f"""
+# ══════════════════════════════════════════════════════════════
+#  디자인 시스템 (시안 토큰 이식 — 스내피즘과 동일)
+# ══════════════════════════════════════════════════════════════
+st.markdown("""
 <style>
-html, body, [class*="css"], [data-testid="stAppViewContainer"] {{
-    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
-                 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
-}}
-[data-testid="stAppViewContainer"] .main .block-container {{
-    padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1500px;
-}}
-h1 {{ font-weight: 800 !important; letter-spacing: -0.5px; color: {INK}; }}
-.section-title {{
-    font-size: 1.12rem; font-weight: 700; color: {INK};
-    margin: 4px 0 12px; padding-left: 12px;
-    border-left: 4px solid {PRIMARY}; line-height: 1.4;
-}}
-.section-title.purple {{ border-left-color: {SECONDARY}; }}
-.section-title.pink   {{ border-left-color: {PINK}; }}
-.sub-label {{ font-size: .9rem; font-weight: 600; color: #5a5a72; margin-bottom: 6px; }}
-[data-testid="stMetric"], [data-testid="metric-container"] {{
-    background: linear-gradient(135deg, #ffffff 0%, #f5f8ff 100%);
-    border: 1px solid #e7ecf7; border-radius: 16px; padding: 16px 20px;
-    box-shadow: 0 2px 10px rgba(67,97,238,0.06);
-    transition: transform .15s ease, box-shadow .15s ease;
-}}
-[data-testid="stMetric"]:hover, [data-testid="metric-container"]:hover {{
-    transform: translateY(-3px); box-shadow: 0 8px 20px rgba(67,97,238,0.14);
-}}
-[data-testid="stMetricLabel"] p {{ font-weight: 600; color: #6b7280; font-size: .82rem; }}
-[data-testid="stMetricValue"] {{ font-weight: 800; color: {INK}; letter-spacing: -0.5px; }}
-[data-testid="stMetricDelta"] {{ font-size: 0.82rem; }}
-hr {{ margin: 1.4rem 0 1.2rem; border: none; border-top: 1px solid #e9edf5; }}
-[data-testid="stElementToolbar"] {{ display: none; }}
-[data-testid="stDeployButton"] {{ display: none !important; }}
-[data-testid="stSidebar"] {{ background: #fbfcfe; border-right: 1px solid #eceff5; }}
-[data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; }}
-button[data-baseweb="tab"] p {{ font-size: 1.0rem !important; font-weight: 700 !important; }}
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
+:root{
+  --bg:#f4f5f7; --surface:#fff; --surface-2:#f8fafc; --surface-3:#eef1f5;
+  --border:#e7e9ee; --border-strong:#d7dae1;
+  --text:#1b2330; --text-2:#5b6573; --text-3:#98a0af;
+  --brand:#4f46e5; --brand-2:#6366f1; --brand-soft:#eef0fe;
+  --red:#c0322b; --green:#15803d; --amber:#b45309; --sky:#38a3e8; --teal:#0f9d77; --pink:#d24d8b;
+}
+/* Pretendard 강제 적용(맑은고딕 폴백 방지) — 시안의 부드러운 느낌 */
+html, body, [class*="css"], [data-testid="stAppViewContainer"], [data-testid="stSidebar"],
+button, input, select, textarea, label, p, span, div, h1, h2, h3, h4, li, a,
+[data-baseweb], [data-testid="stMarkdownContainer"], [data-testid="stMetricValue"]{
+  font-family:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,
+              'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif !important;
+}
+html, body{ letter-spacing:-0.02em; }
+/* 페이지 배경 회색(#f4f5f7) — 흰 카드가 떠 보이게(시안 표면 분리). */
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stMain, section.main{
+  background:var(--bg) !important; }
+[data-testid="stMainBlockContainer"], .block-container{ background:transparent !important; }
+[data-testid="stMainBlockContainer"], .stMainBlockContainer, section.main .block-container, .block-container{
+  max-width:1680px !important; margin-left:auto !important; margin-right:auto !important;
+  padding-top:1.4rem !important; padding-bottom:3rem !important;
+  padding-left:1.6rem !important; padding-right:1.6rem !important; }
+h1{ font-size:24px !important; font-weight:800 !important; letter-spacing:-0.03em !important; color:var(--text); }
+h2, h3{ letter-spacing:-0.02em !important; }
+/* 카드 = 시안 톤. 메인의 모든 border-wrapper 무력화 후 card()(key=scard-*)에만 카드 스타일. */
+[data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"]{
+  border:none !important; box-shadow:none !important; background:transparent !important;
+  padding:0 !important; margin:0 !important;
+}
+[data-testid="stMain"] [class*="st-key-scard-"]{
+  border:1px solid var(--border) !important; border-radius:14px !important;
+  box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06) !important;
+  padding:15px 18px !important; margin-bottom:14px !important; background:#fff !important;
+}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{ font-size:14px !important; color:#8b95a1 !important; }
+[data-testid="stDeployButton"]{ display:none !important; }
+[data-testid="stElementToolbar"]{ display:none; }
+.num{ font-variant-numeric:tabular-nums; }
+
+/* KPI 카드 */
+.kpis{ display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin:14px 0 8px; }
+.kpi{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:15px 17px;
+      box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06); }
+.kpi.hero{ background:linear-gradient(180deg,#fbfbff,#fff); border-color:#dcdcfb; }
+.kpi .l{ font-size:12.5px; color:var(--text-2); font-weight:600; }
+.kpi .v{ font-size:24px; font-weight:800; letter-spacing:-0.02em; margin-top:6px; line-height:1.05; color:var(--text); }
+.kpi.hero .v{ font-size:33px; color:var(--brand); }
+.kpi .d{ font-size:12px; font-weight:700; margin-top:7px; color:var(--text-3); }
+.kpi .d.up{ color:var(--green); } .kpi .d.down{ color:var(--red); }
+@media(max-width:720px){ .kpis{ grid-template-columns:1fr; } }
+
+/* 범위 배너 */
+.scope{ background:var(--brand-soft); border:1px solid #cdd0fb; color:var(--brand); font-size:12.5px;
+        font-weight:600; padding:9px 14px; border-radius:10px; margin:6px 0 2px; }
+
+/* 섹션 헤더 */
+.sechd{ display:flex; align-items:center; gap:10px; margin:28px 0 2px; }
+.secn{ font-size:12px; font-weight:800; color:#fff; background:var(--brand); width:22px; height:22px;
+       border-radius:7px; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
+.sect{ font-size:18px; font-weight:800; letter-spacing:-0.02em; color:var(--text); }
+.secq{ font-size:12.5px; color:var(--text-3); margin:2px 0 10px 32px; }
+
+/* 카드 제목 */
+.ct{ font-size:14.5px; font-weight:700; display:flex; align-items:center; gap:7px; margin:2px 0 10px; color:var(--text); }
+.ct .muted{ font-weight:500; color:var(--text-3); font-size:12.5px; }
+
+/* 미니 지표 3칸 (IP 상세 등) */
+.mstrow{ display:flex; gap:12px; margin:2px 0 12px; flex-wrap:wrap; }
+.mst{ flex:1; min-width:110px; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:10px 14px; }
+.mst-l{ font-size:11.5px; color:var(--text-2); font-weight:600; }
+.mst-v{ font-size:18px; font-weight:800; color:var(--text); margin-top:3px; }
+
+/* 비중막대 내장 표 (.ntbl) */
+.ntbl{ border:1px solid var(--border); border-radius:12px; overflow:hidden; margin:2px 0 4px; }
+.ntr{ display:grid; align-items:center; gap:10px; padding:13px 18px; border-bottom:1px solid var(--border);
+      font-size:13px; color:var(--text); }
+.ntr:last-child{ border-bottom:none; }
+.ntr.nth{ background:var(--surface-2); font-size:11px; font-weight:700; color:var(--text-3); letter-spacing:.02em; }
+.ntr:not(.nth):hover{ background:var(--surface-2); }
+.ntr .r{ text-align:right; } .ntr .c{ text-align:center; }
+.nname{ font-weight:700; }
+.cur{ font-size:11px; font-weight:700; color:var(--text-2); background:var(--surface-3); padding:2px 8px; border-radius:6px; }
+.rk{ font-weight:800; color:var(--text-3); font-variant-numeric:tabular-nums; }
+.rk.top{ color:var(--brand); }
+.npct{ display:flex; align-items:center; gap:9px; }
+.npct-bar{ flex:1; height:7px; background:var(--surface-3); border-radius:5px; overflow:hidden; }
+.npct-bar i{ display:block; height:100%; background:var(--brand-2); border-radius:5px; }
+.npct .p{ font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums; min-width:44px; text-align:right; }
+
+/* 가로 막대 순위 (시안 .hbar) */
+.hb-wrap{ display:flex; flex-direction:column; gap:5px; padding:4px 0; height:100%; justify-content:center; }
+.hb{ display:grid; grid-template-columns:150px 1fr 118px; align-items:center; gap:12px; font-size:13px; padding:8px 0; }
+.hb-n{ font-weight:600; color:var(--text-2); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
+.hb-track{ height:22px; background:var(--surface-3); border-radius:6px; overflow:hidden; }
+.hb-track i{ display:block; height:100%; border-radius:6px; }
+.hb-v{ text-align:right; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; font-size:13px; }
+[data-testid="stColumn"] [class*="st-key-scard-"]{ height:100% !important; }
+
+/* CSS 차트 (Plotly 대체) */
+.donut-wrap{ display:flex; align-items:center; gap:18px; padding:2px 0; }
+.donut{ border-radius:50%; flex:0 0 auto; }
+.leg2{ display:flex; flex-direction:column; gap:8px; font-size:13px; flex:1; }
+.leg2 .row{ display:flex; align-items:center; gap:9px; color:var(--text); }
+.leg2 .row b{ margin-left:auto; font-weight:800; font-variant-numeric:tabular-nums; }
+.leg2 .sub{ color:var(--text-3); font-size:12px; }
+.dot{ width:10px; height:10px; border-radius:3px; display:inline-block; flex:0 0 auto; }
+.legend{ display:flex; gap:16px; font-size:12px; color:var(--text-2); margin-bottom:10px; flex-wrap:wrap; }
+.legend span{ display:inline-flex; align-items:center; gap:6px; }
+.chart{ display:flex; align-items:flex-end; height:200px; padding:6px 4px 0; border-bottom:1px solid var(--border); }
+.col{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
+.stack{ width:58%; max-width:70px; display:flex; flex-direction:column; justify-content:flex-end;
+        border-radius:5px 5px 0 0; overflow:hidden; }
+.xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
+.hours{ display:flex; align-items:flex-end; gap:5px; height:180px; border-bottom:1px solid var(--border); padding-top:8px; }
+.hours .hc{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
+.hours .hb2{ width:70%; border-radius:3px 3px 0 0; }
+.hours .hx{ font-size:9.5px; color:var(--text-3); margin-top:4px; }
+.strip{ font-size:12.5px; color:var(--text-2); background:var(--surface-2); border:1px solid var(--border);
+        border-radius:10px; padding:9px 14px; margin-top:12px; }
+.strip b{ color:var(--text); font-weight:700; }
+
+/* ── 즉시(hover) 매출 툴팁 — 딜레이 없이 커서 올리면 바로 박스 ── */
+.tip{ position:relative; }
+.tip::after{
+  content:attr(data-tip);
+  position:absolute; left:50%; bottom:100%; transform:translateX(-50%) translateY(-7px);
+  background:#1b2330; color:#fff; font-size:11.5px; font-weight:600; line-height:1.4;
+  padding:6px 10px; border-radius:8px; white-space:nowrap; text-align:center;
+  opacity:0; pointer-events:none; transition:opacity .07s ease;
+  box-shadow:0 6px 18px rgba(20,28,45,.22); z-index:60; }
+.tip::before{
+  content:""; position:absolute; left:50%; bottom:100%; transform:translateX(-50%) translateY(-1px);
+  border:5px solid transparent; border-top-color:#1b2330;
+  opacity:0; pointer-events:none; transition:opacity .07s ease; z-index:60; }
+.tip:hover::after, .tip:hover::before{ opacity:1; }
+.col, .hours .hc{ position:relative; }
+.vtip{
+  position:absolute; left:50%; transform:translateX(-50%) translateY(-8px);
+  background:#1b2330; color:#fff; font-size:11.5px; font-weight:600; line-height:1.4;
+  padding:6px 10px; border-radius:8px; white-space:nowrap; text-align:center;
+  opacity:0; pointer-events:none; transition:opacity .07s ease;
+  box-shadow:0 6px 18px rgba(20,28,45,.22); z-index:60; }
+.vtip::after{
+  content:""; position:absolute; left:50%; top:100%; transform:translateX(-50%);
+  border:5px solid transparent; border-top-color:#1b2330; }
+.col:hover .vtip, .hours .hc:hover .vtip{ opacity:1; }
+
+/* Streamlit 기본 크롬 정리 */
+[data-testid="stToolbar"]{ display:none !important; }
+#MainMenu, footer{ display:none !important; }
+[data-testid="stHeader"]{ background:transparent; height:0 !important; }
+[data-testid="stSidebar"]{ background:#ffffff !important; border-right:1px solid #e5e8eb !important; }
+[data-testid="stSidebarNav"] a{ border-radius:10px !important; padding:9px 12px !important; margin:1px 0 !important; }
+[data-testid="stSidebarNav"] a:hover{ background:#f2f4f8 !important; }
+[data-testid="stSidebar"] hr{ border-color:#eef1f5 !important; }
+
+/* 탭 = 시안 언더라인 스타일 */
+[data-baseweb="tab-list"]{ gap:2px; border-bottom:1px solid var(--border); }
+button[data-baseweb="tab"]{ padding:10px 15px; }
+button[data-baseweb="tab"] p{ font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
+button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !important; }
+[data-baseweb="tab-highlight"]{ background:var(--brand) !important; height:2.5px !important; }
+[data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child{
+  background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
+[data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child p{ color:var(--brand) !important; }
+/* 스크롤해도 상단 탭 고정 — baseweb이 tab-list를 짧은 래퍼(높이 51px)로 감싸 sticky가
+   그 안에 갇히므로, 높은 Root의 직속 자식 래퍼(=tab-list 감싼 div)를 sticky로. 카드 안 내부탭은 제외. */
+[data-testid="stMain"] [data-testid="stTabs"] > div > div:has(> [data-baseweb="tab-list"]){
+  position:sticky !important; top:0 !important; z-index:50 !important;
+  background:var(--bg) !important; padding-top:8px !important;
+  box-shadow:0 6px 10px -7px rgba(20,28,45,.18) !important; }
+[data-testid="stMain"] [class*="st-key-scard-"] [data-testid="stTabs"] > div > div:has(> [data-baseweb="tab-list"]){
+  position:static !important; padding-top:0 !important; background:transparent !important; box-shadow:none !important; }
+
+/* 인라인 필터바 (시안 칩 느낌) */
+[data-testid="stPopover"] button, [data-testid="stPopoverButton"]{
+  border:1px solid var(--border-strong) !important; background:var(--surface-2) !important;
+  border-radius:8px !important; font-weight:600 !important; color:var(--text-2) !important;
+  font-size:12px !important; min-height:31px !important; height:31px !important;
+  padding:2px 10px !important; }
+[data-testid="stPopover"] button p, [data-testid="stPopoverButton"] p{
+  white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; }
+/* 필터 라벨(.fbl) — 위젯 위 작은 회색 라벨 */
+.fbl{ font-size:11px !important; font-weight:700; color:var(--text-2); margin:0 0 3px 2px; line-height:1.2; }
+/* 필터바 팝오버 칩 = 칼럼 폭 꽉·높이 33 */
+.st-key-scard-filter [data-testid="stPopover"]{ width:100% !important; }
+.st-key-scard-filter [data-testid="stPopover"] button{
+  width:100% !important; min-height:33px !important; height:33px !important;
+  justify-content:space-between !important; }
+/* 팝오버 안 검색+체크리스트 컴팩트(대형 목록은 스크롤) */
+[data-testid="stPopover"] [data-testid="stCheckbox"]{ margin-bottom:0 !important; }
+[data-testid="stPopover"] [data-testid="stCheckbox"] label{ padding:3px 2px !important; gap:8px !important; align-items:center !important; }
+[data-testid="stPopover"] [data-testid="stCheckbox"] label p{ font-size:12.5px !important; }
+[data-testid="stPopover"] [data-testid="stTextInput"] input{ font-size:12.5px !important; }
+[data-testid="stPopover"] [data-testid="stButton"] button{ font-size:11px !important; padding:2px 6px !important;
+  min-height:28px !important; height:28px !important; }
+/* 필터바 '적용' 버튼(팝오버 밖) = 칩 높이와 정렬 */
+.st-key-scard-filter [data-testid="stButton"] button{ min-height:33px !important; height:33px !important;
+  font-size:12px !important; font-weight:700 !important; border-radius:8px !important; }
+/* 필터바: 라벨 붙은 컴팩트 위젯 — 간격 좁게·바닥정렬·높이 통일(34) */
+.st-key-scard-filter [data-testid="stHorizontalBlock"]{ align-items:flex-end !important; gap:0.5rem !important; }
+.st-key-scard-filter [data-testid="stPopover"] button,
+.st-key-scard-filter [data-testid="stDateInput"] div[data-baseweb="input"],
+.st-key-scard-filter [data-testid="stButton"] button{ height:34px !important; min-height:34px !important; }
+.st-key-scard-filter [data-testid="stColumn"]{ display:block !important; }
+.st-key-scard-filter label{
+  font-size:11px !important; font-weight:700 !important; color:var(--text-2) !important;
+  margin:0 0 3px 2px !important; padding:0 !important; min-height:0 !important; line-height:1.2 !important; }
+/* 각 위젯이 칼럼 폭을 꽉 채우게(전역 max-width:240 해제) */
+.st-key-scard-filter [data-testid="stSelectbox"],
+.st-key-scard-filter [data-testid="stMultiSelect"],
+.st-key-scard-filter [data-testid="stDateInput"]{ max-width:none !important; width:100% !important; }
+.st-key-scard-filter [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+  justify-content:stretch !important; }
+/* 날짜·멀티셀렉트도 셀렉트와 동일한 컴팩트 회색 톤(높이 33) */
+.st-key-scard-filter [data-testid="stDateInput"] div[data-baseweb="input"]{
+  min-height:33px !important; height:33px !important; border-radius:8px !important;
+  background:var(--surface-2) !important; border:1px solid var(--border-strong) !important; }
+.st-key-scard-filter [data-testid="stDateInput"] input{
+  font-size:12px !important; font-weight:600 !important; color:var(--text-2) !important; }
+.st-key-scard-filter [data-testid="stMultiSelect"] div[data-baseweb="select"]{
+  min-height:33px !important; background:var(--surface-2) !important;
+  border:1px solid var(--border-strong) !important; border-radius:8px !important; }
+.st-key-scard-filter [data-testid="stMultiSelect"] div[data-baseweb="select"] *{ font-size:12px !important; }
+
+/* 세그먼트 컨트롤(월/주/일) = 시안 .seg */
+[data-testid="stButtonGroup"]{
+  display:inline-flex !important; gap:2px !important; background:var(--surface-3) !important;
+  border-radius:8px !important; padding:2px !important; width:auto !important; }
+[data-testid="stButtonGroup"] button{
+  border:none !important; background:transparent !important; box-shadow:none !important;
+  min-height:0 !important; height:auto !important; padding:4px 12px !important; border-radius:6px !important; }
+[data-testid="stButtonGroup"] button p{ font-size:12px !important; font-weight:600 !important; color:var(--text-2) !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"]{
+  background:var(--surface) !important; box-shadow:0 1px 3px rgba(20,28,45,.08) !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p{
+  color:var(--brand) !important; font-weight:700 !important; }
+
+/* 셀렉트박스 = 시안 .minisel (컴팩트·글자 세로중앙) */
+[data-testid="stSelectbox"]{ max-width:240px !important; }
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
+  min-height:33px !important; height:33px !important; background:var(--surface-2) !important;
+  border:1px solid var(--border-strong) !important; border-radius:8px !important;
+  display:flex !important; align-items:center !important; }
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child > div{
+  display:flex !important; align-items:center !important; }
+[data-testid="stSelectbox"] div[data-baseweb="select"] div{ font-size:12.5px !important; font-weight:600 !important; }
+[data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]),
+[data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+  display:flex !important; justify-content:flex-end !important; }
+/* 카드 헤더 드롭다운 = 카드 제목 옆(우상단) 절대배치 */
+.st-key-scard-natsel, .st-key-scard-titlesel, .st-key-scard-nattitle, .st-key-scard-storesel{ position:relative; }
+.st-key-scard-natsel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
+.st-key-scard-titlesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
+.st-key-scard-nattitle [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
+.st-key-scard-storesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+  position:absolute !important; top:16px !important; right:18px !important; width:auto !important;
+  margin:0 !important; z-index:5 !important; }
+.st-key-scard-natsel [data-testid="stSelectbox"], .st-key-scard-titlesel [data-testid="stSelectbox"],
+.st-key-scard-nattitle [data-testid="stSelectbox"], .st-key-scard-storesel [data-testid="stSelectbox"]{
+  width:auto !important; min-width:0 !important; }
+.st-key-scard-natsel [data-testid="stSelectbox"] div[data-baseweb="select"],
+.st-key-scard-titlesel [data-testid="stSelectbox"] div[data-baseweb="select"],
+.st-key-scard-nattitle [data-testid="stSelectbox"] div[data-baseweb="select"],
+.st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"]{
+  width:fit-content !important; min-width:110px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -77,14 +321,19 @@ COUNTRY_ISO = {
     "룩셈부르크": "lu", "브루나이": "bn", "라트비아": "lv",
 }
 
+# 팔레트 (스내피즘과 동일 인디고 시스템)
+PAL = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#7c77ee", "#c98a2e", "#5f6b7a"]
+BRAND, BRAND2, SKY, TEAL, AMBER, PINK = "#4f46e5", "#6366f1", "#38a3e8", "#0f9d77", "#b45309", "#d24d8b"
+_GUB_COLORS = {"아티스트": BRAND2, "캐릭터": TEAL, "렌탈": SKY, "PICK": PINK, "기획(P)": AMBER}
+_GUB_EMOJI  = {"아티스트": "🎤", "캐릭터": "🧸", "렌탈": "🏪", "PICK": "⭐", "기획(P)": "🎨"}
+
 
 def flag_url(name):
     iso = COUNTRY_ISO.get(str(name).strip())
     return f"https://flagcdn.com/40x30/{iso}.png" if iso else ""
 
 
-def flag_img(name, h=14):
-    """국가명 → 국기 <img> 인라인 태그 (국가명과 같은 칸에 붙여 표시)."""
+def flag_img(name, h=13):
     u = flag_url(name)
     return (f'<img src="{u}" height="{h}" '
             f'style="vertical-align:middle;margin-right:7px;border:1px solid #eee;border-radius:2px;">'
@@ -102,6 +351,10 @@ CURRENCY_SYMBOLS = {
 def fmt_orig(amount, currency):
     sym = CURRENCY_SYMBOLS.get(str(currency).strip(), str(currency) + " ")
     return f"{sym}{int(amount):,}"
+
+
+def fmt_krw(n):
+    return f"₩{int(n):,}"
 
 
 def load_config():
@@ -148,36 +401,50 @@ def _load_data(_agg_mtime, _cfg_mtime):
             df[col] = 0
 
     ex = load_exchange_rates()
-    if "결제 단위" in df.columns:
-        df["결제 단위"] = df["결제 단위"].astype(str).fillna("KRW").str.strip()
+    # ⚡ 결제단위·국가코드는 categorical(고유값 24/30개)이라 3.5M행 문자열 변환(.astype(str).str.…)이
+    #    로드의 최대 병목(≈2.6s). '카테고리 단위'로 환율·가산대상을 계산해 7배 가속(결과 동일 검증).
+    _unit = df["결제 단위"] if "결제 단위" in df.columns else None
+    if _unit is not None and hasattr(_unit, "cat"):
+        _rate_map = {c: ex.get(str(c).strip(), 1) for c in _unit.cat.categories}
+        df["환율"] = _unit.map(_rate_map).astype(float).fillna(1.0)
+    elif _unit is not None:
+        df["환율"] = _unit.astype(str).str.strip().map(ex).fillna(1.0)
     else:
         df["결제 단위"] = "KRW"
-    df["환율"]      = df["결제 단위"].map(ex).fillna(1)
+        df["환율"] = 1.0
     df["KRW환산금액"] = (df["최종 결제 금액"] * df["환율"]).round(0).astype(int)
     df["쿠폰KRW"]    = (df["쿠폰 할인 금액"] * df["환율"]).round(0).astype(int)
     df["정산금액"]   = df["KRW환산금액"] + df["쿠폰KRW"]
     df["서비스코인KRW"] = (df["서비스코인"] * df["환율"]).round(0).astype(int)
 
-    _cc = (
-        df["국가코드"].astype(str).str.lower().str.strip().replace("nan", "")
-        if "국가코드" in df.columns else pd.Series("", index=df.index)
-    )
+    # 쿠폰·코인 가산대상(지정 국가) — 카테고리만 검사해 3.5M 문자열 변환 회피
+    if "국가코드" in df.columns:
+        _codes = df["국가코드"]
+        if hasattr(_codes, "cat"):
+            _coup = [c for c in _codes.cat.categories if str(c).lower().strip() in _COUPON_CC]
+            _coin = [c for c in _codes.cat.categories if str(c).lower().strip() in _COIN_CC]
+            _is_coup = _codes.isin(_coup).to_numpy()
+            _is_coin = _codes.isin(_coin).to_numpy()
+        else:
+            _cc = _codes.astype(str).str.lower().str.strip()
+            _is_coup = _cc.isin(_COUPON_CC).to_numpy()
+            _is_coin = _cc.isin(_COIN_CC).to_numpy()
+    else:
+        _is_coup = _is_coin = False
     # 매출 구성: 실결제(순수) + 쿠폰기여 + 코인기여 (지정 국가만 쿠폰·코인 가산)
-    df["쿠폰기여"] = (df["쿠폰KRW"]       * _cc.isin(_COUPON_CC).astype(int)).astype(int)
-    df["코인기여"] = (df["서비스코인KRW"] * _cc.isin(_COIN_CC).astype(int)).astype(int)
+    df["쿠폰기여"] = (df["쿠폰KRW"]       * _is_coup).astype(int)
+    df["코인기여"] = (df["서비스코인KRW"] * _is_coin).astype(int)
     df["매출액"]   = df["KRW환산금액"] + df["쿠폰기여"] + df["코인기여"]
     return df
 
 
 def load_data():
-    """집계 데이터 로드 (mtime 캐시 래퍼). 파일 변경 시에만 재계산."""
     return _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _sidebar_options(_agg_mtime):
-    """사이드바 드롭다운 옵션을 데이터 버전당 한 번만 계산(캐시).
-    매 렌더마다 2.9M행 unique 스캔을 피함."""
+    """필터 드롭다운 옵션을 데이터 버전당 한 번만 계산(캐시)."""
     d = _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
     if d.empty:
         return {"countries": [], "stores": [], "brands": [], "ip_by_gubun": {"_ALL": []}}
@@ -197,9 +464,17 @@ def _sidebar_options(_agg_mtime):
     ipmap = {"_ALL": ip_list(nonex)}
     for g in ip_classify.IP_GUBUN_ORDER:
         ipmap[g] = ip_list(nonex[nonex["IP구분"] == g])
+
+    # 국가 → 매장 목록 (매장 필터를 선택 국가로 좁히기용)
+    sbc = {}
+    for c, grp in d.groupby("국가", observed=True):
+        vals = sorted(str(v) for v in grp["매장 이름"].dropna().unique())
+        sbc[str(c)] = [v for v in vals if v not in ("", "nan")]
+
     return {
         "countries": uniq("국가"),
         "stores": uniq("매장 이름"),
+        "stores_by_country": sbc,
         "brands": uniq("브랜드", drop_empty=True),
         "ip_by_gubun": ipmap,
     }
@@ -241,11 +516,9 @@ DETAIL_DIMS = {
 
 # 전체 parquet에는 타이틀/IP구분/IP명 컬럼이 없으므로 분류식을 직접 주입 (ip_classify 공용)
 _DETAIL_EXPR = {
-    "타이틀": ip_classify.IP_TITLE_RAW_SQL,   # 날짜+이름(접두어제거) → python에서 별칭통합
-    "IP명":  ip_classify.IP_NAMECORE_SQL,     # 이름토큰 → python 별칭통합
+    "타이틀": ip_classify.IP_TITLE_RAW_SQL,
+    "IP명":  ip_classify.IP_NAMECORE_SQL,
     "IP구분": ip_classify.IP_GUBUN_SQL,
-    # 같은 타이틀명이 단가만 다르게 여러 개 등록된 경우(예: 마카오) 단가로 분리.
-    # 라벨: "타이틀명 · 단가 결제단위"  (예: 260518 N.Flying · 99 MOP)
     "타이틀_단가": (
         "CONCAT("
         "COALESCE(NULLIF(TRIM(CAST(\"타이틀명\" AS VARCHAR)), ''), '(타이틀명 없음)'),"
@@ -258,27 +531,29 @@ _DETAIL_EXPR = {
 
 
 @st.cache_data(ttl=60)
-def load_sales_detail(group_col, start_date, end_date,
-                      ip_list=None, country="전체", store="전체",
-                      brand="전체", ipgubun="전체"):
+def load_sales_detail(group_col, start_date, end_date, ip_list=None,
+                      countries=(), stores=(), brands=(), gubuns=()):
     """전체 parquet에서 세부 판매 항목(IP명/프레임/테마 등) DuckDB on-demand 집계.
-    IP구분/IP명 은 ip_classify 분류식을 쿼리에 주입해 산출."""
+    countries/stores/brands 는 다중선택 리스트(빈 값=전체)."""
     if group_col not in DETAIL_DIMS.values() or not PARQUET_FILE.exists():
         return pd.DataFrame()
     try:
         import duckdb
     except Exception:
-        # DuckDB 초기화 실패(드물게 동시 초기화 충돌 등) 시 이 섹션만 건너뜀
         return pd.DataFrame()
     parq = str(PARQUET_FILE).replace("\\", "/")
 
     def esc(v):
         return str(v).replace("'", "''")
 
+    def _in_clause(colexpr, vals):
+        if not vals:
+            return None
+        inner = ",".join("'" + esc(v) + "'" for v in vals)
+        return f"CAST({colexpr} AS VARCHAR) IN ({inner})"
+
     group_expr = _DETAIL_EXPR.get(group_col, f'"{group_col}"')
 
-    # IP명 선택 필터를 비-IP 차원(프레임/구좌/브랜드/채널/IP구분)에도 '행 단위'로
-    # 정확히 적용하기 위해, IP가 선택된 경우에만 IP명(원시)을 함께 집계한다.
     _need_ip = bool(ip_list) and group_col not in ("타이틀", "타이틀_단가", "IP명")
     _ipname_sel = f', ({ip_classify.IP_NAMECORE_SQL}) AS "_ipname"' if _need_ip else ""
     _ipname_grp = ", 4" if _need_ip else ""
@@ -288,17 +563,13 @@ def load_sales_detail(group_col, start_date, end_date,
         "LOWER(CAST(\"취소 여부\" AS VARCHAR)) NOT IN ('true','1','yes')",
         "TRY_CAST(\"최종 결제 금액\" AS DOUBLE) >= 0",
     ]
-    if country and country != "전체":
-        where.append(f"CAST(\"국가\" AS VARCHAR) = '{esc(country)}'")
-    if store and store != "전체":
-        where.append(f"CAST(\"매장 이름\" AS VARCHAR) = '{esc(store)}'")
-    if brand and brand != "전체":
-        where.append(f"CAST(\"브랜드\" AS VARCHAR) = '{esc(brand)}'")
-    # IP구분 필터: 특정 구분 / 'IP 전체'(제외 제외) / '전체'(필터 없음)
-    if ipgubun and ipgubun in ip_classify.IP_GUBUN_ORDER:
-        where.append(f"({ip_classify.IP_GUBUN_SQL}) = '{esc(ipgubun)}'")
-    elif ipgubun == "IP 전체":
-        where.append(f"({ip_classify.IP_GUBUN_SQL}) <> '제외'")
+    for _c in (_in_clause('"국가"', countries), _in_clause('"매장 이름"', stores),
+               _in_clause('"브랜드"', brands)):
+        if _c:
+            where.append(_c)
+    if gubuns:
+        _g_in = ",".join("'" + esc(g) + "'" for g in gubuns)
+        where.append(f"({ip_classify.IP_GUBUN_SQL}) IN ({_g_in})")
     where_sql = " AND ".join(where)
 
     con = duckdb.connect()
@@ -326,22 +597,18 @@ def load_sales_detail(group_col, start_date, end_date,
     if df.empty:
         return df
 
-    # 한·영 별칭 통합: 타이틀은 날짜 유지하며 이름만, IP명은 이름 토큰 통합
     if group_col == "타이틀":
         df["항목"] = ip_classify.apply_alias_title(df["항목"].astype(str))
     elif group_col == "IP명":
         df["항목"] = ip_classify.apply_alias(df["항목"].astype(str))
-    # 선택된 IP명(사이드바 멀티셀렉트)으로 좁히기
     if ip_list:
         ipset = set(str(x) for x in ip_list)
         if group_col in ("타이틀", "타이틀_단가"):
-            # 타이틀 항목 문자열에 IP명이 포함되는지로 판정
             df = df[df["항목"].astype(str).apply(
                 lambda t: any(name in t for name in ipset))]
         elif group_col == "IP명":
             df = df[df["항목"].astype(str).isin(ipset)]
         else:
-            # 프레임/구좌/브랜드/채널/IP구분: 항목이 IP명이 아니므로 '행 단위' IP명으로 필터
             _ipn = ip_classify.apply_alias(df["_ipname"].astype(str))
             df = df[_ipn.isin(ipset)]
         if df.empty:
@@ -380,14 +647,206 @@ def tx_count(df):
     return int(df["건수"].sum()) if "건수" in df.columns else len(df)
 
 
-def fmt_krw(n):
-    return f"₩{int(n):,}"
+# ══════════════════════════════════════════════════════════════
+#  표현 헬퍼 (스내피즘 시안형)
+# ══════════════════════════════════════════════════════════════
+def pct_bar(frac, maxfrac=1.0):
+    w = 0 if maxfrac <= 0 else min(100, max(2, frac / maxfrac * 100))
+    return (f'<div class="npct"><div class="npct-bar"><i style="width:{w:.0f}%"></i></div>'
+            f'<span class="p">{frac * 100:.1f}%</span></div>')
 
 
-# ── 데이터 로드 ──────────────────────────────────────────────
+def sec(n, title, q=""):
+    st.markdown(f'<div class="sechd"><span class="secn">{n}</span><span class="sect">{title}</span></div>'
+                + (f'<div class="secq">{q}</div>' if q else ""), unsafe_allow_html=True)
+
+
+_CARDN = [0]
+
+
+@contextmanager
+def card(title=None, key=None):
+    if key is None:
+        _CARDN[0] += 1
+        key = f"scard-{_CARDN[0]}"
+    c = st.container(border=True, key=key)
+    if title:
+        c.markdown(f'<div class="ct">{title}</div>', unsafe_allow_html=True)
+    with c:
+        yield
+
+
+def statrow(items):
+    """미니 지표 3~4칸. items=[(label, value)]."""
+    cells = "".join(
+        f'<div class="mst"><div class="mst-l">{l}</div><div class="mst-v num">{v}</div></div>'
+        for l, v in items)
+    st.markdown(f'<div class="mstrow">{cells}</div>', unsafe_allow_html=True)
+
+
+def css_donut(pairs, colors, size=128, hole=38, legend_fs=13, sub=None):
+    """시안 CSS conic-gradient 도넛 + 오른쪽 범례. pairs=[(name, value)]."""
+    total = sum(v for _, v in pairs) or 1
+    segs, acc = [], 0.0
+    for i, (_, v) in enumerate(pairs):
+        f0 = acc / total * 100
+        acc += v
+        segs.append(f"{colors[i % len(colors)]} {f0:.2f}% {acc / total * 100:.2f}%")
+    grad = "conic-gradient(" + ",".join(segs) + ")"
+    mask = f"radial-gradient(circle {hole}px at center,transparent 98%,#000 100%)"
+    rows = ""
+    for i, (name, v) in enumerate(pairs):
+        rows += (f'<div class="row tip" data-tip="{name} · {fmt_krw(v)} ({v / total * 100:.1f}%)">'
+                 f'<i class="dot" style="background:{colors[i % len(colors)]}"></i>'
+                 f'{name} <b>{v / total * 100:.1f}%</b></div>')
+    if sub:
+        rows += f'<div class="row sub">{sub}</div>'
+    st.markdown(
+        f'<div class="donut-wrap"><div class="donut" style="width:{size}px;height:{size}px;'
+        f'-webkit-mask:{mask};mask:{mask};background:{grad}"></div>'
+        f'<div class="leg2" style="font-size:{legend_fs}px">{rows}</div></div>',
+        unsafe_allow_html=True)
+
+
+def css_stack(labels, data, series, gran):
+    """시안 CSS 스택 막대 추이 (IP구분별 다중 시리즈).
+    labels=x축, data={시리즈:[값...]} labels 순서, series=그릴 순서."""
+    if not labels:
+        st.info("선택한 조건에 맞는 데이터가 없어요. 기간·구분을 바꿔 보세요.")
+        return
+    n = len(labels)
+    totals = [sum(data[s][i] for s in series) for i in range(n)]
+    mx = max(totals) or 1
+    gap = "6px" if gran == "일" else ("12px" if gran == "주" else "24px")
+    fs = "10px" if gran == "일" else "11px"
+    leg = "".join(f'<span><i class="dot" style="background:{_GUB_COLORS.get(s, "#888")}"></i>{s}</span>'
+                  for s in series)
+    cols = ""
+    for i, lab in enumerate(labels):
+        tot = totals[i]
+        h = max(2, round(tot / mx * 100))
+        seg = ""
+        for s in series:
+            v = data[s][i]
+            sp = round(v / tot * 100) if tot else 0
+            if sp > 0:
+                seg += (f'<div style="height:{sp}%;background:{_GUB_COLORS.get(s, "#888")}"></div>')
+        _tb = min(h, 80)   # 막대가 아주 높으면 툴팁이 카드 밖으로 나가지 않게 상한
+        _parts = " · ".join(f'{s} {fmt_krw(data[s][i])}' for s in series if data[s][i] > 0)
+        _tip = f'{lab} · 합계 {fmt_krw(tot)}' + (f' · {_parts}' if _parts else '')
+        cols += (f'<div class="col"><div class="vtip" style="bottom:{_tb}%">{_tip}</div>'
+                 f'<div class="stack" style="height:{h}%">{seg}</div>'
+                 f'<div class="xlab" style="font-size:{fs}">{lab}</div></div>')
+    st.markdown(f'<div class="legend">{leg}</div><div class="chart" style="gap:{gap}">{cols}</div>',
+                unsafe_allow_html=True)
+
+
+def css_series(rows, color=PINK, gran="일"):
+    """단일 시리즈 막대(선택 IP 일별 등). rows=[(label, value)]."""
+    if not rows:
+        st.info("선택한 조건에 맞는 데이터가 없어요.")
+        return
+    mx = max(v for _, v in rows) or 1
+    gap = "5px" if gran == "일" else ("10px" if gran == "주" else "22px")
+    fs = "9.5px" if len(rows) > 20 else "11px"
+    cols = ""
+    for lab, v in rows:
+        h = max(2, round(v / mx * 100))
+        _tb = min(h, 80)
+        cols += (f'<div class="col"><div class="vtip" style="bottom:{_tb}%">{lab} · {fmt_krw(v)}</div>'
+                 f'<div class="stack" style="height:{h}%;background:{color}"></div>'
+                 f'<div class="xlab" style="font-size:{fs}">{lab}</div></div>')
+    st.markdown(f'<div class="chart" style="gap:{gap}">{cols}</div>', unsafe_allow_html=True)
+
+
+def css_hours(vals):
+    """시간대(00~23) 막대. 최고 시간대만 진하게. vals=길이24."""
+    mx = max(vals) or 1
+    cols = ""
+    for h, v in enumerate(vals):
+        hp = round(v / mx * 100)
+        col = "var(--brand)" if (v >= mx and mx > 0) else "var(--brand-2)"
+        _tb = min(hp, 80)
+        cols += (f'<div class="hc"><div class="vtip" style="bottom:{_tb}%">{h:02d}:00 · {fmt_krw(v)}</div>'
+                 f'<div class="hb2" style="height:{hp}%;background:{col}"></div>'
+                 f'<div class="hx">{h:02d}</div></div>')
+    st.markdown(f'<div class="hours">{cols}</div>', unsafe_allow_html=True)
+
+
+def hbar_list(dframe, name_col, top=None, collapse_after=None):
+    """시안 TOP 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루."""
+    d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
+    if top:
+        d = d.head(top)
+    mx = d["매출"].max() or 1
+
+    def _rows(sub):
+        h = '<div class="hb-wrap">'
+        for i, r in sub.iterrows():
+            w = max(3, r["매출"] / mx * 100)
+            col = BRAND if i == 0 else "#a9c7ef"
+            _t = f'{r[name_col]} · {fmt_krw(r["매출"])}'
+            if "건수" in sub.columns:
+                _t += f' · {int(r["건수"]):,}건'
+            h += (f'<div class="hb tip" data-tip="{_t}"><span class="hb-n">{r[name_col]}</span>'
+                  f'<span class="hb-track"><i style="width:{w:.0f}%;background:{col}"></i></span>'
+                  f'<span class="hb-v">{fmt_krw(r["매출"])}</span></div>')
+        return h + '</div>'
+
+    if collapse_after and len(d) > collapse_after:
+        st.markdown(_rows(d.iloc[:collapse_after]), unsafe_allow_html=True)
+        with st.expander(f"나머지 {len(d) - collapse_after:,}개 더보기  ·  {collapse_after + 1}~{len(d):,}위"):
+            st.markdown(_rows(d.iloc[collapse_after:]), unsafe_allow_html=True)
+    else:
+        st.markdown(_rows(d), unsafe_allow_html=True)
+
+
+def rank_table(dframe, name_col, top=None, collapse_after=None):
+    """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개 + 나머지 접기."""
+    d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
+    if top:
+        d = d.head(top)
+    tot = d["매출"].sum()
+    mx = (d["매출"] / tot).max() if tot else 1.0
+    has_cnt = "건수" in d.columns
+    if has_cnt:
+        grid = "grid-template-columns:34px 1.7fr 1.3fr .8fr 1.5fr"
+        head = (f'<div class="ntr nth" style="{grid}">'
+                '<span>#</span><span>이름</span><span class="r">매출</span>'
+                '<span class="r">건수</span><span>비중</span></div>')
+    else:
+        grid = "grid-template-columns:36px 1.7fr 1.2fr 1.5fr"
+        head = (f'<div class="ntr nth" style="{grid}">'
+                '<span>#</span><span>이름</span><span class="r">매출</span><span>비중</span></div>')
+
+    def _rows(sub):
+        h = ""
+        for i, r in sub.iterrows():
+            frac = (r["매출"] / tot) if tot else 0
+            rk = f'<span class="rk {"top" if i == 0 else ""}">{i + 1}</span>'
+            cnt = (f'<span class="r num" style="color:var(--text-2)">{int(r["건수"]):,}</span>'
+                   if has_cnt else "")
+            h += (f'<div class="ntr" style="{grid}">{rk}'
+                  f'<span class="nname">{r[name_col]}</span>'
+                  f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{pct_bar(frac, mx)}</div>')
+        return h
+
+    if collapse_after and len(d) > collapse_after:
+        top_d, rest_d = d.iloc[:collapse_after], d.iloc[collapse_after:]
+        st.markdown(f'<div class="ntbl">{head}{_rows(top_d)}</div>', unsafe_allow_html=True)
+        with st.expander(f"나머지 {len(rest_d):,}개 더보기  ·  {collapse_after + 1}~{len(d):,}위"):
+            st.markdown(f'<div class="ntbl">{head}{_rows(rest_d)}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="ntbl">{head}{_rows(d)}</div>', unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
+#  데이터 로드
+# ══════════════════════════════════════════════════════════════
 df_all = load_data()
 
 st.title("📸 포토이즘 매출 대시보드")
+st.caption("기간·국가·매장·IP를 골라 매출을 봐요. 매출 = 실결제 + 쿠폰 + 서비스코인(지정 국가 가산) 기준이에요.")
 render_guide("photoism")
 
 if df_all.empty:
@@ -397,70 +856,120 @@ if df_all.empty:
 
 last_date  = df_all["날짜"].dropna().max()
 first_date = df_all["날짜"].dropna().min()
-
 cfg        = load_config()
 ex         = load_exchange_rates()
-rates_upd  = cfg.get("rates_updated", "-")
-_rate_info = "  |  ".join(
-    f"1 {cur} = {rate:,.2f} KRW"
-    for cur, rate in ex.items()
-    if cur != "KRW"
-)
-st.caption(f"데이터 범위: {first_date} ~ {last_date}  |  총 {tx_count(df_all):,}건  |  새로고침: F5")
-st.caption(f"💱 환율 기준: **{rates_upd} 업데이트**   {_rate_info}")
 
-# ── 사이드바 필터 ─────────────────────────────────────────────
-st.sidebar.header("🔍 필터")
-default_start = max(last_date - timedelta(days=29), first_date)
-date_range = st.sidebar.date_input(
-    "날짜 범위",
-    value=[default_start, last_date],
-    min_value=first_date, max_value=last_date,
-)
-
+# ══════════════════════════════════════════════════════════════
+#  인라인 필터바 (시안: 흰 카드 안 컴팩트 칩들)
+# ══════════════════════════════════════════════════════════════
 _opts = _sidebar_options(_file_mtime(AGG_FILE))
 
-selected_country = st.sidebar.selectbox("국가", ["전체"] + _opts["countries"])
-selected_store = st.sidebar.selectbox("매장", ["전체"] + _opts["stores"])
-
-# IP 구분 — 기본값 '전체(기본 프레임 포함)' = 오리지널까지 포함한 진짜 총매출.
-#   'IP 전체'는 오리지널(기본 프레임=제외)을 뺀 IP 매출만. 그 아래는 개별 구분.
-#   기획(P)는 단독 필터 옵션만 빠질 뿐, '전체'·'IP 전체' 합계에는 포함됨.
+# IP 구분(다중선택) — 비우면 전체(기본 프레임 포함), 고르면 그 구분만. (기획P는 필터 옵션에서 제외)
 IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g != "기획(P)"]
-IPGUBUN_OPTIONS = ["전체 (기본 프레임 포함)", "IP 전체"] + IP_GUBUN_VIEW
-selected_ipgubun = st.sidebar.selectbox(
-    "IP 구분", IPGUBUN_OPTIONS,
-    help="기본값 '전체'는 오리지널(기본 프레임)까지 포함한 총매출이에요. "
-         "'IP 전체'는 오리지널을 뺀 IP 매출만, 아티스트/캐릭터/렌탈/PICK은 그 구분만 봐요.",
-)
 
-selected_brand = st.sidebar.selectbox("상품 카테고리 (브랜드)", ["전체"] + _opts["brands"])
+default_start = max(last_date - timedelta(days=29), first_date)
 
-# IP명 후보: 선택된 IP구분 범위 안에서 (캐시된 목록에서 조회)
-_ip_all = _opts["ip_by_gubun"].get(
-    selected_ipgubun if selected_ipgubun in ip_classify.IP_GUBUN_ORDER else "_ALL", [])
-selected_ips = st.sidebar.multiselect(
-    "IP명 선택", options=_ip_all,
-    placeholder="전체 (선택 없음 = 전체)",
-    help="정규화·한·영 통합된 IP명. 위 'IP 구분'에 따라 후보가 좁혀집니다. "
-             "선택하지 않으면 전체 IP를 봐요.",
-)
 
-# 필터 적용 — scope = 날짜 외 모든 필터, df = scope + 날짜 (KPI 오늘/어제/이번달은 scope 기준)
-# categorical 컬럼은 .astype(str) 없이 직접 비교(코드 기반) → 2.9M행에서도 빠름
+def cbfilter(col, label, options, key):
+    """검색 + 체크박스 다중선택 필터. col 안에 라벨 + 팝오버(검색창·체크리스트).
+    ★선택 상태의 단일 출처 = 각 체크박스 위젯(key=…__cb__옵션)★ — 별도 리스트를 두지 않아
+    '선택 해제'·필터변경 시 상태 불일치가 없음. 선택 리스트 반환.
+    목록을 항상 펼쳐 보여주고(상위 200개), 검색은 좁히는 용도."""
+    options = list(options)
+    pfx = f"{key}__cb__"
+
+    def _sel():
+        return [o for o in options if st.session_state.get(pfx + str(o), False)]
+
+    sel = _sel()
+    cap = "전체" if not sel else (str(sel[0]) if len(sel) == 1 else f"{len(sel)}개 선택")
+    col.markdown(f'<div class="fbl">{label}</div>', unsafe_allow_html=True)
+    with col.popover(cap, use_container_width=True):
+        q = ""
+        if len(options) > 6:
+            q = st.text_input("검색", key=f"{key}__q", placeholder=f"🔍 {label} 검색",
+                              label_visibility="collapsed").strip().lower()
+        pool = [o for o in options if q in str(o).lower()] if q else list(options)
+        merged = list(dict.fromkeys([*sel, *pool]))
+        shown = merged[:200]
+        over = len(merged) - len(shown)
+        _b = st.columns(2)
+        if _b[0].button("전체", key=f"{key}__all", use_container_width=True, disabled=not pool):
+            for o in pool:
+                st.session_state[pfx + str(o)] = True     # 체크박스 생성 前이라 초기값 설정 OK
+        if _b[1].button("해제", key=f"{key}__clr", use_container_width=True, disabled=not sel):
+            for o in options:
+                st.session_state[pfx + str(o)] = False
+        if not shown:
+            st.caption("옵션이 없어요.")
+        elif over:
+            st.caption(f"상위 200개 표시 · 나머지 {over}개는 검색해서 찾아요.")
+        for o in shown:
+            st.checkbox(str(o), key=pfx + str(o))
+    return _sel()
+
+
+# ── 필터바를 @st.fragment 로 격리 → 체크박스 조작은 이 조각만 가볍게 재실행되고,
+#    무거운 본문(탭·차트)은 건드리지 않는다. '적용' 버튼을 눌러야 본문이 갱신된다.
+@st.fragment
+def _filterbar():
+    with st.container(border=True, key="scard-filter"):
+        # 필터는 왼쪽으로 모아 컴팩트하게(마지막은 빈 스페이서)
+        _fb = st.columns([0.92, 0.8, 0.8, 0.8, 0.86, 0.86, 0.5, 2.5], gap="small")
+        with _fb[0]:
+            st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
+            st.date_input("기간", value=[default_start, last_date],
+                          min_value=first_date, max_value=last_date,
+                          key="ph_f_date", label_visibility="collapsed")
+        cbfilter(_fb[1], "국가", _opts["countries"], "ph_f_country")
+        # 매장 후보: (초안) 선택 국가의 매장만(없으면 전체)
+        _dc = [c for c in _opts["countries"] if st.session_state.get(f"ph_f_country__cb__{c}", False)]
+        _sbc = _opts.get("stores_by_country", {})
+        _std = (sorted(set().union(*[set(_sbc.get(c, [])) for c in _dc])) if _dc else _opts["stores"])
+        cbfilter(_fb[2], "매장", _std, "ph_f_store")
+        cbfilter(_fb[3], "카테고리", _opts["brands"], "ph_f_brand")
+        cbfilter(_fb[4], "IP구분", IP_GUBUN_VIEW, "ph_f_gubun")
+        # IP명 후보: (초안) 선택된 IP구분들의 IP명 합집합
+        _dg = [g for g in IP_GUBUN_VIEW if st.session_state.get(f"ph_f_gubun__cb__{g}", False)]
+        _ipd = (sorted(set().union(*[set(_opts["ip_by_gubun"].get(g, [])) for g in _dg]))
+                if _dg else _opts["ip_by_gubun"].get("_ALL", []))
+        cbfilter(_fb[5], "IP명", _ipd, "ph_f_ip")
+        with _fb[6]:
+            st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
+            if st.button("✓ 적용", key="ph_f_apply", use_container_width=True, type="primary"):
+                st.rerun()   # scope 기본=app → 본문(탭·차트) 한 번에 갱신
+
+
+_filterbar()
+
+# ── 적용된 필터 = 현재 위젯 상태 (본문 재실행 시 읽음. 체크 중에는 본문 안 바뀜) ──
+_dv = st.session_state.get("ph_f_date", [default_start, last_date])
+date_range = list(_dv) if isinstance(_dv, (list, tuple)) else [default_start, last_date]
+sel_countries = [o for o in _opts["countries"] if st.session_state.get(f"ph_f_country__cb__{o}", False)]
+# 매장: 선택 국가의 매장으로 좁혀 읽기(국가 미선택 시 전체)
+if sel_countries:
+    _store_opts = sorted(set().union(*[set(_opts.get("stores_by_country", {}).get(c, [])) for c in sel_countries]))
+else:
+    _store_opts = _opts["stores"]
+sel_stores = [o for o in _store_opts if st.session_state.get(f"ph_f_store__cb__{o}", False)]
+sel_brands = [o for o in _opts["brands"] if st.session_state.get(f"ph_f_brand__cb__{o}", False)]
+sel_gubuns = [g for g in IP_GUBUN_VIEW if st.session_state.get(f"ph_f_gubun__cb__{g}", False)]
+if sel_gubuns:
+    _ip_all = sorted(set().union(*[set(_opts["ip_by_gubun"].get(g, [])) for g in sel_gubuns]))
+else:
+    _ip_all = _opts["ip_by_gubun"].get("_ALL", [])
+selected_ips = [o for o in _ip_all if st.session_state.get(f"ph_f_ip__cb__{o}", False)]
+
+# ── 필터 적용 (scope = 날짜 외 모든 필터, df = scope + 날짜) ──
 scope = df_all
-if selected_country != "전체":
-    scope = scope[scope["국가"] == selected_country]
-if selected_brand != "전체":
-    scope = scope[scope["브랜드"] == selected_brand]
-if selected_store != "전체":
-    scope = scope[scope["매장 이름"] == selected_store]
-# IP 구분 필터 (아티스트/캐릭터/렌탈/PICK/기획 또는 'IP 전체'=제외 제외)
-if selected_ipgubun in ip_classify.IP_GUBUN_ORDER:
-    scope = scope[scope["IP구분"] == selected_ipgubun]
-elif selected_ipgubun == "IP 전체":
-    scope = scope[scope["IP구분"] != "제외"]
-# '전체 (기본 프레임 포함)' → IP구분 필터 없음
+if sel_countries:
+    scope = scope[scope["국가"].isin(sel_countries)]
+if sel_brands:
+    scope = scope[scope["브랜드"].isin(sel_brands)]
+if sel_stores:
+    scope = scope[scope["매장 이름"].isin(sel_stores)]
+if sel_gubuns:
+    scope = scope[scope["IP구분"].isin(sel_gubuns)]
 if selected_ips:
     scope = scope[scope["IP명"].isin(selected_ips)]
 
@@ -470,117 +979,96 @@ if len(date_range) == 2:
 
 sales = paid_sales(df)
 
-# ── KPI 카드 ──────────────────────────────────────────────────
-today      = date.today()
-yesterday  = today - timedelta(days=1)
-month_start = today.replace(day=1)
-# 지난달 범위 + 전월 같은 기간(1일~오늘)
-prev_y = today.year if today.month > 1 else today.year - 1
-prev_m = today.month - 1 if today.month > 1 else 12
-prev_month_start = date(prev_y, prev_m, 1)
-_prev_days = pd.Period(f"{prev_y}-{prev_m:02d}", freq="M").days_in_month
-prev_month_end = date(prev_y, prev_m, _prev_days)
-prev_same_end = date(prev_y, prev_m, min(today.day, _prev_days))
+# ══════════════════════════════════════════════════════════════
+#  관리자 전용: '계산 방식 설명' 토글 + helpbox 헬퍼
+#  - 소유자에게만 사이드바 체크박스 노출. 체크 시에만 각 카드에 접기 설명 표시.
+#  - 일반 사용자/토글 OFF면 렌더링 안 됨(흔적·부하 없음).
+#  ※ expander 중첩 불가 → helpbox 는 다른 expander(더보기·데이터) 바깥에 둔다.
+# ══════════════════════════════════════════════════════════════
+_is_owner = auth.is_owner(getattr(getattr(st, "user", None), "email", None))
+if _is_owner:
+    st.sidebar.markdown("---")
+    st.sidebar.checkbox(
+        "🔧 계산 방식 설명 표시", key="show_calc_help",
+        help="각 카드 아래에 '이 값이 어떻게 계산·검증되는지' 설명을 접기로 보여줘요. 관리자에게만 보입니다.")
 
 
+def helpbox(md):
+    """관리자가 토글을 켰을 때만, 접기로 '이 값 계산 방식'을 보여준다."""
+    if _is_owner and st.session_state.get("show_calc_help"):
+        with st.expander("ℹ️ 이 값은 어떻게 계산되나요?", expanded=False):
+            st.markdown(md)
+
+
+# ══════════════════════════════════════════════════════════════
+#  KPI 3카드 + 범위 배너
+# ══════════════════════════════════════════════════════════════
 def period_rev(d):
     return int(paid_sales(d)["매출액"].sum())
 
 
-# 상단 카드: 항상 현재 기준(날짜 필터 무관, 그 외 필터는 반영) — scope 사용
-today_amt  = period_rev(scope[scope["날짜"] == today])
-yest_amt   = period_rev(scope[scope["날짜"] == yesterday])
-month_amt  = period_rev(scope[scope["날짜"] >= month_start])
-month_prev_same = period_rev(scope[(scope["날짜"] >= prev_month_start) & (scope["날짜"] <= prev_same_end)])
-lastmonth_amt   = period_rev(scope[(scope["날짜"] >= prev_month_start) & (scope["날짜"] <= prev_month_end)])
-delta_pct  = ((today_amt - yest_amt) / yest_amt * 100) if yest_amt > 0 else 0
-mom_pct    = ((month_amt - month_prev_same) / month_prev_same * 100) if month_prev_same > 0 else None
-yest_cnt   = tx_count(paid_sales(scope[scope["날짜"] == yesterday]))
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("오늘 매출 (KRW)", fmt_krw(today_amt), f"{delta_pct:+.1f}% vs 어제")
-c2.metric("어제 매출 (KRW)", fmt_krw(yest_amt), f"{yest_cnt:,}건")
-c3.metric("이번 달 누적", fmt_krw(month_amt),
-          f"{mom_pct:+.1f}% vs 전월 동기" if mom_pct is not None else f"{month_start.strftime('%m/%d')}~오늘")
-c4.metric(f"지난달 매출 ({prev_m}월 전체)", fmt_krw(lastmonth_amt), "전월 전체", delta_color="off")
-
-# 조회 기간 요약: 날짜 필터에 반응
 period_amt = period_rev(df)
-_dr = (f"{date_range[0].strftime('%Y-%m-%d')} ~ {date_range[1].strftime('%Y-%m-%d')}"
-       if len(date_range) == 2 else "전체")
-st.caption(f"📅 **조회 기간 {_dr}** 요약  ·  합계 **{fmt_krw(period_amt)}**  ·  {tx_count(sales):,}건")
+_period_days = ((date_range[1] - date_range[0]).days + 1) if len(date_range) == 2 else "-"
+_dr = (f"{date_range[0]} ~ {date_range[1]}" if len(date_range) == 2 else "전체")
+# 총매출 = 실결제(카드·현금) + 쿠폰·코인 정산분 으로 구성 표시(취소는 집계에 없음)
+pure_krw = int(sales["KRW환산금액"].sum())
+cc_krw = int((sales["쿠폰기여"] + sales["코인기여"]).sum())
+cc_cnt = int(sales[(sales["쿠폰기여"] > 0) | (sales["코인기여"] > 0)]["건수"].sum())
 
-# ── 매출 정의 + 구성(실결제·쿠폰·서비스코인) ──────────────────────────────
-st.caption("💡 매출 = 실결제 + 쿠폰 + 서비스코인 (정산 기준) — "
-           "지정 국가는 쿠폰·서비스코인도 실제 정산되는 실매출이에요.")
-_pure = int(sales["KRW환산금액"].sum())
-_cpn  = int(sales["쿠폰기여"].sum())
-_coin = int(sales["코인기여"].sum())
-_comp_tot = _pure + _cpn + _coin
-if _comp_tot > 0:
-    fig_comp = go.Figure()
-    for _lbl, _val, _clr in [("실결제", _pure, PRIMARY),
-                             ("쿠폰", _cpn, "#EF9F27"),
-                             ("서비스코인", _coin, SECONDARY)]:
-        _pct = _val / _comp_tot * 100
-        fig_comp.add_trace(go.Bar(
-            y=["매출 구성"], x=[_val], name=f"{_lbl} {_pct:.0f}%", orientation="h",
-            marker_color=_clr,
-            hovertemplate=f"{_lbl}: ₩%{{x:,}} ({_pct:.1f}%)<extra></extra>",
-        ))
-    fig_comp.update_layout(
-        barmode="stack", height=104, bargap=0.05,
-        legend=dict(orientation="h", y=-0.55, x=0, font=dict(size=12)),
-        margin=dict(t=4, b=0, l=0, r=0),
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-    )
-    st.plotly_chart(fig_comp, use_container_width=True)
+st.markdown(
+    '<div class="kpis">'
+    f'<div class="kpi hero"><div class="l">조회기간 매출 (합계)</div>'
+    f'<div class="v num">{fmt_krw(period_amt)}</div>'
+    f'<div class="d">{_dr} · {_period_days}일 · {tx_count(sales):,}건</div></div>'
+    f'<div class="kpi"><div class="l">실결제 매출 (카드·현금)</div>'
+    f'<div class="v num">{fmt_krw(pure_krw)}</div><div class="d">쿠폰·코인 제외분</div></div>'
+    f'<div class="kpi"><div class="l">쿠폰·코인 매출 (정산분)</div>'
+    f'<div class="v num">{fmt_krw(cc_krw)}</div><div class="d">{cc_cnt:,}건 · 지정국가 정산</div></div>'
+    '</div>', unsafe_allow_html=True)
 
-# ── IP 구분별 매출 (탭: 전체 + 구분별 → 각 탭 안에 타이틀 상세) ────────────────
-_GUB_COLORS = {"아티스트": PRIMARY, "캐릭터": SECONDARY, "렌탈": "#4cc9f0",
-               "PICK": PINK, "기획(P)": "#3a0ca3"}
-_GUB_EMOJI = {"아티스트": "🎤", "캐릭터": "🧸", "렌탈": "🏪", "PICK": "⭐", "기획(P)": "🎨"}
+_scope_bits = []
+if sel_countries:
+    _scope_bits.append("국가: " + " · ".join(sel_countries[:4]) + (" 외" if len(sel_countries) > 4 else ""))
+if sel_stores:
+    _scope_bits.append("매장: " + " · ".join(sel_stores[:3]) + (" 외" if len(sel_stores) > 3 else ""))
+if sel_brands:
+    _scope_bits.append("카테고리: " + " · ".join(sel_brands))
+if sel_gubuns:
+    _scope_bits.append("IP구분: " + " · ".join(sel_gubuns))
+if selected_ips:
+    _scope_bits.append("IP: " + " · ".join(selected_ips[:4]) + (" 외" if len(selected_ips) > 4 else ""))
+if _scope_bits:
+    st.markdown('<div class="scope">🌐 범위 — ' + "  |  ".join(_scope_bits) + '</div>',
+                unsafe_allow_html=True)
 
+helpbox("""
+**KPI 3카드 — 조회기간 매출 · 실결제 · 쿠폰·코인**
 
-def _gubun_title_table(sub, color):
-    """한 IP구분의 타이틀(날짜+IP) 상세: 지표 + TOP 막대 + 전체 표."""
-    tot = int(sub["매출액"].sum())
-    cnt = tx_count(sub)
-    t = (
-        sub[(sub["타이틀"] != "") & sub["타이틀"].notna()]
-        .groupby("타이틀", observed=True)
-        .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
-        .reset_index().sort_values("매출", ascending=False)
-    )
-    m1, m2, m3 = st.columns(3)
-    m1.metric("매출", fmt_krw(tot))
-    m2.metric("건수", f"{cnt:,}건")
-    m3.metric("타이틀 수", f"{len(t):,}개")
-    if t.empty:
-        st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
-        return
-    topn = t.head(15).sort_values("매출")
-    figt = px.bar(topn, x="매출", y="타이틀", orientation="h",
-                  color_discrete_sequence=[color], custom_data=["건수"])
-    figt.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-    figt.update_layout(height=max(300, len(topn) * 28 + 60), showlegend=False,
-                       xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-    st.plotly_chart(figt, use_container_width=True)
-    if len(t) > 15:
-        st.caption(f"※ 차트는 매출 TOP 15. 전체 {len(t):,}개는 아래 표 참고")
-    tbl = t.reset_index(drop=True)
-    tbl.insert(0, "순위", range(1, len(tbl) + 1))
-    tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
-    tbl["매출"] = tbl["매출"].apply(fmt_krw)
-    st.dataframe(
-        tbl, use_container_width=True, height=420, hide_index=True,
-        column_config={"건수": st.column_config.NumberColumn("건수", format="localized")},
-    )
+**공통 기준 (이하 모든 카드 동일)**
+- **원본**: 30개국 포토이즘 매장 거래(매일 자동 수집)를 **DuckDB로 집계**한 값 · 환율은 `config.json` 실시간 환율표.
+- **매출액 = 실결제 + 쿠폰기여 + 코인기여** — `KRW환산금액`(= 최종 결제 금액 × 환율)에, **지정 국가에서만** 쿠폰(`쿠폰기여`)·서비스코인(`코인기여`)을 더함(나라마다 정산 규칙이 달라서).
+- **필터 반영**: 필터바(기간·국가·매장·카테고리·IP구분·IP)로 거른 뒤 계산. 미선택 = 전체.
+- **취소 없음**: 집계 데이터에 취소행이 없어 취소 KPI는 없어요(스내피즘과 다른 점).
 
+**각 카드 계산**
+- **조회기간 매출(합계)** = 매출액 합(실결제 + 지정국가 쿠폰·코인). 건수 = 거래 건수.
+- **실결제 매출(카드·현금)** = `KRW환산금액` 합 (쿠폰·코인 제외한 순수 결제분).
+- **쿠폰·코인 매출(정산분)** = `쿠폰기여 + 코인기여` 합 = 매출 합계 − 실결제. 지정 국가에서만 잡혀요.
+""")
 
-# IP 구분 요약 데이터 (「IP · 세부 항목」 탭의 구분별 상세에서 사용) — 첫 화면엔 미표시
+# ── 사이드바: 실시간 환율(접기) — 소유자(본인)만 노출 ──
+if _is_owner:
+    with st.sidebar.expander("💱 실시간 환율", expanded=False):
+        if cfg.get("rates_updated"):
+            st.caption(f"업데이트 {cfg.get('rates_updated')}")
+        for _cur, _rate in ex.items():
+            if _cur != "KRW":
+                st.caption(f"1 {_cur} = ₩{_rate:,.2f}")
+
+# ── IP 구분 요약(탭에서 사용) ──
 gub = pd.DataFrame()
 present = []
+present_all = []
 if "IP구분" in sales.columns:
     gub = (
         sales[sales["IP구분"] != "제외"]
@@ -593,587 +1081,475 @@ if "IP구분" in sales.columns:
         gub["_o"] = gub["IP구분"].astype(str).map(
             {g: i for i, g in enumerate(ip_classify.IP_GUBUN_ORDER)}).fillna(99)
         gub = gub.sort_values("_o")
-        present = [g for g in IP_GUBUN_VIEW
-                   if g in set(gub["IP구분"].astype(str))]
+        # present = 단독 필터/상세탭용(기획P 제외). present_all = 집계 뷰(추이·합계)용(기획P 포함).
+        _gset = set(gub["IP구분"].astype(str))
+        present = [g for g in IP_GUBUN_VIEW if g in _gset]
+        present_all = [g for g in ip_classify.IP_GUBUN_ORDER if g in _gset]
 
-st.divider()
+
+def _pkey(dates, g):
+    d = pd.to_datetime(dates)
+    return d.dt.to_period("M") if g == "월" else (d.dt.to_period("W") if g == "주" else d.dt.date)
+
+
+def _plabel(p, g):
+    if g == "월":
+        return f"{p.year}.{p.month:02d}"
+    if g == "주":
+        return p.start_time.strftime("%m/%d") + "주"
+    return str(p)
+
 
 # ══════════════════════════════════════════════════════════════
-#  상단 탭 (스내피즘과 동일한 기본 형태)
+#  탭 6개
 # ══════════════════════════════════════════════════════════════
-tab_ov, tab_nat, tab_ip, tab_etc = st.tabs([
-    "📊 매출 개요", "🌏 국가별 분석", "🎬 IP · 세부 항목", "⏰ 시간대 · 데이터",
-])
+# [보류] '시간대 · 데이터' 탭 — 숨김 처리(코드·데이터는 그대로 보존).
+#         다시 살리려면 SHOW_TAB_ETC = True 로만 바꾸면 됨.
+SHOW_TAB_ETC = False
+_tab_labels = ["📊 매출 한눈에", "🎬 IP · 타이틀 분석", "🌏 국가별 분석",
+               "🏬 매장별 분석", "🔎 세부 항목"]
+if SHOW_TAB_ETC:
+    _tab_labels.append("⏰ 시간대 · 데이터")
+_tabs = st.tabs(_tab_labels)
+tab_home, tab_ip, tab_nat, tab_store, tab_detail = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
+tab_etc = _tabs[5] if SHOW_TAB_ETC else None
 
-# ════════════ 탭 1: 매출 개요 ════════════
-with tab_ov:
-    with st.container(border=True):
-        col_left, col_right = st.columns([3, 2])
-
-        with col_left:
-            head_l, head_r = st.columns([3, 2])
-            with head_l:
-                st.markdown('<div class="section-title">📈 매출 추이</div>', unsafe_allow_html=True)
-            with head_r:
-                gran = st.segmented_control(
-                    "기간", ["월", "주", "일"], default="월",
-                    key="ph_trend_gran", label_visibility="collapsed",
-                )
-            if gran is None:
-                gran = "월"
-
-            def _pkey(dates, g):
-                d = pd.to_datetime(dates)
-                if g == "월":
-                    return d.dt.to_period("M")
-                if g == "주":
-                    return d.dt.to_period("W")
-                return d.dt.date
-
-            # 보기 선택(커스텀): 체크한 IP구분만 표시 (범례 클릭으로도 토글 가능)
-            _pick = st.multiselect(
-                "구분 선택", IP_GUBUN_VIEW, default=IP_GUBUN_VIEW,
-                key="ph_trend_gub", label_visibility="collapsed",
-                help="보고 싶은 구분만 선택하세요. 막대 위 범례를 눌러도 켜고 끌 수 있어요.")
-            _sel = _pick if _pick else IP_GUBUN_VIEW
-
-            _tsrc = sales[sales["IP구분"].astype(str).isin(_sel)].copy()
+# ════════════ 탭 1: 매출 한눈에 ════════════
+with tab_home:
+    sec("1", "매출 동향", "잘 가고 있나? — 기간별 IP구분 매출 흐름")
+    with card():
+        _th, _tg = st.columns([2.4, 1])
+        with _th:
+            st.markdown('<div class="ct" style="margin-bottom:0">📈 매출 추이 '
+                        '<span class="muted">IP구분별</span></div>', unsafe_allow_html=True)
+        with _tg:
+            gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
+                                        key="ph_trend_gran", label_visibility="collapsed") or "월"
+        _tsrc = sales[sales["IP구분"].astype(str).isin(present_all)].copy() if present_all else pd.DataFrame()
+        if _tsrc.empty:
+            css_stack([], {}, [], gran)
+        else:
             _tsrc["_p"] = _pkey(_tsrc["날짜"], gran)
             g2 = (_tsrc.groupby(["_p", "IP구분"], observed=True)["매출액"].sum()
                   .rename("매출").reset_index())
-            if g2.empty:
-                st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·구분 선택을 넓혀 보세요.")
+            periods = sorted(g2["_p"].unique())
+            labels = [_plabel(p, gran) for p in periods]
+            pidx = {p: i for i, p in enumerate(periods)}
+            data = {g: [0] * len(periods) for g in present_all}
+            for _, r in g2.iterrows():
+                _g = str(r["IP구분"])
+                if _g in data:
+                    data[_g][pidx[r["_p"]]] = int(r["매출"])
+            css_stack(labels, data, present_all, gran)
+            st.caption("막대는 IP구분(아티스트·캐릭터·렌탈·PICK)별로 쌓았어요. "
+                       "전체 순위는 'IP · 타이틀 분석' 탭에서 봐요.")
+        helpbox("""
+**매출 추이 (IP구분별 스택)**
+- 매출액(실결제 + 쿠폰기여 + 코인기여)을 기간(월/주/일)·`IP구분`으로 묶어 쌓은 막대.
+- IP구분 = 아티스트·캐릭터·렌탈·PICK·기획P. **추이·합계 집계엔 기획P 포함**(`present_all`), 단독 필터/상세 탭은 기획P 제외(`present`).
+- ※ 공통 기준(원본·환율·매출액 정의)은 상단 'KPI 카드' 설명 참고.
+""")
+
+    sec("2", "무엇이 매출을 만드나", "비중 — 어떤 IP구분·카테고리가 매출을 끄나")
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        with card("🎬 IP 구분 비중"):
+            if not gub.empty:
+                gg = gub.sort_values("매출", ascending=False)
+                colors = [_GUB_COLORS.get(str(g), "#c7ccd6") for g in gg["IP구분"]]
+                css_donut(list(zip(gg["IP구분"].astype(str), gg["매출"])), colors)
             else:
-                periods = sorted(g2["_p"].unique())
-
-                def _lbl(p):
-                    if gran == "월":
-                        return f"{p.year}.{p.month:02d}"
-                    if gran == "주":
-                        return p.start_time.strftime("%m/%d") + "주"
-                    return str(p)
-
-                labels = [_lbl(p) for p in periods]
-                fig = go.Figure()
-                for _g in _sel:
-                    _gs = g2[g2["IP구분"].astype(str) == _g]
-                    if _gs.empty:
-                        continue
-                    _y = _gs.set_index("_p")["매출"].reindex(periods).fillna(0)
-                    fig.add_trace(go.Bar(
-                        x=labels, y=_y.values, name=_g,
-                        marker_color=_GUB_COLORS.get(_g, "#888888"),
-                        hovertemplate=f"{_g} %{{x}}<br>%{{y:,}}원<extra></extra>"))
-                # 합계 이동평균 (선택된 구분 합)
-                win = {"월": 3, "주": 4, "일": 7}[gran]
-                ma_unit = {"월": "개월", "주": "주", "일": "일"}[gran]
-                _tot = g2.groupby("_p")["매출"].sum().reindex(periods).fillna(0)
-                if len(periods) >= 2:
-                    _ma = _tot.rolling(win, min_periods=1).mean().round(0)
-                    fig.add_trace(go.Scatter(
-                        x=labels, y=_ma.values, name=f"{win}{ma_unit} 평균(합계)",
-                        line=dict(color="#1a1a2e", width=2.5, dash="dot"),
-                        hovertemplate="%{x}<br>평균 %{y:,.0f}원<extra></extra>"))
-                fig.update_layout(
-                    height=340, barmode="stack", yaxis_tickformat=",",
-                    legend=dict(orientation="h", y=1.12, x=0), margin=dict(t=24, b=4),
-                )
-                fig.update_xaxes(type="category")
-                st.plotly_chart(fig, use_container_width=True)
-                st.caption("막대는 IP구분(아티스트·캐릭터·렌탈·PICK)별로 쌓았어요. "
-                           "위 ‘구분 선택’이나 범례 클릭으로 원하는 구분만 볼 수 있어요.")
-
-        with col_right:
-            st.markdown('<div class="section-title purple">🌏 국가별 매출 비중</div>', unsafe_allow_html=True)
-            nat_pie_full = (
-                sales.groupby("국가", observed=True)["매출액"].sum()
-                .reset_index().sort_values("매출액", ascending=False)
-            )
-            TOPN_PIE = 7
-            if len(nat_pie_full) > TOPN_PIE:
-                head_p = nat_pie_full.head(TOPN_PIE)
-                etc_sum = int(nat_pie_full.iloc[TOPN_PIE:]["매출액"].sum())
-                nat_pie = pd.concat(
-                    [head_p, pd.DataFrame([{"국가": f"기타 {len(nat_pie_full) - TOPN_PIE}개국", "매출액": etc_sum}])],
-                    ignore_index=True,
-                )
+                st.info("데이터가 없어요.")
+            helpbox("""
+**IP 구분 비중**
+- `IP구분`별 매출액 합의 비중(도넛). 색은 아티스트·캐릭터·렌탈·PICK·기획P 고정색.
+""")
+    with _c2:
+        with card("🏷 상품 카테고리 비중"):
+            pc = (sales.groupby("브랜드", observed=True)["매출액"].sum().rename("매출")
+                  .reset_index().sort_values("매출", ascending=False))
+            pc = pc[pc["브랜드"].astype(str).str.strip().replace("nan", "").ne("") & (pc["매출"] > 0)]
+            if len(pc) > 4:
+                pc = pd.concat([pc.head(3), pd.DataFrame([{
+                    "브랜드": f"기타 {len(pc) - 3}종",
+                    "매출": int(pc.iloc[3:]["매출"].sum())}])], ignore_index=True)
+            if not pc.empty and pc["매출"].sum() > 0:
+                css_donut(list(zip(pc["브랜드"].astype(str), pc["매출"])),
+                          ["var(--brand-2)", "var(--amber)", "#7c77ee", "#c7ccd6"])
             else:
-                nat_pie = nat_pie_full
-            fig2 = px.pie(
-                nat_pie, values="매출액", names="국가", hole=0.5,
-                color_discrete_sequence=[PRIMARY, SECONDARY, ACCENT, PINK,
-                                         "#3a0ca3", "#4895ef", "#f8961e", "#ced4da"],
-            )
-            fig2.update_traces(
-                sort=False, textposition="inside", texttemplate="%{percent}",
-                hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>",
-            )
-            fig2.update_layout(
-                height=320, margin=dict(t=10, b=0),
-                legend=dict(orientation="v", y=0.5, x=1.0, font_size=11),
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-            st.caption("상위 7개국 + 기타. 국가별 전체 수치는 ‘🌏 국가별 분석’ 탭 참고.")
+                st.info("데이터가 없어요.")
+            helpbox("""
+**상품 카테고리 비중**
+- `브랜드`(상품 카테고리)별 매출액 합. 요약이라 상위 3 + '기타 N종' 묶음.
+""")
 
-    # 매장 TOP10 + 타이틀(IP) TOP10
-    with st.container(border=True):
-        col_c, col_d = st.columns(2)
-        with col_c:
-            st.markdown('<div class="section-title">🏬 매장별 매출 TOP 10</div>', unsafe_allow_html=True)
-            store_df = (
-                sales.groupby("매장 이름", observed=True)
-                .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
-                .reset_index().nlargest(10, "매출").sort_values("매출")
-            )
-            fig5 = px.bar(
-                store_df, x="매출", y="매장 이름", orientation="h",
-                color="매출", color_continuous_scale="Blues", custom_data=["건수"],
-            )
-            fig5.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-            fig5.update_layout(height=380, coloraxis_showscale=False,
-                               xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-            st.plotly_chart(fig5, use_container_width=True)
-
-        with col_d:
-            st.markdown('<div class="section-title">🎬 타이틀 TOP 10 <span style="font-weight:500;color:#8a8aa0;font-size:.85rem">(날짜+IP · 한·영 통합)</span></div>', unsafe_allow_html=True)
-            title_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()]
-            title_all = (
-                title_src.groupby("타이틀", observed=True)
-                .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
-                .reset_index().sort_values("매출", ascending=False)
-            )
-            title_df = title_all.nlargest(10, "매출").sort_values("매출")
-            fig6 = px.bar(
-                title_df, x="매출", y="타이틀", orientation="h",
-                color="매출", color_continuous_scale="Oranges", custom_data=["건수"],
-            )
-            fig6.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-            fig6.update_layout(height=380, coloraxis_showscale=False,
-                               xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-            st.plotly_chart(fig6, use_container_width=True)
-            with st.expander(f"📋 전체 타이틀 보기 ({len(title_all):,}개)"):
-                t_show = title_all.reset_index(drop=True)
-                t_show.index = t_show.index + 1
-                st.dataframe(
-                    t_show, use_container_width=True, height=400,
-                    column_config={
-                        "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
-                        "건수": st.column_config.NumberColumn("건수", format="localized"),
-                    },
-                )
-
-# ════════════ 탭 2: 국가별 분석 ════════════
-with tab_nat:
-    with st.container(border=True):
-        st.markdown('<div class="section-title">🌏 국가별 매출 분석</div>', unsafe_allow_html=True)
-        col_nat_tbl, col_nat_bar = st.columns([3, 2])
-
-        nat = (
-            sales.groupby(["국가", "결제 단위"], observed=True)
-            .agg(건수=("건수", "sum"), 현지통화=("최종 결제 금액", "sum"), 매출=("매출액", "sum"),
-                 _쿠폰=("쿠폰기여", "sum"), _코인=("코인기여", "sum"))
-            .reset_index().sort_values("매출", ascending=False)
-        )
-        nat["국기"] = nat["국가"].astype(str).apply(flag_url)
-        nat["현지 통화 금액"] = nat.apply(lambda r: fmt_orig(r["현지통화"], r["결제 단위"]), axis=1)
-        _tot = nat["매출"].sum()
-        nat["비중"] = (nat["매출"] / _tot) if _tot else 0
-        # 매출 중 쿠폰·서비스코인 비중 (높을수록 쿠폰 기반 시장)
-        nat["쿠폰·코인"] = (
-            (nat["_쿠폰"] + nat["_코인"]) / nat["매출"].where(nat["매출"] != 0, 1)
-        ).fillna(0).clip(0, 1)
-
-        with col_nat_tbl:
-            _rows = "".join(
-                "<tr>"
-                f'<td>{flag_img(r["국가"])}{r["국가"]}</td>'
-                f'<td class="c">{r["결제 단위"]}</td>'
-                f'<td class="r">{int(r["건수"]):,}</td>'
-                f'<td class="r">{r["현지 통화 금액"]}</td>'
-                f'<td class="r">₩{int(r["매출"]):,}</td>'
-                f'<td class="r">{r["쿠폰·코인"]*100:.0f}%</td>'
-                f'<td class="r">{r["비중"]*100:.1f}%</td>'
-                "</tr>"
-                for _, r in nat.iterrows()
-            )
-            st.markdown(
-                "<style>.natbl{width:100%;border-collapse:collapse;"
-                "font-family:'Pretendard','Malgun Gothic',sans-serif;font-size:13.5px;color:#1a1a2e;}"
-                ".natbl thead th{padding:8px 12px;border-bottom:1.5px solid #e6eaf2;text-align:left;"
-                "font-size:12px;font-weight:700;color:#8a90a2;letter-spacing:-0.2px;"
-                "position:sticky;top:0;background:#fff;z-index:1;}"
-                ".natbl tbody td{padding:9px 12px;border-bottom:1px solid #f0f2f7;white-space:nowrap;"
-                "font-weight:500;letter-spacing:-0.2px;}"
-                ".natbl tbody td:first-child{font-weight:600;}"
-                ".natbl td.r{text-align:right;font-variant-numeric:tabular-nums;}"
-                ".natbl td.c{text-align:center;color:#8a90a2;font-weight:500;}"
-                ".natbl tbody tr:hover td{background:#f6f8fc;}</style>"
-                '<div style="max-height:460px;overflow:auto;">'
-                '<table class="natbl"><thead><tr>'
-                '<th>국가</th><th style="text-align:center;">통화</th><th style="text-align:right;">건수</th>'
-                '<th style="text-align:right;">현지 통화 금액</th><th style="text-align:right;">매출 (₩)</th>'
-                '<th style="text-align:right;">쿠폰·코인</th><th style="text-align:right;">비중</th>'
-                '</tr></thead><tbody>' + _rows + "</tbody></table></div>",
-                unsafe_allow_html=True,
-            )
-            st.caption("전체 {}개국 · 매출 내림차순. ‘쿠폰·코인’이 높은 국가는 매출 대부분이 쿠폰 정산분이에요.".format(len(nat)))
-
-        with col_nat_bar:
-            TOPN = 10
-            nat_bar = nat.copy()
-            if len(nat_bar) > TOPN:
-                top = nat_bar.head(TOPN)
-                rest = nat_bar.iloc[TOPN:]
-                others = pd.DataFrame([{
-                    "국가": f"기타 ({len(rest)}개국)", "결제 단위": "-",
-                    "건수": int(rest["건수"].sum()), "현지 통화 금액": "-",
-                    "매출": int(rest["매출"].sum()), "비중": 0,
-                }])
-                nat_bar = pd.concat([top, others], ignore_index=True)
-            fig3 = px.bar(
-                nat_bar.sort_values("매출"), x="매출", y="국가", orientation="h",
-                color="매출", color_continuous_scale="Purples", custom_data=["건수"],
-            )
-            fig3.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-            fig3.update_layout(height=460, coloraxis_showscale=False,
-                               xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-            st.plotly_chart(fig3, use_container_width=True)
-
-    st.divider()
-    with st.container(border=True):
-        st.markdown('<div class="section-title purple">🏆 국가별 타이틀 TOP 10 <span style="font-weight:500;color:#8a8aa0;font-size:.85rem">(날짜+IP)</span></div>', unsafe_allow_html=True)
-
-        ip_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()].copy()
-
-        if ip_src.empty:
-            st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+    with card("🎞 타이틀 TOP 5 <span class='muted'>(날짜+IP · 한·영 통합)</span>"):
+        _tsrc2 = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()]
+        tr = (_tsrc2.groupby("타이틀", observed=True)["매출액"].sum().rename("매출")
+              .reset_index())
+        tr = tr[tr["매출"] > 0]
+        if not tr.empty:
+            hbar_list(tr, "타이틀", top=5)
         else:
-            nat_order = (
-                ip_src.groupby("국가", observed=True)["매출액"].sum()
-                .sort_values(ascending=False)
-            )
-            nat_choices = [str(c) for c in nat_order.index.tolist()]
-            sel_nat = st.selectbox(
-                f"국가 선택 (전체 {len(nat_choices)}개국)", nat_choices, key="ip_nat_sel",
-            )
-            cdf = (
-                ip_src[ip_src["국가"] == sel_nat]
-                .groupby("타이틀", observed=True)
-                .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
-                .reset_index().sort_values("매출", ascending=False)
-            )
-            _furl = flag_url(sel_nat)
-            _flag = (f'<img src="{_furl}" width="24" style="vertical-align:middle;'
-                     f'margin-right:6px;border-radius:2px">' if _furl else "")
-            st.markdown(
-                f'{_flag}<b>{sel_nat}</b> · 총 매출 {fmt_krw(int(cdf["매출"].sum()))} · 타이틀 {len(cdf):,}개',
-                unsafe_allow_html=True,
-            )
-            col_ipb, col_ipt = st.columns([3, 2])
-            with col_ipb:
-                top = cdf.head(10).sort_values("매출")
-                fig_c = px.bar(
-                    top, x="매출", y="타이틀", orientation="h",
-                    color="매출", color_continuous_scale="Purples", custom_data=["건수"],
-                )
-                fig_c.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-                fig_c.update_layout(height=max(340, len(top) * 34 + 70), coloraxis_showscale=False,
-                                    xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-                st.plotly_chart(fig_c, use_container_width=True)
-            with col_ipt:
-                ct = cdf.head(15).reset_index(drop=True)
-                ct.index = ct.index + 1
-                st.dataframe(
-                    ct, use_container_width=True, height=max(340, len(top) * 34 + 70),
-                    column_config={
-                        "매출": st.column_config.NumberColumn("매출 (₩)", format="localized"),
-                        "건수": st.column_config.NumberColumn("건수", format="localized"),
-                    },
-                )
+            st.info("타이틀 데이터가 없어요.")
+        helpbox("""
+**타이틀 TOP 5**
+- `타이틀`(날짜+IP 기준, 한·영 통합)별 매출액 합 → 상위 5개.
+""")
 
-# ════════════ 탭 3: IP · 세부 항목 ════════════
+    sec("3", "어디서 파나", "지역 — 국가·매장별 매출 (원화 기준)")
+    _n1, _n2 = st.columns(2)
+    with _n1:
+        with card("🌏 국가별 매출 TOP 6"):
+            nat6 = (sales.groupby("국가", observed=True)["매출액"].sum().rename("매출").reset_index()
+                    ) if "국가" in sales.columns else pd.DataFrame()
+            nat6 = nat6[nat6["매출"] > 0] if not nat6.empty else nat6
+            if not nat6.empty:
+                hbar_list(nat6, "국가", top=6)
+            else:
+                st.info("데이터가 없어요.")
+            helpbox("""
+**국가별 매출 TOP 6**
+- `국가`별 매출액(원화) 합 → 상위 6개국. 나라 비교는 항상 원화 기준.
+""")
+    with _n2:
+        with card("🏬 국가별 매출 TOP 5 매장", key="scard-natsel"):
+            _cs = (sales.groupby("국가", observed=True)["매출액"].sum().sort_values(ascending=False).index.tolist()
+                   if "국가" in sales.columns else [])
+            _cs = [str(c) for c in _cs]
+            if _cs:
+                _pick = st.selectbox("국가", _cs, key="ph_home_store_country", label_visibility="collapsed")
+                _ss = (sales[sales["국가"] == _pick].groupby("매장 이름", observed=True)
+                       .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
+                       .reset_index().sort_values("매출", ascending=False).head(5))
+                _ss = _ss[_ss["매출"] > 0]
+                if not _ss.empty:
+                    hbar_list(_ss, "매장 이름", top=5)
+                    st.caption("선택한 국가의 매출 상위 5개 매장")
+                else:
+                    st.info("이 국가의 매장 데이터가 없어요.")
+            else:
+                st.info("데이터가 없어요.")
+            helpbox("""
+**국가별 매출 TOP 5 매장**
+- 위 셀렉트박스에서 고른 국가의 `매장 이름`별 매출액 합·건수 → 상위 5개.
+""")
+    st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '국가별 분석'·'매장별 분석' 탭에서 봐요.")
+
+# ════════════ 탭 2: IP · 타이틀 분석 ════════════
 with tab_ip:
-    # ── IP 구분별 타이틀 상세 (아티스트/캐릭터/렌탈/PICK/기획 → 각 탭 타이틀 목록) ──
-    if not gub.empty and present:
-        with st.container(border=True):
-            st.markdown('<div class="section-title">🎭 IP 구분별 타이틀 상세 <span style="font-weight:500;color:#8a8aa0;font-size:.85rem">(구분 선택 → 타이틀별 매출)</span></div>',
-                        unsafe_allow_html=True)
+    with card("🎭 IP 구분 (비중 · 매출)"):
+        if not gub.empty:
+            _g1, _g2 = st.columns([5, 5])
+            gg = gub.sort_values("매출", ascending=False)
+            with _g1:
+                colors = [_GUB_COLORS.get(str(g), "#c7ccd6") for g in gg["IP구분"]]
+                css_donut(list(zip(gg["IP구분"].astype(str), gg["매출"])), colors)
+            with _g2:
+                hbar_list(gg.rename(columns={"IP구분": "_n"}), "_n")
+        else:
+            st.info("데이터가 없어요.")
+        helpbox("""
+**IP 구분 (비중 · 매출)**
+- `IP구분`별 매출액 합. 왼쪽 도넛=비중, 오른쪽 막대=구분별 매출액.
+""")
+
+    if present:
+        with card("🎬 IP 구분별 타이틀 상세 <span class='muted'>(구분 선택 → 타이틀별 매출)</span>"):
             _gtabs = st.tabs([f"{_GUB_EMOJI.get(g, '🎬')} {g}" for g in present])
             for _i, _g in enumerate(present):
                 with _gtabs[_i]:
-                    _gubun_title_table(sales[sales["IP구분"] == _g],
-                                       _GUB_COLORS.get(_g, "#999"))
-    st.divider()
+                    _sub = sales[sales["IP구분"] == _g]
+                    _t = (_sub[(_sub["타이틀"] != "") & _sub["타이틀"].notna()]
+                          .groupby("타이틀", observed=True)
+                          .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+                    _t = _t[_t["매출"] > 0]
+                    statrow([("매출", fmt_krw(int(_sub["매출액"].sum()))),
+                             ("건수", f"{tx_count(_sub):,}건"),
+                             ("타이틀 수", f"{len(_t):,}개")])
+                    if _t.empty:
+                        st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+                    else:
+                        rank_table(_t, "타이틀", collapse_after=10)
+        helpbox("""
+**IP 구분별 타이틀 상세**
+- 구분 하위탭 선택 → 그 구분(`IP구분`)의 `타이틀`별 매출액·건수 순위(TOP10 + 나머지 접기). 상단 요약 = 구분 총매출·건수·타이틀 수.
+""")
 
-    with st.container(border=True):
-        if selected_ips:
-            if len(selected_ips) == 1:
-                section_label = f"🔥 [{selected_ips[0]}] IP 상세 분석"
+    @st.fragment
+    def _title_rank():
+        with card("🎞 타이틀 전체 순위", key="scard-titlesel"):
+            _gopts = ["전체"] + present
+            pick = st.selectbox("구분", _gopts, key="ph_title_gubun", label_visibility="collapsed")
+            _src = sales if pick == "전체" else sales[sales["IP구분"] == pick]
+            _src = _src[(_src["타이틀"] != "") & _src["타이틀"].notna()]
+            tt = (_src.groupby("타이틀", observed=True)
+                  .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+            tt = tt[tt["매출"] > 0]
+            st.caption(f"타이틀 {len(tt):,}개 · TOP 10 + 나머지 접기"
+                       + ("" if pick == "전체" else f" · {pick}"))
+            if tt.empty:
+                st.info("데이터가 없어요.")
             else:
-                section_label = f"🔥 [{' + '.join(selected_ips)}] 합산 분석"
-            st.markdown(f'<div class="section-title">{section_label}</div>', unsafe_allow_html=True)
+                rank_table(tt, "타이틀", collapse_after=10)
+            helpbox("""
+**타이틀 전체 순위**
+- '전체' 또는 선택 구분의 `타이틀`별 매출액·건수 → 순위(TOP10 + 나머지 접기).
+""")
 
+    _title_rank()
+
+    # 선택 IP명 상세 (사이드바/필터에서 IP명 고른 경우)
+    if selected_ips:
+        _lbl = (f"🔥 [{selected_ips[0]}] IP 상세 분석" if len(selected_ips) == 1
+                else f"🔥 [{' + '.join(selected_ips)}] 합산 분석")
+        with card(_lbl):
             ip_detail = sales[sales["IP명"].isin(selected_ips)]
             if ip_detail.empty:
                 st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
             else:
-                tot_rev = int(ip_detail["매출액"].sum())
-                tot_cnt = tx_count(ip_detail)
-                nat_cnt = ip_detail["국가"].nunique()
-                st_cnt  = ip_detail["매장 이름"].nunique()
-                ic1, ic2, ic3, ic4 = st.columns(4)
-                ic1.metric("합산 총 매출", fmt_krw(tot_rev))
-                ic2.metric("총 결제 건수", f"{tot_cnt:,}건")
-                ic3.metric("판매 국가 수", f"{nat_cnt}개국")
-                ic4.metric("판매 매장 수", f"{st_cnt}개")
+                statrow([("합산 총 매출", fmt_krw(int(ip_detail["매출액"].sum()))),
+                         ("총 결제 건수", f"{tx_count(ip_detail):,}건"),
+                         ("판매 국가 수", f"{ip_detail['국가'].nunique()}개국"),
+                         ("판매 매장 수", f"{ip_detail['매장 이름'].nunique()}개")])
+                _i1, _i2 = st.columns([5, 5])
+                with _i1:
+                    st.markdown('<div class="ct">📅 일별 매출 추이</div>', unsafe_allow_html=True)
+                    _dl = (ip_detail.groupby("날짜", observed=True)["매출액"].sum()
+                           .reset_index().sort_values("날짜"))
+                    _rows = [(pd.to_datetime(d).strftime("%m/%d"), int(v))
+                             for d, v in zip(_dl["날짜"], _dl["매출액"])]
+                    css_series(_rows, color=PINK, gran="일")
+                with _i2:
+                    st.markdown('<div class="ct">🌏 국가별 매출 분포</div>', unsafe_allow_html=True)
+                    _in = (ip_detail.groupby("국가", observed=True)["매출액"].sum().rename("매출")
+                           .reset_index().sort_values("매출", ascending=False))
+                    _in = _in[_in["매출"] > 0]
+                    if len(_in) > 7:
+                        _in = pd.concat([_in.head(7), pd.DataFrame([{
+                            "국가": f"기타 {len(_in) - 7}개국", "매출": int(_in.iloc[7:]["매출"].sum())}])],
+                            ignore_index=True)
+                    if not _in.empty:
+                        css_donut(list(zip(_in["국가"].astype(str), _in["매출"])), PAL, size=150, hole=48)
+            helpbox("""
+**선택 IP 상세 분석**
+- 필터바에서 고른 `IP명`(복수면 합산)의 매출액 기준 상세: 일별 추이·국가별 분포·합산 지표(총매출·건수·판매 국가/매장 수).
+""")
+    else:
+        st.caption("💡 상단 필터바에서 **IP명**을 고르면 여기에 IP 상세 분석(일별·국가별·합산 비교)이 나와요.")
 
-                if len(selected_ips) >= 2:
-                    st.markdown('<div class="section-title">📊 IP별 매출 비교</div>', unsafe_allow_html=True)
-                    ip_compare = (
-                        ip_detail.groupby("IP명", observed=True)
-                        .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
-                        .reset_index().sort_values("매출", ascending=False)
-                    )
-                    ip_compare["비중"] = (ip_compare["매출"] / ip_compare["매출"].sum() * 100).round(1)
-                    _cmp_colors = ["#7209b7", "#f72585", "#4cc9f0", "#4361ee", "#3a0ca3", "#560bad"]
-                    col_cmp1, col_cmp2 = st.columns([3, 2])
-                    with col_cmp1:
-                        fig_cmp = px.bar(
-                            ip_compare.sort_values("매출"), x="매출", y="IP명", orientation="h",
-                            color="IP명", color_discrete_sequence=_cmp_colors,
-                            custom_data=["건수", "비중"],
-                        )
-                        fig_cmp.update_traces(
-                            hovertemplate="%{y}<br>%{x:,}원  (%{customdata[0]:,}건, %{customdata[1]:.1f}%)<extra></extra>")
-                        fig_cmp.update_layout(height=max(220, len(selected_ips) * 60 + 40), showlegend=False,
-                                              xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-                        st.plotly_chart(fig_cmp, use_container_width=True)
-                    with col_cmp2:
-                        fig_pie_cmp = px.pie(ip_compare, values="매출", names="IP명",
-                                             color_discrete_sequence=_cmp_colors, hole=0.45)
-                        fig_pie_cmp.update_traces(hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
-                        fig_pie_cmp.update_layout(height=max(220, len(selected_ips) * 60 + 40), margin=dict(t=10, b=0))
-                        st.plotly_chart(fig_pie_cmp, use_container_width=True)
-                    tbl_cmp = ip_compare.copy()
-                    tbl_cmp.index = range(1, len(tbl_cmp) + 1)
-                    tbl_cmp["비중"] = tbl_cmp["비중"].apply(lambda x: f"{x:.1f}%")
-                    tbl_cmp["매출"] = tbl_cmp["매출"].apply(fmt_krw)
-                    st.dataframe(tbl_cmp, use_container_width=True)
+# ════════════ 탭 3: 국가별 분석 ════════════
+with tab_nat:
+    if "국가" not in sales.columns or sales.empty:
+        st.info("국가 데이터가 없어요. 필터를 넓혀 보세요.")
+    else:
+        nat = (
+            sales.groupby(["국가", "결제 단위"], observed=True)
+            .agg(건수=("건수", "sum"), 현지=("최종 결제 금액", "sum"), 매출=("매출액", "sum"),
+                 _쿠폰=("쿠폰기여", "sum"), _코인=("코인기여", "sum"))
+            .reset_index()
+        )
+        nat = nat[nat["매출"] > 0].sort_values("매출", ascending=False)
+        tot = nat["매출"].sum()
+        mx = (nat["매출"] / tot).max() if tot else 1.0
 
-                col_ip1, col_ip2 = st.columns(2)
-                with col_ip1:
-                    st.markdown('<div class="section-title">일별 매출 추이</div>', unsafe_allow_html=True)
-                    if len(selected_ips) == 1:
-                        ip_daily = (
-                            ip_detail.groupby("날짜", observed=True)["매출액"].sum()
-                            .reset_index().rename(columns={"매출액": "매출"})
-                        )
-                        ip_daily["날짜_str"] = ip_daily["날짜"].astype(str)
-                        fig_ip_daily = go.Figure()
-                        fig_ip_daily.add_trace(go.Bar(
-                            x=ip_daily["날짜_str"], y=ip_daily["매출"],
-                            marker_color=PINK, opacity=0.85,
-                            hovertemplate="%{x}<br>%{y:,}원<extra></extra>"))
-                        fig_ip_daily.update_layout(height=280, yaxis_tickformat=",",
-                                                   margin=dict(t=10, b=0), showlegend=False)
-                    else:
-                        _colors = ["#7209b7", "#f72585", "#4cc9f0", "#4361ee", "#3a0ca3", "#560bad"]
-                        fig_ip_daily = go.Figure()
-                        for idx, ip_name in enumerate(selected_ips):
-                            ip_d = (
-                                ip_detail[ip_detail["IP명"] == ip_name]
-                                .groupby("날짜", observed=True)["매출액"].sum()
-                                .reset_index().rename(columns={"매출액": "매출"})
-                            )
-                            ip_d["날짜_str"] = ip_d["날짜"].astype(str)
-                            fig_ip_daily.add_trace(go.Scatter(
-                                x=ip_d["날짜_str"], y=ip_d["매출"], name=ip_name[:18], mode="lines+markers",
-                                line=dict(color=_colors[idx % len(_colors)], width=2),
-                                hovertemplate=f"{ip_name[:18]}<br>%{{x}}<br>%{{y:,}}원<extra></extra>"))
-                        ip_total = (
-                            ip_detail.groupby("날짜", observed=True)["매출액"].sum()
-                            .reset_index().rename(columns={"매출액": "매출"})
-                        )
-                        ip_total["날짜_str"] = ip_total["날짜"].astype(str)
-                        fig_ip_daily.add_trace(go.Bar(
-                            x=ip_total["날짜_str"], y=ip_total["매출"], name="합산",
-                            marker_color="rgba(0,0,0,0.1)",
-                            hovertemplate="합산<br>%{x}<br>%{y:,}원<extra></extra>"))
-                        fig_ip_daily.update_layout(height=280, yaxis_tickformat=",",
-                                                   legend=dict(orientation="h", y=1.12, font_size=11),
-                                                   margin=dict(t=30, b=0))
-                    st.plotly_chart(fig_ip_daily, use_container_width=True)
+        with card("🌏 국가별 매출"):
+            grid = "grid-template-columns:1.4fr .6fr .7fr 1.2fr 1.2fr .8fr 1.4fr"
+            html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
+                    '<span>국가</span><span class="c">통화</span><span class="r">건수</span>'
+                    '<span class="r">현지 매출</span><span class="r">KRW 매출</span>'
+                    '<span class="r">쿠폰·코인</span><span>비중</span></div>')
+            for _, r in nat.iterrows():
+                frac = (r["매출"] / tot) if tot else 0
+                _cc = ((r["_쿠폰"] + r["_코인"]) / r["매출"]) if r["매출"] else 0
+                html += (f'<div class="ntr" style="{grid}">'
+                         f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
+                         f'<span class="c"><span class="cur">{r["결제 단위"]}</span></span>'
+                         f'<span class="r num">{int(r["건수"]):,}</span>'
+                         f'<span class="r num">{fmt_orig(r["현지"], r["결제 단위"])}</span>'
+                         f'<span class="r num">{fmt_krw(r["매출"])}</span>'
+                         f'<span class="r num">{_cc * 100:.0f}%</span>{pct_bar(frac, mx)}</div>')
+            st.markdown(html + "</div>", unsafe_allow_html=True)
+            st.caption(f"전체 {len(nat)}개국 · 매출 내림차순. "
+                       "'쿠폰·코인'이 높은 국가는 매출 대부분이 쿠폰·코인 정산분이에요.")
+            helpbox("""
+**국가별 매출 표**
+- `국가`·`결제 단위`(통화)로 묶어: **건수**, **현지 매출**(`최종 결제 금액` 합, 현지통화), **KRW 매출**(매출액 합), **쿠폰·코인**(=(쿠폰기여+코인기여)/매출액 비율), **비중**(전체 KRW 대비).
+- '쿠폰·코인'이 높은 국가(예: 라오스)는 매출 대부분이 쿠폰·코인 정산분이에요.
+""")
 
-                with col_ip2:
-                    st.markdown('<div class="section-title">국가별 매출 분포</div>', unsafe_allow_html=True)
-                    ip_nat = (
-                        ip_detail.groupby("국가", observed=True)["매출액"].sum()
-                        .reset_index().sort_values("매출액", ascending=False)
-                    )
-                    fig_ip_nat = px.pie(ip_nat, values="매출액", names="국가",
-                                        color_discrete_sequence=px.colors.qualitative.Pastel, hole=0.4)
-                    fig_ip_nat.update_traces(hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
-                    fig_ip_nat.update_layout(height=280, margin=dict(t=10, b=0))
-                    st.plotly_chart(fig_ip_nat, use_container_width=True)
+        with card("🍩 국가별 매출 비중"):
+            _pie = nat[["국가", "매출"]].copy()
+            if len(_pie) > 7:
+                _pie = pd.concat([_pie.head(7), pd.DataFrame(
+                    [{"국가": f"기타 {len(nat) - 7}개국", "매출": int(nat.iloc[7:]["매출"].sum())}])],
+                    ignore_index=True)
+            _pie = _pie.sort_values("매출", ascending=False).reset_index(drop=True)
+            css_donut(list(zip(_pie["국가"].astype(str), _pie["매출"])), PAL, size=190, hole=62, legend_fs=14)
+            helpbox("""
+**국가별 매출 비중 (도넛)**
+- 위 표의 국가별 매출액으로 비중. 상위 7개국 + '기타 N개국' 묶음.
+""")
 
-                ip_nat_tbl = (
-                    ip_detail.groupby("국가", observed=True)
-                    .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
-                    .reset_index().sort_values("매출", ascending=False).reset_index(drop=True)
-                )
-                ip_nat_tbl.index = ip_nat_tbl.index + 1
-                ip_nat_tbl["비중"] = (ip_nat_tbl["매출"] / ip_nat_tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
-                ip_nat_tbl["매출"] = ip_nat_tbl["매출"].apply(fmt_krw)
-                st.dataframe(ip_nat_tbl, use_container_width=True, height=min(400, len(ip_nat_tbl) * 40 + 55))
+        with card("🏆 국가별 타이틀 TOP 10 <span class='muted'>(날짜+IP)</span>", key="scard-nattitle"):
+            ip_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()]
+            if ip_src.empty:
+                st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+            else:
+                nat_choices = [str(c) for c in
+                               ip_src.groupby("국가", observed=True)["매출액"].sum()
+                               .sort_values(ascending=False).index.tolist()]
+                sel_nat = st.selectbox("국가", nat_choices, key="ph_ip_nat_sel", label_visibility="collapsed")
+                cdf = (ip_src[ip_src["국가"] == sel_nat].groupby("타이틀", observed=True)
+                       .agg(매출=("매출액", "sum"), 건수=("건수", "sum"))
+                       .reset_index())
+                cdf = cdf[cdf["매출"] > 0]
+                _fl = flag_img(sel_nat, h=14)
+                st.markdown(
+                    '<div style="font-size:13px;color:var(--text-2);margin:8px 0 16px;'
+                    'display:flex;align-items:center;gap:2px">'
+                    f'{_fl}<b style="color:var(--text)">{sel_nat}</b>'
+                    '<span style="color:var(--text-3);margin:0 8px">·</span>'
+                    f'총 매출 <b style="color:var(--text);margin-left:4px">{fmt_krw(int(cdf["매출"].sum()))}</b>'
+                    '<span style="color:var(--text-3);margin:0 8px">·</span>'
+                    f'타이틀 {len(cdf):,}개</div>', unsafe_allow_html=True)
+                if cdf.empty:
+                    st.info("이 국가의 타이틀 데이터가 없어요.")
+                else:
+                    rank_table(cdf, "타이틀", collapse_after=10)
+            helpbox("""
+**국가별 타이틀 TOP 10**
+- 선택 국가의 `타이틀`별 매출액·건수 → 순위(TOP10 + 나머지 접기).
+""")
+
+# ════════════ 탭 4: 매장별 분석 ════════════
+with tab_store:
+    with card("🏬 국가별 매장 전체 순위", key="scard-storesel"):
+        _cs = (sales.groupby("국가", observed=True)["매출액"].sum().sort_values(ascending=False).index.tolist()
+               if "국가" in sales.columns else [])
+        _cs = [str(c) for c in _cs]
+        if not _cs:
+            st.info("데이터가 없어요.")
         else:
-            st.info("👈 사이드바에서 **IP명**을 선택하면 IP 상세 분석이 여기 표시돼요. "
-                    "여러 개를 고르면 합산·비교 분석도 볼 수 있어요.")
+            pick = st.selectbox("국가", ["전체"] + _cs, key="ph_store_country", label_visibility="collapsed")
+            _src = sales if pick == "전체" else sales[sales["국가"] == pick]
+            ss = (_src.groupby("매장 이름", observed=True)
+                  .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+            ss = ss[ss["매출"] > 0]
+            st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기" + ("" if pick == "전체" else f" · {pick}"))
+            if ss.empty:
+                st.info("이 국가의 매장 데이터가 없어요.")
+            else:
+                hbar_list(ss, "매장 이름", collapse_after=10)
+        helpbox("""
+**국가별 매장 전체 순위**
+- '전체' 또는 선택 국가의 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).
+""")
 
-    st.divider()
-
-    # @st.fragment: 검색어/분류기준 입력은 이 조각만 재실행 → 탭 유지·익스팬더 유지·즉시 반응.
-    # 사이드바 필터 값은 인자로 받아, 사이드바 변경 시에만 전체 재실행되며 최신값으로 갱신됨.
+# ════════════ 탭 5: 세부 항목 검색 ════════════
+with tab_detail:
     @st.fragment
-    def _detail_search(date_range, selected_ips, selected_country,
-                       selected_store, selected_brand, selected_ipgubun):
-        with st.container(border=True):
-            st.markdown('<div class="section-title pink">🔎 세부 판매 항목 검색 (프레임 / 구좌 등)</div>',
-                        unsafe_allow_html=True)
-            st.caption("전체 거래에서 프레임·구좌 등 세부 항목을 분류별로 모아 보여줘요. "
-                       "사이드바 필터(날짜·국가·매장·카테고리·IP)가 그대로 적용돼요.  "
+    def _detail_search(date_range, selected_ips, sel_countries,
+                       sel_stores, sel_brands, sel_gubuns):
+        with card("🔎 세부 판매 항목 검색 <span class='muted'>(프레임 / 구좌 등)</span>"):
+            st.caption("전체 거래에서 프레임·구좌 등 세부 항목을 분류별로 모아 봐요. "
+                       "위 필터바(날짜·국가·매장·카테고리·IP)가 그대로 적용돼요.  "
                        "※ 같은 타이틀명이 단가만 다르게 등록된 경우(예: 마카오)는 "
                        "**「타이틀 (이름+단가별)」** 을 고르면 단가별로 나눠서 볼 수 있어요.")
-
+            helpbox("""
+**세부 판매 항목 검색**
+- 선택한 `분류 기준`(프레임·구좌·타이틀 등)으로 **DuckDB에서 원거래를 직접 집계**(필터바 날짜·국가·매장·카테고리·IP 반영). 매출액 = 실결제 + 지정국가 쿠폰·코인.
+- 검색어는 항목명 부분일치. 같은 타이틀명이 단가만 다른 경우 '타이틀(이름+단가별)'로 분리해 단가별로 봐요.
+- 결과 표는 CSV로 내려받기 가능.
+""")
             dcol1, dcol2 = st.columns([1, 2])
             with dcol1:
-                sel_dim_label = st.selectbox("분류 기준", list(DETAIL_DIMS.keys()), key="detail_dim")
+                sel_dim_label = st.selectbox("분류 기준", list(DETAIL_DIMS.keys()), key="ph_detail_dim")
             with dcol2:
-                search_kw = st.text_input(
-                    "🔍 검색어 (항목명 일부)", key="detail_search",
-                    placeholder="예: 메인, 화이트, ENHYPEN, EVENT …",
-                )
+                search_kw = st.text_input("🔍 검색어 (항목명 일부)", key="ph_detail_search",
+                                          placeholder="예: 메인, 화이트, ENHYPEN, EVENT …")
 
             if len(date_range) == 2:
                 detail_df = load_sales_detail(
                     DETAIL_DIMS[sel_dim_label], date_range[0], date_range[1],
-                    ip_list=selected_ips or None, country=selected_country,
-                    store=selected_store, brand=selected_brand, ipgubun=selected_ipgubun,
+                    ip_list=selected_ips or None,
+                    countries=tuple(sel_countries), stores=tuple(sel_stores),
+                    brands=tuple(sel_brands), gubuns=tuple(sel_gubuns),
                 )
             else:
                 detail_df = pd.DataFrame()
 
             if detail_df.empty:
                 st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+                return
+            if search_kw.strip():
+                detail_df = detail_df[
+                    detail_df["항목"].astype(str).str.contains(search_kw.strip(), case=False, na=False)]
+            if detail_df.empty:
+                st.warning(f"'{search_kw}'에 대한 검색 결과가 없어요. 다른 검색어로 다시 찾아보세요.")
+                return
+
+            statrow([("검색 항목 수", f"{len(detail_df):,}개"),
+                     ("합계 매출", fmt_krw(int(detail_df["매출"].sum()))),
+                     ("합계 건수", f"{int(detail_df['건수'].sum()):,}건")])
+            st.caption(f"매출 TOP 10 + 나머지 접기 (전체 {len(detail_df):,}개)")
+            rank_table(detail_df.rename(columns={"항목": "_n"}), "_n", collapse_after=10)
+
+            with st.expander(f"📋 전체 표 · CSV ({len(detail_df):,}개)"):
+                tbl = detail_df.copy()
+                tbl.insert(0, "순위", range(1, len(tbl) + 1))
+                tbl["건당 평균"] = (tbl["매출"] / tbl["건수"].replace(0, 1)).round(0).astype("int64")
+                tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
+                tbl["매출"] = tbl["매출"].apply(fmt_krw)
+                tbl["건당 평균"] = tbl["건당 평균"].apply(fmt_krw)
+                tbl = tbl.rename(columns={"항목": sel_dim_label})
+                st.dataframe(tbl, use_container_width=True, height=460, hide_index=True)
+                st.caption("※ **건당 평균** = 매출 ÷ 건수(장당 단가 아님). 한 주문에 2장 이상이면 "
+                           "단가(예: 7,000원)보다 높게, 0원(코인·무료) 거래가 섞이면 낮게 보여요.")
+                csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
+                    index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                st.download_button("세부 항목 CSV 다운로드", csv_d,
+                                   f"photoism_detail_{DETAIL_DIMS[sel_dim_label]}.csv", "text/csv",
+                                   key="ph_detail_csv")
+
+    _detail_search(date_range, selected_ips, sel_countries,
+                   sel_stores, sel_brands, sel_gubuns)
+
+# ════════════ 탭 6: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
+if SHOW_TAB_ETC:
+    with tab_etc:
+        with card("⏰ 시간대별 매출 분포"):
+            df_hourly = load_hourly()
+            if not df_hourly.empty and len(date_range) == 2:
+                df_hourly = df_hourly[
+                    (df_hourly["날짜"] >= date_range[0])
+                    & (df_hourly["날짜"] <= date_range[1])
+                    & (~df_hourly["취소 여부"])
+                ]
+            if df_hourly.empty:
+                st.info("선택한 기간에 시간대 데이터가 없어요. 날짜 범위를 넓혀 보세요.")
             else:
-                if search_kw.strip():
-                    detail_df = detail_df[
-                        detail_df["항목"].astype(str).str.contains(search_kw.strip(), case=False, na=False)
-                    ]
-                if detail_df.empty:
-                    st.warning(f"'{search_kw}'에 대한 검색 결과가 없어요. 다른 검색어로 다시 찾아보세요.")
-                else:
-                    d_rev = int(detail_df["매출"].sum())
-                    d_cnt = int(detail_df["건수"].sum())
-                    dm1, dm2, dm3 = st.columns(3)
-                    dm1.metric("검색 항목 수", f"{len(detail_df):,}개")
-                    dm2.metric("합계 매출", fmt_krw(d_rev))
-                    dm3.metric("합계 건수", f"{d_cnt:,}건")
+                hourly = (
+                    df_hourly[df_hourly["시간대"] >= 0]
+                    .groupby("시간대")["최종 결제 금액"].sum()
+                    .reindex(range(24), fill_value=0)
+                )
+                css_hours([int(v) for v in hourly.tolist()])
+                st.caption("최고 시간대만 진하게 강조했어요."
+                           + ("  ·  ℹ️ 시간대 차트는 날짜 필터만 적용돼요(국가/매장 필터 미적용)."
+                              if (sel_countries or sel_stores or sel_brands) else ""))
 
-                    top_n = detail_df.nlargest(20, "매출").sort_values("매출")
-                    fig_d = px.bar(top_n, x="매출", y="항목", orientation="h",
-                                   color="매출", color_continuous_scale="Tealgrn", custom_data=["건수"])
-                    fig_d.update_traces(hovertemplate="%{y}<br>%{x:,}원 · %{customdata[0]:,}건<extra></extra>")
-                    fig_d.update_layout(height=max(320, len(top_n) * 26 + 60), coloraxis_showscale=False,
-                                        xaxis_tickformat=",", yaxis_title="", margin=dict(t=10, b=0))
-                    st.plotly_chart(fig_d, use_container_width=True)
-                    if len(detail_df) > 20:
-                        st.caption(f"※ 차트는 매출 TOP 20만 표시 (전체 {len(detail_df):,}개는 아래 표·CSV 참고)")
-
-                    tbl = detail_df.copy()
-                    tbl.insert(0, "순위", range(1, len(tbl) + 1))
-                    tbl["건당 평균"] = (tbl["매출"] / tbl["건수"].replace(0, 1)).round(0).astype("int64")
-                    tbl["비중"] = (tbl["매출"] / tbl["매출"].sum() * 100).round(1).apply(lambda x: f"{x:.1f}%")
-                    tbl["매출"]     = tbl["매출"].apply(fmt_krw)
-                    tbl["건당 평균"] = tbl["건당 평균"].apply(fmt_krw)
-                    tbl = tbl.rename(columns={"항목": sel_dim_label})
-                    st.dataframe(
-                        tbl, use_container_width=True, height=480, hide_index=True,
-                        column_config={
-                            "건당 평균": st.column_config.TextColumn(
-                                "건당 평균",
-                                help="매출 ÷ 건수 (건당 평균 매출). 장당 단가가 아니라서, "
-                                     "한 주문에 2장 이상 사면 단가(예: 7,000원)보다 높게, "
-                                     "0원(코인·무료) 거래가 섞이면 낮게 보일 수 있어요.",
-                            ),
-                            "코인건": st.column_config.NumberColumn(
-                                "코인건",
-                                help="서비스코인으로 결제된 건수예요. 마카오처럼 코인을 매출에 "
-                                     "더하지 않는 나라는 이 건들의 매출이 0원이라, 건당 평균이 "
-                                     "낮게 보일 수 있어요. (매출·건수 계산은 정확)",
-                                format="%d",
-                            ),
-                        },
-                    )
-                    st.caption("※ **건당 평균** = 매출 ÷ 건수 (장당 단가가 아니에요). "
-                               "한 주문에 2장 이상이면 단가(예: 7,000원)보다 높게, "
-                               "0원(코인·무료) 거래가 섞이면 낮게 보여요.")
-                    if int(detail_df["코인건"].sum()) > 0:
-                        st.caption("※ `코인건` = 서비스코인 결제 건수. 코인을 매출에 더하지 않는 "
-                                   "나라(예: 마카오)는 이 건들이 매출 0원이라 건당 평균이 낮게 보일 수 있어요.")
-
-                    csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
-                        index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                    st.download_button("세부 항목 CSV 다운로드", csv_d,
-                                       f"photoism_detail_{DETAIL_DIMS[sel_dim_label]}.csv", "text/csv",
-                                       key="detail_csv")
-
-    _detail_search(date_range, selected_ips, selected_country,
-                   selected_store, selected_brand, selected_ipgubun)
-
-# ════════════ 탭 4: 시간대 · 데이터 ════════════
-with tab_etc:
-    with st.container(border=True):
-        st.markdown('<div class="section-title">⏰ 시간대별 매출 분포</div>', unsafe_allow_html=True)
-        df_hourly = load_hourly()
-        if not df_hourly.empty and len(date_range) == 2:
-            df_hourly = df_hourly[
-                (df_hourly["날짜"] >= date_range[0])
-                & (df_hourly["날짜"] <= date_range[1])
-                & (~df_hourly["취소 여부"])
-            ]
-        if df_hourly.empty:
-            st.info("선택한 기간에 시간대 데이터가 없어요. 날짜 범위를 넓혀 보세요.")
-        else:
-            hourly = (
-                df_hourly[df_hourly["시간대"] >= 0]
-                .groupby("시간대")
-                .agg(매출=("최종 결제 금액", "sum"), 건수=("건수", "sum"))
-                .reindex(range(24), fill_value=0).reset_index()
-                .rename(columns={"시간대": "시간"})
-            )
-            hourly["시간_label"] = hourly["시간"].apply(lambda h: f"{h:02d}:00")
-            fig8 = px.bar(hourly, x="시간_label", y="매출",
-                          color="매출", color_continuous_scale="Oranges", custom_data=["건수"])
-            fig8.update_traces(hovertemplate="%{x}<br>%{y:,}원 · %{customdata[0]:,}건<extra></extra>")
-            fig8.update_layout(height=280, coloraxis_showscale=False,
-                               xaxis_title="", yaxis_tickformat=",", margin=dict(t=10, b=0))
-            st.plotly_chart(fig8, use_container_width=True)
-            if selected_country != "전체" or selected_store != "전체" or selected_brand != "전체":
-                st.caption("ℹ️ 시간대 차트는 날짜 필터만 적용됩니다 (국가/매장 필터 미적용)")
-
-    st.divider()
-    with st.expander("🗃 집계 데이터 보기"):
-        # 수십만 행을 매 렌더마다 직렬화하면 느려지므로, 요청 시에만 로드
-        if st.checkbox("데이터 표 불러오기", key="ph_show_raw"):
-            show_cols = ["날짜", "국가", "브랜드", "IP구분", "타이틀", "IP명", "매장 이름",
-                         "타이틀명", "결제 단위", "건수", "최종 결제 금액", "KRW환산금액", "매출액"]
-            available = [c for c in show_cols if c in df.columns]
-            view = df[available].sort_values(
-                ["날짜", "매출액"], ascending=[False, False]).reset_index(drop=True)
-            st.caption(f"총 {len(view):,}행 · 표는 상위 2,000행만 표시 (전체는 CSV)")
-            st.dataframe(view.head(2000), use_container_width=True, height=400)
-            csv_export = view.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-            st.download_button("CSV 다운로드 (전체)", csv_export,
-                               "photoism_filtered.csv", "text/csv")
-        else:
-            st.caption("체크하면 현재 필터 기준 집계 데이터를 표로 불러와요.")
+        with st.expander("🗃 집계 데이터 보기 / 내려받기"):
+            if st.checkbox("데이터 표 불러오기", key="ph_show_raw"):
+                show_cols = ["날짜", "국가", "브랜드", "IP구분", "타이틀", "IP명", "매장 이름",
+                             "타이틀명", "결제 단위", "건수", "최종 결제 금액", "KRW환산금액", "매출액"]
+                available = [c for c in show_cols if c in df.columns]
+                view = df[available].sort_values(
+                    ["날짜", "매출액"], ascending=[False, False]).reset_index(drop=True)
+                st.caption(f"총 {len(view):,}행 · 표는 상위 2,000행만 표시 (전체는 CSV)")
+                st.dataframe(view.head(2000), use_container_width=True, height=400)
+                csv_export = view.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                st.download_button("CSV 다운로드 (전체)", csv_export,
+                                   "photoism_filtered.csv", "text/csv")
+            else:
+                st.caption("체크하면 현재 필터 기준 집계 데이터를 표로 불러와요.")

@@ -23,32 +23,57 @@ st.markdown(f"""
 <style>
 @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
 
-/* ── 사이드바 상단 타이틀 (CMS 매출 대시보드) ── */
+/* ── 사이드바 = 토스/인디고 톤 (새 카드 디자인과 통일) ── */
+[data-testid="stSidebar"] {{ background: #ffffff !important; border-right: 1px solid #eceff4 !important; }}
+/* 상단 타이틀 */
 [data-testid="stSidebarNav"]::before {{
     content: "📊 CMS 매출 대시보드";
-    display: block; padding: 16px 14px 12px; margin-bottom: 4px;
+    display: block; padding: 18px 16px 14px; margin: 0 6px 6px;
     font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
-    font-size: 1.12rem; font-weight: 800; color: {INK}; letter-spacing: -0.3px;
-    border-bottom: 1px solid #e6eaf2; white-space: nowrap;
+    font-size: 1.06rem; font-weight: 800; color: {INK}; letter-spacing: -0.03em;
+    border-bottom: 1px solid #eef1f5; white-space: nowrap;
 }}
-/* 사이드바 nav 항목 = 토스/starfish 스타일 (라운드·아이콘+라벨·활성 연블루) */
+/* nav 항목 = 라운드 pill, 비활성은 회색 톤 다운 */
+[data-testid="stSidebarNav"] ul {{ padding: 4px 0 !important; }}
 [data-testid="stSidebarNav"] a {{
+    position: relative; isolation: isolate;
     font-weight: 600 !important; border-radius: 10px !important;
-    padding: 10px 12px !important; margin: 2px 8px !important; transition: background .12s;
+    padding: 10px 12px !important; margin: 2px 8px !important; color: #4b5563 !important;
+    transition: background .12s, box-shadow .12s;
 }}
 [data-testid="stSidebarNav"] a span, [data-testid="stSidebarNav"] a p {{
     font-family: 'Pretendard', 'Malgun Gothic', sans-serif !important;
-    font-size: 0.93rem !important; font-weight: 600 !important;
+    font-size: 0.92rem !important; font-weight: 600 !important; letter-spacing: -0.02em;
 }}
-[data-testid="stSidebarNav"] a:hover {{ background: #f2f4f8 !important; }}
-[data-testid="stSidebarNav"] a[aria-current="page"] {{ background: #e8f1fe !important; }}
-[data-testid="stSidebarNav"] a[aria-current="page"] span,
-[data-testid="stSidebarNav"] a[aria-current="page"] p {{ color: #3182f6 !important; font-weight: 700 !important; }}
+[data-testid="stSidebarNav"] a:hover {{ background: #f4f5f7 !important; }}
+/* 활성 = 인디고 굵은 글자 + 왼쪽 인디고 액센트 바.
+   ※ Streamlit이 aria-current 없이 emotion 해시로만 활성 구분 → components.html 스크립트가
+   현재 URL과 일치하는 링크에 data-active="1" 표시 + .nav-accent 자식 바를 삽입한다(버전 안정).
+   (활성 pill 배경은 Streamlit 기본 회색을 CSS로 못 덮어서 액센트 바로 강조) */
+[data-testid="stSidebarNavLink"][data-active="1"] span,
+[data-testid="stSidebarNavLink"][data-active="1"] p {{ color: #4f46e5 !important; font-weight: 700 !important; }}
+[data-testid="stSidebarNav"] .nav-accent {{
+    position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
+    background: #4f46e5; border-radius: 0 3px 3px 0; z-index: 2;
+}}
+/* 활성 pill 배경 = 연인디고 (Streamlit 기본 회색을 CSS로 못 덮어 자식 오버레이로 덮음) */
+[data-testid="stSidebarNav"] .nav-fill {{
+    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    border-radius: 10px; background: #eef0fe; z-index: -1; pointer-events: none;
+}}
+/* 사이드바 expander(실시간 환율) = 테두리 박스 제거, nav와 통일된 플랫 톤 */
+[data-testid="stSidebar"] [data-testid="stExpander"] details {{
+    border: none !important; border-radius: 10px !important; background: #f6f7f9 !important;
+}}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {{
+    padding: 8px 12px !important; font-size: 0.86rem !important;
+    font-weight: 600 !important; color: #4b5563 !important;
+}}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {{ background: #eef1f5 !important; }}
 
 [data-testid="stDeployButton"] {{ display: none !important; }}
-[data-testid="stSidebar"] {{ background: #ffffff; border-right: 1px solid #e5e8eb; }}
 /* 사이드바 접기(<) 버튼 잘 보이게 */
-[data-testid="stSidebarCollapseButton"] button {{ color: #3182f6 !important; }}
+[data-testid="stSidebarCollapseButton"] button {{ color: #4f46e5 !important; }}
 
 /* ── 사이드바 필터 구분 강화 ── */
 [data-testid="stSidebar"] h2 {{
@@ -152,9 +177,32 @@ components.html("""
         const w=doc.createTreeWalker(root,NodeFilter.SHOW_TEXT);const ns=[];
         while(w.nextNode())ns.push(w.currentNode);
         ns.forEach(n=>{const t=n.textContent.trim();if(T[t])n.textContent=T[t];});}catch(e){}}
+    // 활성 nav 링크에 data-active 표시 (Streamlit이 aria-current 를 안 써서 URL 매칭으로 직접 표시)
+    function markNav(doc){try{
+        const path=(window.parent.location.pathname||'').replace(/[/]+$/,'');
+        doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(a=>{
+            let ap='';try{ap=new URL(a.href).pathname.replace(/[/]+$/,'');}catch(e){}
+            if(ap&&ap===path){
+                a.setAttribute('data-active','1');
+                if(!a.querySelector('.nav-fill')){
+                    const fill=a.ownerDocument.createElement('span');
+                    fill.className='nav-fill';
+                    a.insertBefore(fill,a.firstChild);
+                }
+                if(!a.querySelector('.nav-accent')){
+                    const bar=a.ownerDocument.createElement('span');
+                    bar.className='nav-accent';
+                    a.insertBefore(bar,a.firstChild);
+                }
+            }else{
+                a.removeAttribute('data-active');
+                a.querySelectorAll('.nav-accent,.nav-fill').forEach(function(e){e.remove();});
+            }
+        });}catch(e){}}
     function init(){try{const doc=window.parent.document;
+        markNav(doc);
         const obs=new MutationObserver(ms=>{ms.forEach(m=>{m.addedNodes.forEach(nd=>{
-            if(nd.nodeType===1)tr(nd);});});});
+            if(nd.nodeType===1)tr(nd);});}); markNav(doc);});
         obs.observe(doc.body,{childList:true,subtree:true});}catch(e){}}
     init();
 })();
@@ -179,23 +227,23 @@ pio.templates.default = "plotly_white+premium"
 
 # ── 페이지 순서 (KPI목표 → 스내피즘 → 포토이즘 → IP정산 → 기간후 → 주간) ──
 # url_path 를 명시해 경로 충돌 방지, KPI 를 기본 진입 페이지로 지정
+_is_owner = auth.is_owner(st.user.email if getattr(st, "user", None) else None)
+
 pages = [
     st.Page("views/0_🎯_KPI목표.py",               title="KPI목표",            icon="🎯", url_path="kpi", default=True),
     st.Page("views/0_📊_스내피즘.py",              title="스내피즘",           icon="📊", url_path="snapism"),
     st.Page("views/1_📸_포토이즘.py",              title="포토이즘",           icon="📸", url_path="photoism"),
-    st.Page("views/2_💰_IP정산현황_(스내피즘).py", title="IP정산현황 (스내피즘)", icon="💰", url_path="settlement"),
-    st.Page("views/3_⚠️_기간_후_매출분석.py",       title="기간 후 매출분석",      icon="⚠️", url_path="expired"),
-    st.Page("views/4_📋_주간리포트.py",            title="주간리포트",          icon="📋", url_path="weekly"),
 ]
+# IP정산현황·기간 후 매출분석 = 소유자 전용 (다른 계정 사이드바엔 숨김 + url 접근도 차단)
+if _is_owner:
+    pages.append(st.Page("views/2_💰_IP정산현황_(스내피즘).py", title="IP정산현황 (스내피즘)", icon="💰", url_path="settlement"))
+    pages.append(st.Page("views/3_⚠️_기간_후_매출분석.py",       title="기간 후 매출분석",      icon="⚠️", url_path="expired"))
+pages.append(st.Page("views/4_📋_주간리포트.py",            title="주간리포트",          icon="📋", url_path="weekly"))
 
-# 소유자에게만 노출 (SM 촬영현황·접속 로그는 소유자 전용)
-if auth.is_owner(st.user.email if getattr(st, "user", None) else None):
-    pages.append(
-        st.Page("views/6_🎬_SM촬영현황.py", title="SM 촬영현황", icon="🎬", url_path="sm-shooting")
-    )
-    pages.append(
-        st.Page("views/5_🔐_접속관리.py", title="접속·계정 관리", icon="🔐", url_path="admin")
-    )
+# SM 촬영현황·접속 로그도 소유자 전용
+if _is_owner:
+    pages.append(st.Page("views/6_🎬_SM촬영현황.py", title="SM 촬영현황", icon="🎬", url_path="sm-shooting"))
+    pages.append(st.Page("views/5_🔐_접속관리.py", title="접속·계정 관리", icon="🔐", url_path="admin"))
 
 pg = st.navigation(pages)
 

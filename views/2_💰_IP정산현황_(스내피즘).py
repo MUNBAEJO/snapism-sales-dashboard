@@ -332,7 +332,8 @@ with col_map3:
     if st.button("💾 매핑 저장", use_container_width=True):
         save_mapping(selected_ip, selected_frames)
         st.success("매핑을 저장했어요. 다음번 정산에 자동으로 적용돼요.")
-        st.cache_data.clear()
+        # 매핑 파일은 캐시하지 않으므로(load_mapping 무캐시) 전역 캐시를 비울 필요가 없다.
+        # 전역 st.cache_data.clear() 는 다른 사용자의 무거운 매출 캐시까지 날려 제거함.
 
 st.divider()
 

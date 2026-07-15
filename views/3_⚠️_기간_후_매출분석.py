@@ -171,7 +171,7 @@ exclude_far   = st.sidebar.checkbox("무기한 타이틀 제외", value=True,
 with st.sidebar:
     if st.button("🔄 Jira 새로고침"):
         fetch_ip_dates(brand="all", force_refresh=True)
-        st.cache_data.clear()
+        load_jira.clear()   # Jira 캐시만 국소 무효화(전역 clear 로 타 사용자 매출 캐시까지 날리지 않게)
         st.rerun()
 
 # ── 로드 ─────────────────────────────────────────────────────

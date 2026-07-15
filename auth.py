@@ -11,6 +11,8 @@ CMS 매출 대시보드 — Google 로그인 + 승인제 접근 통제
 Google OAuth 클라이언트/콘솔 설정은 .streamlit/secrets.toml 에 있다.
 """
 import json
+import os
+import time
 import datetime
 from pathlib import Path
 
@@ -21,7 +23,7 @@ ALLOWED_USERS_PATH = BASE_DIR / "allowed-users.json"
 ACCESS_LOG_PATH    = BASE_DIR / "logs" / "dashboard_access.log"
 
 # 소유자 — 전체 권한 + 계정 승인 권한 (deploy-checker ALLOWED_EMAILS 와 동일)
-OWNER_EMAILS = {"ansqo34@seobuk.kr"}
+OWNER_EMAILS = {"ansqo34@seobuk.kr", "kyung@seobuk.kr", "cbi9406@seobuk.kr"}
 # (선택) 도메인 통째 허용. 비우면 승인제만. 예: "seobuk.kr"
 ALLOWED_DOMAIN = ""
 
@@ -30,25 +32,110 @@ SESSION_MAX_SECONDS = 2 * 60 * 60  # 2시간
 
 
 # ── 승인 계정 스토어 ──────────────────────────────────────────────
+# 역할(role): owner=코드 고정(OWNER_EMAILS, 최고권한) / editor=열람+일부 편집 / viewer=열람 전용.
+# allowed-users.json 스키마: {"approved": {"email": "editor|viewer"}, "pending": ["email"]}
+# (구버전 approved=["email", ...] 리스트도 자동으로 viewer 로 승격해 읽음 → 마이그레이션 불필요)
+ROLES = ("editor", "viewer")
+_LOCK_PATH = ALLOWED_USERS_PATH.with_suffix(".json.lock")
+
+
+def _normalize_users(v: dict) -> dict:
+    ap = v.get("approved", {})
+    if isinstance(ap, list):                       # 구버전(평면 리스트) → 전부 viewer
+        ap = {str(e).strip().lower(): "viewer" for e in ap if str(e).strip()}
+    elif isinstance(ap, dict):
+        ap = {str(e).strip().lower(): (r if r in ROLES else "viewer")
+              for e, r in ap.items() if str(e).strip()}
+    else:
+        ap = {}
+    pend = [str(e).strip().lower() for e in v.get("pending", []) if str(e).strip()]
+    return {"approved": ap, "pending": pend}
+
+
 def _load_users() -> dict:
     try:
-        v = json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8"))
-        return {
-            "approved": [str(e).strip().lower() for e in v.get("approved", []) if str(e).strip()],
-            "pending":  [str(e).strip().lower() for e in v.get("pending",  []) if str(e).strip()],
-        }
+        return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        return {"approved": {}, "pending": []}
     except Exception:
-        return {"approved": [], "pending": []}
+        # 파싱 실패(쓰기 도중 등). 원자적 저장으로 거의 없지만, 만약 발생하면 짧게 재시도해
+        # 반쯤 쓰인 파일 때문에 승인된 사용자가 '승인 대기'로 튕기는 사고를 막는다.
+        for _ in range(3):
+            time.sleep(0.05)
+            try:
+                return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+        return {"approved": {}, "pending": []}
 
 
 def _save_users(u: dict) -> None:
-    ALLOWED_USERS_PATH.write_text(
-        json.dumps(u, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # 임시파일에 쓰고 os.replace 로 원자적 교체 → 다른 세션의 torn read(반쯤 쓰인 파일) 방지.
+    tmp = ALLOWED_USERS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(u, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, ALLOWED_USERS_PATH)
+
+
+def _acquire_lock(timeout: float = 5.0):
+    """단순 파일락(O_CREAT|O_EXCL). read-modify-write 경합(lost update) 방지용.
+    15초 넘은 락은 스테일로 보고 제거. 실패해도 None 반환(원자적 저장이 최소 보장)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            fd = os.open(str(_LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return _LOCK_PATH
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(_LOCK_PATH) > 15:
+                    os.unlink(_LOCK_PATH)
+                    continue
+            except OSError:
+                pass
+            time.sleep(0.05)
+        except OSError:
+            return None
+    return None
+
+
+def _release_lock(lock) -> None:
+    if lock:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
+
+
+def _mutate_users(fn) -> None:
+    """락 하에서 load → fn(u) 로 in-place 수정 → 원자적 save. 동시 승인/역할변경 경합 방지."""
+    lock = _acquire_lock()
+    try:
+        u = _load_users()
+        fn(u)
+        _save_users(u)
+    finally:
+        _release_lock(lock)
 
 
 def is_owner(email: str | None) -> bool:
     return bool(email) and email.strip().lower() in OWNER_EMAILS
+
+
+def get_role(email: str | None) -> str | None:
+    """owner / editor / viewer / None(미승인). owner 는 코드 고정."""
+    if not email:
+        return None
+    e = email.strip().lower()
+    if e in OWNER_EMAILS:
+        return "owner"
+    if ALLOWED_DOMAIN and e.endswith("@" + ALLOWED_DOMAIN):
+        return "viewer"
+    return _load_users()["approved"].get(e)
+
+
+def can_edit(email: str | None) -> bool:
+    """편집 권한(목표 수정·RS율 등) — owner·editor 만."""
+    return get_role(email) in ("owner", "editor")
 
 
 def can_access(email: str | None) -> bool:
@@ -64,11 +151,13 @@ def can_access(email: str | None) -> bool:
 
 def _add_pending(email: str) -> None:
     e = email.strip().lower()
-    u = _load_users()
-    if e in u["approved"] or e in u["pending"]:
-        return
-    u["pending"].append(e)
-    _save_users(u)
+
+    def _fn(u):
+        if e in u["approved"] or e in u["pending"]:
+            return
+        u["pending"].append(e)
+
+    _mutate_users(_fn)
 
 
 def _user_claim(key: str):
@@ -282,7 +371,8 @@ def render_sidebar_account() -> None:
     st.sidebar 안에 그려서 사이드바를 접으면 함께 사라지고 너비도 사이드바에 맞춰진다.
     로그아웃은 Streamlit 기본 경로(/auth/logout) 링크로 처리."""
     email = (st.user.email or "").strip().lower()
-    role = "소유자" if is_owner(email) else "승인 계정"
+    _RL = {"owner": "소유자", "editor": "에디터", "viewer": "뷰어"}
+    role = _RL.get(get_role(email), "승인 계정")
     initial = (email[:1] or "?").upper()
     st.sidebar.markdown(
         f"""
@@ -345,6 +435,8 @@ def _pretty_event(ev: str) -> str:
         return "🚫 거절 → " + ev.split(":", 1)[1]
     if ev.startswith("revoke:"):
         return "⛔ 해제 → " + ev.split(":", 1)[1]
+    if ev.startswith("role:"):
+        return "🔧 역할변경 → " + ev.split(":", 1)[1]
     return ev
 
 
@@ -379,6 +471,7 @@ def render_admin_console() -> None:
     tab_users, tab_logs = st.tabs(["👥 계정 승인", "📜 접속 로그"])
 
     # ── 계정 승인 ──
+    _ROLE_LABEL = {"editor": "✏️ 에디터(편집)", "viewer": "👁 뷰어(열람)"}
     with tab_users:
         u = _load_users()
         with st.container(border=True):
@@ -386,11 +479,14 @@ def render_admin_console() -> None:
             st.markdown(f"**승인 대기**  ({pend_n}건)")
             if u["pending"]:
                 for e in u["pending"]:
-                    c1, c2, c3 = st.columns([4, 1, 1])
+                    c1, c2, c3, c4 = st.columns([3.4, 1.7, 1, 1])
                     c1.write(e)
-                    if c2.button("승인", key=f"ap_{e}", type="primary"):
-                        _approve(e); _log_access(email, f"approve:{e}"); st.rerun()
-                    if c3.button("거절", key=f"rj_{e}"):
+                    _r = c2.selectbox("역할", list(ROLES), key=f"aprole_{e}",
+                                      format_func=lambda x: _ROLE_LABEL.get(x, x),
+                                      label_visibility="collapsed")
+                    if c3.button("승인", key=f"ap_{e}", type="primary"):
+                        _approve(e, _r); _log_access(email, f"approve:{e}={_r}"); st.rerun()
+                    if c4.button("거절", key=f"rj_{e}"):
                         _reject(e); _log_access(email, f"reject:{e}"); st.rerun()
             else:
                 st.caption("대기 중인 계정이 없어요.")
@@ -398,14 +494,21 @@ def render_admin_console() -> None:
         with st.container(border=True):
             st.markdown(f"**승인된 계정**  ({len(u['approved'])}명)")
             if u["approved"]:
-                for e in u["approved"]:
-                    c1, c2 = st.columns([5, 1])
+                for e, r in u["approved"].items():
+                    c1, c2, c3, c4 = st.columns([3.4, 1.7, 1, 1])
                     c1.write(e)
-                    if c2.button("해제", key=f"rv_{e}"):
+                    _idx = list(ROLES).index(r) if r in ROLES else list(ROLES).index("viewer")
+                    _nr = c2.selectbox("역할", list(ROLES), index=_idx, key=f"role_{e}",
+                                       format_func=lambda x: _ROLE_LABEL.get(x, x),
+                                       label_visibility="collapsed")
+                    if c3.button("역할 변경", key=f"chg_{e}", disabled=(_nr == r)):
+                        set_role(e, _nr); _log_access(email, f"role:{e}={_nr}"); st.rerun()
+                    if c4.button("해제", key=f"rv_{e}"):
                         _revoke(e); _log_access(email, f"revoke:{e}"); st.rerun()
             else:
                 st.caption("승인된 계정이 없어요.")
-            st.caption("· 소유자 계정은 항상 접근 가능하며 목록에 표시되지 않습니다.")
+            st.caption("· 소유자 계정은 항상 최고 권한이며 목록에 표시되지 않습니다.  "
+                       "· **에디터** = 열람 + 일부 편집(목표·RS율 등), **뷰어** = 열람 전용.")
 
     # ── 접속 로그 ──
     with tab_logs:
@@ -421,24 +524,33 @@ def render_admin_console() -> None:
                 st.caption("아직 접속 기록이 없어요.")
 
 
-def _approve(email: str) -> None:
+def _approve(email: str, role: str = "viewer") -> None:
     e = email.strip().lower()
-    u = _load_users()
-    u["pending"] = [x for x in u["pending"] if x != e]
-    if e not in u["approved"]:
-        u["approved"].append(e)
-    _save_users(u)
+    role = role if role in ROLES else "viewer"
+
+    def _fn(u):
+        u["pending"] = [x for x in u["pending"] if x != e]
+        u["approved"][e] = role
+
+    _mutate_users(_fn)
 
 
 def _reject(email: str) -> None:
     e = email.strip().lower()
-    u = _load_users()
-    u["pending"] = [x for x in u["pending"] if x != e]
-    _save_users(u)
+    _mutate_users(lambda u: u.__setitem__("pending", [x for x in u["pending"] if x != e]))
 
 
 def _revoke(email: str) -> None:
     e = email.strip().lower()
-    u = _load_users()
-    u["approved"] = [x for x in u["approved"] if x != e]
-    _save_users(u)
+    _mutate_users(lambda u: u["approved"].pop(e, None))
+
+
+def set_role(email: str, role: str) -> None:
+    e = email.strip().lower()
+    role = role if role in ROLES else "viewer"
+
+    def _fn(u):
+        if e in u["approved"]:
+            u["approved"][e] = role
+
+    _mutate_users(_fn)
