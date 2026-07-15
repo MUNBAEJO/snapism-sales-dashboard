@@ -50,7 +50,10 @@ def ingest():
     else:
         master = pd.DataFrame()
 
-    csv_files = sorted(glob.glob(str(RAW_DIR / "*.csv")))
+    # ★수정시각(mtime) 오름차순 정렬 — 가장 최근 다운로드가 맨 뒤로 가서 keep="last"에서 이김.
+    #   파일명순으로 정렬하면 옛 일별파일(kr_20260708.csv)이 최신 범위파일(kr_20260416_20260714.csv)보다
+    #   뒤로 가 취소 전 값이 살아남는 버그가 있었음(대만/한국 취소 미반영의 진짜 원인).
+    csv_files = sorted(glob.glob(str(RAW_DIR / "*.csv")), key=lambda f: Path(f).stat().st_mtime)
     if not csv_files:
         print("raw 폴더에 CSV 파일이 없습니다.")
         print(f"  -> {RAW_DIR} 에 어드민에서 다운받은 CSV를 넣어주세요.")
