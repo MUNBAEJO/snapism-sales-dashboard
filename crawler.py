@@ -213,8 +213,15 @@ def main():
             start_str = end_str = sys.argv[1]
             datetime.strptime(start_str, "%Y-%m-%d")
         else:
-            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-            start_str = end_str = yesterday
+            # 기본: '최근 N일 롤링 재수집'. 판매 후 나중에 생긴 취소·정정을 다시 받아
+            # ingest.py(keep=last)가 옛 행을 덮어쓰게 함. 어제까지만(오늘은 미확정).
+            # N = config.json schedule.sales_lookback_days (기본 14). CMS는 기간 1건으로 내려줌(요청 1회).
+            try:
+                _roll = max(1, int(load_config().get("schedule", {}).get("sales_lookback_days", 14)))
+            except Exception:
+                _roll = 14
+            end_str   = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            start_str = (datetime.now() - timedelta(days=_roll)).strftime("%Y-%m-%d")
     except ValueError as e:
         print(f"날짜 형식 오류: {e}  (올바른 형식: YYYY-MM-DD)")
         sys.exit(1)

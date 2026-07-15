@@ -250,6 +250,32 @@ def run_sm_weekly():
         log(f"SM 주간 수집 오류: {e}")
 
 
+# ── 매출 딥 재수집 (매주 월요일) ─────────────────────────────────
+def run_sales_deep_resync():
+    """매주: 매출을 더 긴 기간(기본 60일) 재수집해 '늦은 취소·정정'까지 반영.
+    일일 크롤은 최근 14일 롤링이라 대부분 잡히지만, 그 이후 발생한 취소를 이 주간 딥이 보완.
+    crawler.py 를 명시적 날짜범위로 호출 → ingest.py(keep=last)가 옛 행을 덮어씀."""
+    try:
+        deep = int(load_config().get("schedule", {}).get("sales_deep_days", 60))
+    except Exception:
+        deep = 60
+    end = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    start = (datetime.now() - timedelta(days=deep)).strftime("%Y-%m-%d")
+    log(f"매출 딥 재수집 시작: {start} ~ {end} ({deep}일)")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(BASE_DIR / "crawler.py"), start, end],
+            cwd=str(BASE_DIR), capture_output=True, text=True, timeout=1800,
+        )
+        log(result.stdout.strip() if result.stdout else "(출력 없음)")
+        log("매출 딥 재수집 완료." if result.returncode == 0
+            else f"매출 딥 재수집 일부 실패 (exit {result.returncode})")
+    except subprocess.TimeoutExpired:
+        log("매출 딥 재수집 타임아웃 (30분 초과)")
+    except Exception as e:
+        log(f"매출 딥 재수집 오류: {e}")
+
+
 def main():
     run_time = load_schedule_time()
     log(f"스케줄러 시작 - 매일 {run_time}에 크롤러 실행 (환율 포함)")
@@ -257,7 +283,8 @@ def main():
 
     schedule.every().day.at(run_time).do(run_crawler)
     schedule.every().day.at(run_time).do(run_photoism_crawler)
-    schedule.every().monday.at("07:00").do(run_sm_weekly)  # SM 촬영수 주간 갱신
+    schedule.every().monday.at("07:00").do(run_sm_weekly)          # SM 촬영수 주간 갱신
+    schedule.every().monday.at("05:00").do(run_sales_deep_resync)  # 매출 60일 딥 재수집(늦은 취소 반영)
 
     # 시작 즉시 환율 1회 갱신
     run_update_rates()

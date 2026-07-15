@@ -128,11 +128,14 @@ def ingest():
         + "|" + (combined["승인번호"].fillna("").astype(str) if "승인번호" in combined.columns else "")
     )
     before = len(combined)
-    combined = combined.drop_duplicates(subset=["_key"])
+    # ★keep="last": 나중에 재수집된(=최신) 행이 이김 → 판매 후 발생한 취소·정정이 옛 행을 덮어씀.
+    #   (concat 순서가 [기존master, 신규]라 last=신규가 승리. 키 필드는 취소돼도 안 바뀌어 정확히 매칭됨.)
+    #   과거엔 keep="first"라 취소 전 옛 행이 유지돼 취소가 영영 반영 안 됐음(대만 사례).
+    combined = combined.drop_duplicates(subset=["_key"], keep="last")
     combined = combined.drop(columns=["_key", "No"], errors="ignore")
     removed = before - len(combined)
     if removed:
-        print(f"  중복 제거: {removed:,}건")
+        print(f"  중복 제거(최신 우선): {removed:,}건")
 
     # 컬럼 정리 (KEEP_COLS 중 존재하는 것만 유지, 나머지는 append)
     existing_keep = [c for c in KEEP_COLS if c in combined.columns]
