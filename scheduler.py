@@ -10,6 +10,7 @@
 """
 import json
 import schedule
+import socket
 import subprocess
 import sys
 import time
@@ -23,6 +24,24 @@ STATE_FILE            = LOG_DIR / "last_run.txt"
 RETRY_STATE_FILE      = LOG_DIR / "retry_today.txt"
 PHOTOISM_STATE_FILE   = LOG_DIR / "photoism_last_run.txt"
 PHOTOISM_RETRY_FILE   = LOG_DIR / "photoism_retry_today.txt"
+
+# 단일 인스턴스 가드 — 고정 포트 바인드. 이미 스케줄러가 돌면 두 번째는 즉시 종료.
+# (부팅 런처 + 워치독이 동시에 띄우려는 경쟁에서 이중 실행=이중 크롤을 방지.
+#  소켓은 프로세스가 죽으면 OS가 자동 해제 → 스테일 락 문제 없음.)
+_SINGLETON_PORT = 47615
+_SINGLETON_SOCK = None
+
+
+def _ensure_single_instance():
+    global _SINGLETON_SOCK
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", _SINGLETON_PORT))
+        s.listen(1)
+        _SINGLETON_SOCK = s          # 프로세스 수명 동안 보유(GC 방지)
+    except OSError:
+        print("스케줄러가 이미 실행 중입니다. 이 인스턴스는 종료합니다.")
+        sys.exit(0)
 
 
 def load_schedule_time():
@@ -277,6 +296,7 @@ def run_sales_deep_resync():
 
 
 def main():
+    _ensure_single_instance()   # 이중 실행 방지(이미 돌면 여기서 종료)
     run_time = load_schedule_time()
     log(f"스케줄러 시작 - 매일 {run_time}에 크롤러 실행 (환율 포함)")
     log(f"로그 파일: {LOG_DIR / 'scheduler.log'}")
