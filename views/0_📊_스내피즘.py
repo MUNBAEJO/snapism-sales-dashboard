@@ -337,6 +337,34 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-scard-filter [data-testid="stDateInput"] label{ display:none !important; }
 .st-key-scard-filter [data-testid="stDateInput"] [data-testid="InputInstructions"]{ display:none !important; }
 .st-key-scard-filter [data-testid="stDateInput"] > div{ margin-bottom:0 !important; }
+
+/* ══ 모바일(폰) 최적화 — 좁은 화면에서 표·카드·차트가 깨지지 않게 ══ */
+@media (max-width:720px){
+  [data-testid="stMainBlockContainer"], .block-container{
+    padding-left:.7rem !important; padding-right:.7rem !important; padding-top:.7rem !important; }
+  h1{ font-size:20px !important; }
+  .kpis{ grid-template-columns:1fr !important; gap:8px; }
+  .kpi.hero .v{ font-size:26px; } .kpi .v{ font-size:20px; }
+  [data-testid="stMain"] [class*="st-key-scard-"]{ padding:12px 12px !important; }
+  .sect{ font-size:16px !important; } .secn{ width:20px; height:20px; }
+  .secq{ margin-left:0 !important; }
+  /* 넓은 표는 가로 스크롤(찌그러짐 방지) */
+  [data-testid="stMarkdownContainer"]:has(.ntbl){ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .ntbl{ min-width:620px; }
+  /* 가로막대 순위 — 이름·금액칸 축소 */
+  .hb{ grid-template-columns:92px 1fr 82px !important; gap:8px !important; }
+  .hb-n, .hb-v{ font-size:12px !important; }
+  /* 도넛 + 범례 세로 스택 */
+  .donut-wrap{ flex-direction:column; align-items:flex-start; gap:12px; }
+  .leg2{ width:100%; }
+  .chart{ height:168px; }
+  /* 상단 탭 가로 스크롤 + 컴팩트 */
+  [data-baseweb="tab-list"]{ overflow-x:auto; overflow-y:hidden; }
+  button[data-baseweb="tab"]{ padding:8px 10px !important; }
+  button[data-baseweb="tab"] p{ font-size:12.5px !important; }
+  /* 범위 배너·캡션 줄바꿈 여유 */
+  .scope{ font-size:11.5px; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -987,9 +1015,20 @@ with tab_home:
                 hbar_list(nat6, "국가", top=6)
             else:
                 st.info("데이터가 없어요.")
+            # 쿠폰으로만 들어온 국가(실결제 0) — 홈에서도 놓치지 않게 요약 스트립(대만 케이스)
+            _paid_nat = set(nat6[nat6["매출"] > 0]["국가"].astype(str)) if not nat6.empty else set()
+            if "국가" in coupons.columns and not coupons.empty:
+                _co = [(str(k), int(v)) for k, v
+                       in coupons.groupby("국가")["쿠폰KRW"].sum().sort_values(ascending=False).items()
+                       if str(k) not in _paid_nat and v > 0]
+                if _co:
+                    _bits = " · ".join(f'{flag_img(k)}{k} <b>{fmt_krw(v)}</b>' for k, v in _co[:6])
+                    st.markdown('<div class="strip">🎟 쿠폰으로만 들어온 국가 (실결제 0) — '
+                                + _bits + '</div>', unsafe_allow_html=True)
             helpbox("""
 **국가별 매출 TOP 6**
 - 실결제 거래를 `국가`로 묶어 `KRW환산금액`(원화) 합 → 상위 6개국. 나라 비교는 항상 원화 기준.
+- 하단 🎟 스트립 = 실결제 0(전액 쿠폰)이라 위 순위엔 안 잡히는 국가의 쿠폰 매출(대만 등).
 """)
     with _n2:
         with card("🏬 국가별 매출 TOP 5 매장", key="scard-hstore"):
@@ -1105,38 +1144,60 @@ with tab_nat:
         st.info("국가 데이터가 없어요.")
     else:
         nat = (pd.concat([sales, coupons]).groupby(["국가", "결제 단위"])
-               .agg(건수=("KRW환산금액", "count"), 현지=("총원화금액", "sum"), 매출=("KRW환산금액", "sum"))
+               .agg(건수=("KRW환산금액", "count"), 현지=("총원화금액", "sum"),
+                    매출=("KRW환산금액", "sum"), 쿠폰=("쿠폰KRW", "sum"))
                .reset_index())
-        nat = nat[nat["매출"] > 0].sort_values("매출", ascending=False)
+        # 실결제(매출)나 쿠폰 매출 중 하나라도 있으면 표시. ★대만처럼 전액 쿠폰 결제(실결제 0)인
+        #   국가가 '매출 0'으로 걸러져 사라지던 문제 수정 — 쿠폰 매출도 함께 보이게.★
+        nat = nat[(nat["매출"] > 0) | (nat["쿠폰"] > 0)].copy()
+        nat["_합"] = nat["매출"] + nat["쿠폰"]
+        nat = nat.sort_values("_합", ascending=False)
         tot = nat["매출"].sum()
         mx = (nat["매출"] / tot).max() if tot else 1.0
+        _has_cpn_only = bool(((nat["매출"] == 0) & (nat["쿠폰"] > 0)).any())
 
         with card("🌏 국가별 매출"):
-            grid = "grid-template-columns:1.4fr .7fr .8fr 1.3fr 1.3fr 1.5fr"
+            grid = "grid-template-columns:1.6fr .6fr .7fr 1.2fr 1.2fr 1.2fr 1.2fr"
             html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
                     '<span>국가</span><span class="c">통화</span><span class="r">건수</span>'
-                    '<span class="r">현지 매출</span><span class="r">KRW 매출</span><span>비중</span></div>')
+                    '<span class="r">현지 매출</span><span class="r">실결제(KRW)</span>'
+                    '<span class="r">쿠폰(KRW)</span><span>실결제 비중</span></div>')
             for _, r in nat.iterrows():
                 frac = (r["매출"] / tot) if tot else 0
+                _only_cpn = (r["매출"] == 0 and r["쿠폰"] > 0)
+                _badge = (' <span style="font-size:10px;font-weight:700;color:#b45309;'
+                          'background:#fdf3e7;padding:1px 6px;border-radius:5px;margin-left:4px">쿠폰만</span>'
+                          if _only_cpn else '')
+                _cpn_cell = (f'<b style="color:var(--amber)">{fmt_krw(int(r["쿠폰"]))}</b>'
+                             if r["쿠폰"] > 0 else '<span style="color:var(--text-3)">—</span>')
                 html += (f'<div class="ntr" style="{grid}">'
-                         f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
+                         f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}{_badge}</span>'
                          f'<span class="c"><span class="cur">{r["결제 단위"]}</span></span>'
                          f'<span class="r num">{int(r["건수"]):,}</span>'
                          f'<span class="r num">{fmt_orig(r["현지"], r["결제 단위"])}</span>'
-                         f'<span class="r num">{fmt_krw(r["매출"])}</span>{pct_bar(frac, mx)}</div>')
+                         f'<span class="r num">{fmt_krw(int(r["매출"]))}</span>'
+                         f'<span class="r num">{_cpn_cell}</span>'
+                         f'{pct_bar(frac, mx)}</div>')
             st.markdown(html + "</div>", unsafe_allow_html=True)
+            if _has_cpn_only:
+                st.caption("💡 **쿠폰만** 표시된 국가(예: 대만)는 전액 쿠폰으로 결제돼 실결제는 0이에요. "
+                           "매출 기준이 실결제(쿠폰 제외)라 예전엔 안 보였는데, 이제 쿠폰 매출로 함께 표시돼요. "
+                           "실결제 비중은 0%가 맞아요.")
             helpbox("""
 **국가별 매출 표**
 - 실결제 + 순수 쿠폰거래(`coupons`)를 합쳐 `국가`·`결제 단위`(통화)로 묶음.
-- **건수** = 거래 수 · **현지 매출** = `총원화금액`(= 최종 결제 금액 + 쿠폰 할인 금액, 현지통화 정가) 합 · **KRW 매출** = `KRW환산금액` 합 · **비중** = 그 나라 KRW 매출 ÷ 전체.
-- '현지 매출'은 통화가 달라 나라끼리 비교 불가 → 비교는 KRW 매출로.
+- **건수** = 거래 수 · **현지 매출** = `총원화금액`(= 최종 결제 금액 + 쿠폰 할인 금액, 현지통화 정가) 합.
+- **실결제(KRW)** = `KRW환산금액` 합(쿠폰 제외) · **쿠폰(KRW)** = `쿠폰KRW` 합 · **실결제 비중** = 그 나라 실결제 ÷ 전체 실결제.
+- ★전액 쿠폰 결제 국가는 실결제=0이라 예전엔 `매출>0` 필터에 걸려 사라졌음 → 이제 `실결제 또는 쿠폰`이 있으면 표시하고 '쿠폰만' 배지를 붙임(대만 케이스).
 """)
 
         with card("🍩 국가별 매출 비중"):
-            _pie = nat[["국가", "매출"]].copy()
+            # 도넛은 실결제 비중 — 쿠폰만(실결제 0) 국가는 제외해 비중이 왜곡되지 않게.
+            _natp = nat[nat["매출"] > 0].sort_values("매출", ascending=False)
+            _pie = _natp[["국가", "매출"]].copy()
             if len(_pie) > 7:
                 _pie = pd.concat([_pie.head(7), pd.DataFrame(
-                    [{"국가": f"기타 {len(nat) - 7}개국", "매출": int(nat.iloc[7:]["매출"].sum())}])],
+                    [{"국가": f"기타 {len(_natp) - 7}개국", "매출": int(_natp.iloc[7:]["매출"].sum())}])],
                     ignore_index=True)
             _pie = _pie.sort_values("매출", ascending=False).reset_index(drop=True)
             css_donut(list(zip(_pie["국가"], _pie["매출"])), PAL, size=190, hole=62, legend_fs=14)
@@ -1184,24 +1245,39 @@ with tab_nat:
 # ════════════ 탭 4: 매장별 분석 (상세, 전체) ════════════
 with tab_store:
     with card("🏬 국가별 매장 전체 순위", key="scard-storesel"):
-        _opts = (sales.groupby("국가")["KRW환산금액"].sum().sort_values(ascending=False).index.tolist()
-                 if "국가" in sales.columns else [])
+        # 실결제+쿠폰을 함께 봐서 전액 쿠폰(실결제 0) 매장·국가도 놓치지 않게(대만 케이스)
+        _base = pd.concat([sales, coupons])
+        _opts = ([str(c) for c in _base.assign(_t=_base["KRW환산금액"] + _base["쿠폰KRW"])
+                  .groupby("국가")["_t"].sum().sort_values(ascending=False).index.tolist()]
+                 if "국가" in _base.columns else [])
         if not _opts:
             st.info("데이터가 없어요.")
         else:
             pick = st.selectbox("국가", ["전체"] + _opts, key="store_country", label_visibility="collapsed")
-            _src = sales if pick == "전체" else sales[sales["국가"] == pick]
-            ss = (_src.groupby("매장 이름").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count"))
+            _src = _base if pick == "전체" else _base[_base["국가"] == pick]
+            ss = (_src.groupby("매장 이름")
+                  .agg(매출=("KRW환산금액", "sum"), 쿠폰=("쿠폰KRW", "sum"), 건수=("KRW환산금액", "count"))
                   .reset_index())
-            ss = ss[ss["매출"] > 0]
+            ss = ss[(ss["매출"] > 0) | (ss["쿠폰"] > 0)]
+            ss_paid = ss[ss["매출"] > 0].sort_values("매출", ascending=False)
+            ss_cpn = ss[(ss["매출"] == 0) & (ss["쿠폰"] > 0)].sort_values("쿠폰", ascending=False)
             st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기" + ("" if pick == "전체" else f" · {pick}"))
-            if ss.empty:
+            if ss_paid.empty and ss_cpn.empty:
                 st.info("이 국가의 매장 데이터가 없어요.")
             else:
-                hbar_list(ss, "매장 이름", collapse_after=10)   # 시안: 가로 막대
+                if not ss_paid.empty:
+                    hbar_list(ss_paid, "매장 이름", collapse_after=10)   # 시안: 가로 막대
+                if not ss_cpn.empty:
+                    _bits = " · ".join(f'{r["매장 이름"]} <b>{fmt_krw(int(r["쿠폰"]))}</b>'
+                                       for _, r in ss_cpn.head(12).iterrows())
+                    _more = f' 외 {len(ss_cpn) - 12}곳' if len(ss_cpn) > 12 else ''
+                    st.markdown('<div class="strip">🎟 쿠폰만 매장 (실결제 0) — '
+                                + _bits + _more + '</div>', unsafe_allow_html=True)
         helpbox("""
 **국가별 매장 전체 순위**
-- '전체' 또는 선택 국가의 실결제 거래를 `매장 이름`으로 묶어 `KRW환산금액` 합·건수 → 순위. TOP 10 + 나머지 접기.
+- 실결제+쿠폰 거래를 `매장 이름`으로 묶어 실결제(`KRW환산금액`)·쿠폰(`쿠폰KRW`) 합.
+- 실결제 있는 매장 = 막대 순위(TOP10 + 나머지 접기). 전액 쿠폰(실결제 0) 매장 = 하단 🎟 스트립에 쿠폰 매출로 표시.
+- ★국가 드롭다운도 실결제+쿠폰 기준이라 대만처럼 쿠폰만 있는 국가도 고를 수 있음.
 """)
 
 # ════════════ 탭 5: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]

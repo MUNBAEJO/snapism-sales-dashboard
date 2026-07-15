@@ -296,6 +296,29 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-scard-nattitle [data-testid="stSelectbox"] div[data-baseweb="select"],
 .st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"]{
   width:fit-content !important; min-width:110px !important; }
+
+/* ══ 모바일(폰) 최적화 — 좁은 화면에서 표·카드·차트가 깨지지 않게 ══ */
+@media (max-width:720px){
+  [data-testid="stMainBlockContainer"], .block-container{
+    padding-left:.7rem !important; padding-right:.7rem !important; padding-top:.7rem !important; }
+  h1{ font-size:20px !important; }
+  .kpis{ grid-template-columns:1fr !important; gap:8px; }
+  .kpi.hero .v{ font-size:26px; } .kpi .v{ font-size:20px; }
+  [data-testid="stMain"] [class*="st-key-scard-"]{ padding:12px 12px !important; }
+  .sect{ font-size:16px !important; } .secn{ width:20px; height:20px; }
+  .secq{ margin-left:0 !important; }
+  [data-testid="stMarkdownContainer"]:has(.ntbl){ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .ntbl{ min-width:640px; }
+  .hb{ grid-template-columns:92px 1fr 82px !important; gap:8px !important; }
+  .hb-n, .hb-v{ font-size:12px !important; }
+  .donut-wrap{ flex-direction:column; align-items:flex-start; gap:12px; }
+  .leg2{ width:100%; }
+  .chart{ height:168px; }
+  [data-baseweb="tab-list"]{ overflow-x:auto; overflow-y:hidden; }
+  button[data-baseweb="tab"]{ padding:8px 10px !important; }
+  button[data-baseweb="tab"] p{ font-size:12.5px !important; }
+  .scope{ font-size:11.5px; }
+}
 </style>
 """, unsafe_allow_html=True)
 
