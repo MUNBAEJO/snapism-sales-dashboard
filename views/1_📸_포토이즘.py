@@ -297,6 +297,19 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"]{
   width:fit-content !important; min-width:110px !important; }
 
+/* ── 사이드바 '관리자 전용' 카드 ── */
+[data-testid="stSidebar"] .st-key-sb-admin{
+  background:#f6f7ff !important; border:1px solid #e4e7fb !important; border-radius:12px !important;
+  padding:11px 12px 7px !important; margin-top:10px !important;
+  box-shadow:0 1px 2px rgba(79,70,229,.05) !important; }
+.sb-admin-hd{ font-size:10.5px; font-weight:800; letter-spacing:.04em; color:var(--brand);
+  text-transform:uppercase; margin:0 0 8px 1px; display:flex; align-items:center; gap:5px; }
+.st-key-sb-admin [data-testid="stCheckbox"]{ margin-bottom:2px; }
+.st-key-sb-admin [data-testid="stCheckbox"] label{ font-size:12.5px !important; font-weight:600 !important; }
+.st-key-sb-admin [data-testid="stExpander"]{ border:none !important; background:transparent !important; box-shadow:none !important; }
+.st-key-sb-admin [data-testid="stExpander"] details{ border:none !important; background:transparent !important; }
+.st-key-sb-admin [data-testid="stExpander"] summary{ padding:4px 2px !important; font-size:12.5px !important; font-weight:600 !important; }
+
 /* ══ 모바일(폰) 최적화 — 좁은 화면에서 표·카드·차트가 깨지지 않게 ══ */
 @media (max-width:720px){
   [data-testid="stMainBlockContainer"], .block-container{
@@ -1010,10 +1023,13 @@ sales = paid_sales(df)
 # ══════════════════════════════════════════════════════════════
 _is_owner = auth.is_owner(getattr(getattr(st, "user", None), "email", None))
 if _is_owner:
-    st.sidebar.markdown("---")
-    st.sidebar.checkbox(
-        "🔧 계산 방식 설명 표시", key="show_calc_help",
-        help="각 카드 아래에 '이 값이 어떻게 계산·검증되는지' 설명을 접기로 보여줘요. 관리자에게만 보입니다.")
+    # 관리자 전용 도구를 하나의 카드로 묶음(계산설명 토글 + 실시간 환율). 아래 환율 expander도 여기에 넣음.
+    _sb_admin = st.sidebar.container(border=True, key="sb-admin")
+    with _sb_admin:
+        st.markdown('<div class="sb-admin-hd">🔧 관리자 전용</div>', unsafe_allow_html=True)
+        st.checkbox(
+            "계산 방식 설명", key="show_calc_help",
+            help="각 카드 아래에 '이 값이 어떻게 계산·검증되는지' 설명을 접기로 보여줘요. 관리자에게만 보입니다.")
 
 
 def helpbox(md):
@@ -1079,14 +1095,15 @@ helpbox("""
 - **쿠폰·코인 매출(정산분)** = `쿠폰기여 + 코인기여` 합 = 매출 합계 − 실결제. 지정 국가에서만 잡혀요.
 """)
 
-# ── 사이드바: 실시간 환율(접기) — 소유자(본인)만 노출 ──
+# ── 사이드바: 실시간 환율(접기) — 소유자(본인)만, 위 '관리자 전용' 카드 안에 함께 ──
 if _is_owner:
-    with st.sidebar.expander("💱 실시간 환율", expanded=False):
-        if cfg.get("rates_updated"):
-            st.caption(f"업데이트 {cfg.get('rates_updated')}")
-        for _cur, _rate in ex.items():
-            if _cur != "KRW":
-                st.caption(f"1 {_cur} = ₩{_rate:,.2f}")
+    with _sb_admin:
+        with st.expander("💱 실시간 환율", expanded=False):
+            if cfg.get("rates_updated"):
+                st.caption(f"업데이트 {cfg.get('rates_updated')}")
+            for _cur, _rate in ex.items():
+                if _cur != "KRW":
+                    st.caption(f"1 {_cur} = ₩{_rate:,.2f}")
 
 # ── IP 구분 요약(탭에서 사용) ──
 gub = pd.DataFrame()

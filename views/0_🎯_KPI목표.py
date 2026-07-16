@@ -102,6 +102,9 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p{ color:var(--brand) !important; font-weight:700 !important; }
 [data-testid="stDataFrame"]{ border-radius:12px; overflow:hidden; }
 hr{ margin:1.2rem 0 !important; border:none !important; border-top:1px solid var(--border) !important; }
+/* 사이드바 '관리자 전용' 헤더 — 스내피즘/포토이즘 관리자 카드와 톤 통일 */
+.sb-admin-hd{ font-size:10.5px; font-weight:800; letter-spacing:.04em; color:#4f46e5;
+  text-transform:uppercase; margin:2px 0 8px 1px; display:flex; align-items:center; gap:5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -819,7 +822,7 @@ SEG_MAP = {"TTL (국내+해외)": "TTL", "국내": "국내", "해외": "해외"}
 # ── 파일 관리: 소유자(나)만 노출 ──────────────────────────────
 if _is_owner:
     st.sidebar.divider()
-    st.sidebar.header("🔒 파일 관리 (소유자)")
+    st.sidebar.markdown('<div class="sb-admin-hd">🔒 관리자 전용 · 파일 관리</div>', unsafe_allow_html=True)
     st.sidebar.caption("**IPX MASTER DATA.xlsx** 업로드 시 REPORT·A팀·C팀 시트 자동 파싱")
     uploaded = st.sidebar.file_uploader("데이터 파일 올리기 (.xlsx / .csv)", type=["xlsx", "csv"])
 else:
