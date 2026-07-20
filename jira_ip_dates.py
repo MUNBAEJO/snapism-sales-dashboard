@@ -112,8 +112,8 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
     brand: "snapism" | "photoism" | "all"
     캐시 1시간 재사용
     """
-    # v2: startdate(시작 날짜) 추가 — 옛 캐시는 이 키를 안 가지므로 자동 재조회됨
-    cache_key = f"ip_dates_v2_{brand}"
+    # v3: startdate 추가 + Task 타입 포함 — 옛 캐시는 이 키가 없어 자동 재조회됨
+    cache_key = f"ip_dates_v3_{brand}"
     if not force_refresh and CACHE_FILE.exists():
         try:
             with open(CACHE_FILE, encoding="utf-8") as f:
@@ -138,9 +138,13 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
             '(Snapism, "사용 X (구 \'Sticker\')", Photoism, "Photoism Colored")'
         )
 
+    # Sub-task 의 '프로그램 및 검수' 뿐 아니라 Task(작업) 타입도 본다.
+    # 일정이 Task 쪽에만 있는 IP 가 있다 — 예: CANDIP-20760 '에이티즈 윤호'
+    # (WBS='에이티즈 윤호', 2026-03-23~04-26). Sub-task 로만 좁히면 통째로 빠진다.
+    # ※ JQL 에서 한글 'issuetype = 작업' 은 매칭 안 됨 → 반드시 영문 Task.
     jql = (
-        f'project = {cfg["project_key"]} AND issuetype = Sub-task '
-        f'AND summary ~ "프로그램 및 검수" '
+        f'project = {cfg["project_key"]} '
+        f'AND ((issuetype = Sub-task AND summary ~ "프로그램 및 검수") OR issuetype = Task) '
         f'AND {brand_jql} '
         f'AND status IN ({_STATUS_JQL}) '
         f'ORDER BY duedate DESC'
@@ -176,16 +180,24 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
             "status":     status,
         }
 
+        def _put(key, wbs_val):
+            # 같은 타이틀에 티켓이 여러 개면 '날짜가 있는 것'을 남긴다.
+            # (Task 를 함께 조회하면서 날짜 없는 티켓이 먼저 와 자리를 차지할 수 있음)
+            prev = mapping.get(key)
+            if prev is not None and (prev.get("startdate") or prev.get("duedate")):
+                return
+            if prev is not None and not (startdate or duedate):
+                return
+            mapping[key] = {**entry_base, "title": key, "wbs_raw": wbs_val}
+
         if wbs_raw:
             # WBS에서 타이틀명 목록 추출 → 각각 개별 키로 저장
-            titles = _parse_wbs_titles(wbs_raw)
-            for title in titles:
-                if title and title not in mapping:
-                    mapping[title] = {**entry_base, "title": title, "wbs_raw": wbs_raw}
-        else:
+            for title in _parse_wbs_titles(wbs_raw):
+                if title:
+                    _put(title, wbs_raw)
+        elif parent_title:
             # WBS 없으면 부모 제목을 키로 (fallback)
-            if parent_title and parent_title not in mapping:
-                mapping[parent_title] = {**entry_base, "title": parent_title, "wbs_raw": ""}
+            _put(parent_title, "")
 
     # 캐시 저장
     CACHE_FILE.parent.mkdir(exist_ok=True)
