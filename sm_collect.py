@@ -42,6 +42,37 @@ LOG_DIR = BASE_DIR / "logs"
 
 SM_REGEX = re.compile(r"sm\s*ent", re.I)
 EXCLUDE_TITLE = ("렌탈", "test", "테스트")
+ARTISTS_FILE = BASE_DIR / "sm_artists.json"
+
+
+def _artist_keys():
+    """sm_artists.json 의 아티스트 키워드(공백/기호 제거·소문자). PICK(PW) 타이틀 매칭용."""
+    try:
+        arts = json.loads(ARTISTS_FILE.read_text(encoding="utf-8")).get("artists", [])
+    except Exception:
+        return []
+    out = []
+    for a in arts:
+        out += [re.sub(r"[\s_\-]", "", str(k)).lower() for k in a.get("kws", []) if str(k).strip()]
+    return [k for k in out if k]
+
+
+_ARTIST_KEYS = _artist_keys()
+
+
+def is_sm_title(title: str) -> bool:
+    """수집 대상 판정.
+      ① 'sm ent' 타이틀 (WITH 구좌 — 기존 방식)
+      ② PICK 구좌 중 SM 아티스트 — 타이틀이 'PW'로 시작하고 아티스트 키워드 포함.
+    ★'PW' 접두는 CMS상 PICK 전용이라(검증: PW 타이틀 IP구분 100% PICK) 오탐이 없다.
+      PW 한정을 빼면 '안재현'(→재현)·'넥스트라이즈'(→라이즈) 같은 오탐이 섞인다."""
+    t = str(title)
+    if any(k in t.lower() for k in EXCLUDE_TITLE):
+        return False
+    if SM_REGEX.search(t):
+        return True
+    n = re.sub(r"[\s_\-]", "", t).lower()
+    return n.startswith("pw") and any(k in n for k in _ARTIST_KEYS)
 
 # 국가별 UTC 오프셋(시간) — fill.py 인계분(2026-06, 북반구 서머타임 반영)
 OFFSET = {
@@ -93,9 +124,7 @@ def fetch_day(cmsapi, token, cc, d: date, off: int):
         rows = ct.get("revenueList") or []
         for x in rows:
             ti = str(x.get("titleName", ""))
-            if not SM_REGEX.search(ti):
-                continue
-            if any(k in ti.lower() for k in EXCLUDE_TITLE):
+            if not is_sm_title(ti):
                 continue
             rows_out.append({
                 "날짜": d.isoformat(), "국가코드": cc.lower(),

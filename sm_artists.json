@@ -212,6 +212,50 @@
           "ryeowook"
         ]
       }
+    },
+    {
+      "name": "재현",
+      "kws": [
+        "jaehyun",
+        "재현"
+      ],
+      "countries": null,
+      "members": {
+        "재현": [
+          "재현",
+          "JAEHYUN"
+        ]
+      }
+    },
+    {
+      "name": "엑소",
+      "kws": [
+        "exo",
+        "엑소"
+      ],
+      "countries": null,
+      "members": {
+        "세훈": [
+          "세훈",
+          "sehun"
+        ],
+        "디오": [
+          "디오",
+          "d.o."
+        ],
+        "카이": [
+          "카이",
+          "kai"
+        ],
+        "찬열": [
+          "찬열",
+          "chanyeol"
+        ],
+        "수호": [
+          "수호",
+          "suho"
+        ]
+      }
     }
   ]
 }
