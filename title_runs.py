@@ -13,6 +13,9 @@ import pandas as pd
 
 BASE_DIR    = Path(__file__).parent
 ALIAS_FILE  = BASE_DIR / "ip_aliases.json"
+# Jira 매칭 전용 별칭(한글 IP명 등). ip_aliases.json 은 포토이즘 집계가 쓰므로
+# 그쪽을 건드리지 않으려고 파일을 분리했다.
+TITLE_ALIAS_FILE = BASE_DIR / "title_aliases.json"
 
 # 런 분리 기준: 판매가 이 일수 이상 끊기면 다른 런으로 본다.
 GAP_DAYS = 21
@@ -30,18 +33,19 @@ _SUFFIX_RE = re.compile(
 
 
 def _load_aliases():
-    """ip_aliases.json → {별칭(정규화): 대표명(정규화)}"""
-    try:
-        raw = json.loads(ALIAS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    """ip_aliases.json + title_aliases.json → {별칭(정규화): 대표명(정규화)}"""
     out = {}
-    for canon, variants in raw.items():
-        if canon.startswith("_"):      # _comment 등 메타 키 제외
+    for path in (ALIAS_FILE, TITLE_ALIAS_FILE):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
             continue
-        key = _squash(canon)
-        for v in variants:
-            out[_squash(v)] = key
+        for canon, variants in raw.items():
+            if canon.startswith("_"):      # _comment 등 메타 키 제외
+                continue
+            key = _squash(canon)
+            for v in variants:
+                out[_squash(v)] = key
     return out
 
 
@@ -84,7 +88,7 @@ def _pick_ticket(entries, first_day, last_day):
     한쪽 날짜만 있는 티켓은 그 날짜 하루짜리로 보고 판단한다.
     런 기간을 last_day 로 늘려잡으면 겹침이 부풀려져서 오탐이 생김.
     """
-    best, best_ov = None, 0
+    best, best_key = None, None
     for e in entries:
         s = pd.to_datetime(e.get("startdate"), errors="coerce")
         d = pd.to_datetime(e.get("duedate"),   errors="coerce")
@@ -95,9 +99,16 @@ def _pick_ticket(entries, first_day, last_day):
         if d < s:
             s, d = d, s
         ov = (min(d, last_day) - max(s, first_day)).days + 1   # 겹치는 일수
-        if ov > best_ov:
-            best, best_ov = e, ov
-    return best, best_ov
+        if ov <= 0:
+            continue
+        # 같은 IP가 두 브랜드에 동시 출시되면 티켓이 둘 다 잡힌다.
+        # 스내피즘 매출이니 Snapism 티켓을 먼저 쓴다 — 브랜드마다 종료일이
+        # 다를 수 있다(TREASURE: Snapism 08-31 / Photoism 09-30).
+        snap = "snapism" in str(e.get("brand", "")).lower()
+        key = (snap, ov)
+        if best_key is None or key > best_key:
+            best, best_key = e, key
+    return best, (best_key[1] if best_key else 0)
 
 
 def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
@@ -207,15 +218,18 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
     for title, g in d.groupby(title_col, sort=False):
         first, last = g["_날짜"].min(), g["_날짜"].max()
 
-        # 이 타이틀의 Jira 종료일 중 기준일에 가장 가까운(=현재 회차) 것
-        due = None
+        # 이 타이틀의 Jira 종료일 중 기준일에 가장 가까운(=현재 회차) 것.
+        # 같은 IP가 두 브랜드에 동시 출시되면 티켓이 둘 다 잡히는데,
+        # 스내피즘 매출이니 Snapism 티켓을 먼저 쓴다(브랜드마다 종료일이 다름).
+        due, due_key = None, None
         for e in jira_keyed.get(normalize_title(title), []):
             v = pd.to_datetime(e.get("duedate"), errors="coerce")
             if pd.isna(v):
                 continue
             v = v.date()
-            if due is None or abs((v - ref).days) < abs((due - ref).days):
-                due = v
+            key = ("snapism" in str(e.get("brand", "")).lower(), -abs((v - ref).days))
+            if due_key is None or key > due_key:
+                due, due_key = v, key
 
         # 조회 기간 뒤로도 팔리고 있으면(last > ref) 유휴 아님 → 0
         idle = max(0, (ref - last).days)
