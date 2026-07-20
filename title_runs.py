@@ -167,6 +167,80 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
     return runs.sort_values(["타이틀", "런번호"]).reset_index(drop=True)
 
 
+# 마지막 거래 후 이 일수 넘게 조용하면 '멈춘' 것으로 본다.
+IDLE_DAYS = 7
+
+# 상태 기호는 KPI 페이지(포토이즘 IP 무버)와 같은 뜻으로 맞춘다.
+STATUS_ORDER = ["🔴 확인필요", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
+
+
+def title_status(df, jira_map=None, period_start=None, period_end=None,
+                 title_col="프레임 이름", date_col="날짜", idle_days=IDLE_DAYS):
+    """
+    타이틀별 판매기간 + 상태 → {타이틀: {...}}
+
+    매출이 빠졌을 때 '끝나서 빠진 것'인지 '안 끝났는데 빠진 것'인지 가르는 게 목적.
+    실제 거래일만으론 그 둘을 구분할 수 없어서(마지막 거래일이 같아 보임)
+    Jira 종료일을 함께 본다. Jira 가 없는 타이틀은 단정하지 않고 '미확인'.
+
+    ★ df 는 '기간으로 자르지 않은' 전체 이력이어야 한다.
+      (국가·매장 같은 다른 필터는 적용해도 됨)
+      기간으로 자른 걸 넘기면 첫 거래일이 전부 기간 시작일로 잡혀서
+      죄다 '신규'로 나온다. 기간은 period_start/period_end 로만 판정한다.
+    """
+    if df is None or df.empty or title_col not in df.columns:
+        return {}
+
+    d = df[df[title_col].notna()].copy()
+    d["_날짜"] = pd.to_datetime(d[date_col], errors="coerce").dt.date
+    d = d[d["_날짜"].notna()]
+    if d.empty:
+        return {}
+
+    ref = period_end or d["_날짜"].max()          # 판정 기준일 = 조회 기간 끝
+    jira_keyed = _jira_by_key(jira_map)
+    out = {}
+
+    for title, g in d.groupby(title_col, sort=False):
+        first, last = g["_날짜"].min(), g["_날짜"].max()
+
+        # 이 타이틀의 Jira 종료일 중 기준일에 가장 가까운(=현재 회차) 것
+        due = None
+        for e in jira_keyed.get(normalize_title(title), []):
+            v = pd.to_datetime(e.get("duedate"), errors="coerce")
+            if pd.isna(v):
+                continue
+            v = v.date()
+            if due is None or abs((v - ref).days) < abs((due - ref).days):
+                due = v
+
+        # 조회 기간 뒤로도 팔리고 있으면(last > ref) 유휴 아님 → 0
+        idle = max(0, (ref - last).days)
+        is_new = period_start is not None and first >= period_start
+
+        if due and due < ref:
+            status = "🔚 종료"          # 예정된 하락 — 급감해도 정상
+        elif is_new:
+            status = "🆕 신규"
+        elif due and idle >= idle_days:
+            status = "🔴 확인필요"      # 판매기간이 남았는데 멈춤 → 점검 대상
+        elif due:
+            status = "⏳ 종료예정" if (due - ref).days <= 30 else "🟢 판매중"
+        elif idle >= idle_days:
+            status = "⚪ 미확인"        # Jira 미연결이라 종료인지 단정 못 함
+        else:
+            status = "🟢 판매중"
+
+        out[title] = {
+            "상태":       status,
+            "첫거래일":   first,
+            "마지막거래일": last,
+            "종료일":     due,
+            "유휴일":     idle,
+        }
+    return out
+
+
 def coverage(runs):
     """Jira 매칭 커버리지 — 화면에 '몇 %가 일정 연결됨'을 표시하기 위한 값."""
     if runs is None or runs.empty:

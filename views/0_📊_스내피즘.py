@@ -108,6 +108,16 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .ntr:not(.nth):hover{ background:var(--surface-2); }
 .ntr .r{ text-align:right; } .ntr .c{ text-align:center; }
 .nname{ font-weight:700; }
+/* 타이틀 상태 배지 + 판매기간 (프레임 순위표) */
+.tstat{ display:inline-block; margin-left:7px; font-size:10.5px; font-weight:700;
+        border-radius:6px; padding:1.5px 6px; white-space:nowrap; vertical-align:middle; }
+.tstat.end{  background:#f1f2f5; color:#6b7280; }
+.tstat.warn{ background:#fdecea; color:var(--red); }
+.tstat.new{  background:var(--brand-soft); color:var(--brand); }
+.tstat.soon{ background:#fdf3e7; color:var(--amber); }
+.tstat.live{ background:#eefaf4; color:var(--green); }
+.tstat.unk{  background:#f6f7f9; color:var(--text-3); }
+.tper{ font-size:11.5px; color:var(--text-2); white-space:nowrap; }
 .cur{ font-size:11px; font-weight:700; color:var(--text-2); background:var(--surface-3); padding:2px 8px; border-radius:6px; }
 .rk{ font-weight:800; color:var(--text-3); font-variant-numeric:tabular-nums; }
 .rk.top{ color:var(--brand); }
@@ -565,15 +575,29 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None):
         st.markdown(_rows(d), unsafe_allow_html=True)
 
 
-def rank_table(dframe, name_col, top=None, collapse_after=None):
-    """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개만 보이고 나머지는 '더보기' 접기."""
+_STAT_CLS = {"🔚": "end", "🔴": "warn", "🆕": "new", "⏳": "soon", "🟢": "live", "⚪": "unk"}
+
+
+def _md(dt):
+    return f"{dt.month:02d}-{dt.day:02d}" if dt else ""
+
+
+def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None):
+    """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개만 보이고 나머지는 '더보기' 접기.
+    status_map={이름:{상태,첫거래일,마지막거래일,...}} 를 주면 상태 배지 + 판매기간 칸이 붙는다."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
     tot = d["매출"].sum()
     mx = (d["매출"] / tot).max() if tot else 1.0
     has_cnt = "건수" in d.columns
-    if has_cnt:
+    has_st = bool(status_map)
+    if has_st:
+        grid = "grid-template-columns:34px 1.75fr 1.2fr .65fr 1.25fr 1.1fr"
+        head = (f'<div class="ntr nth" style="{grid}">'
+                '<span>#</span><span>이름</span><span class="r">매출</span>'
+                '<span class="r">건수</span><span>판매기간</span><span>비중</span></div>')
+    elif has_cnt:
         grid = "grid-template-columns:34px 1.7fr 1.3fr .8fr 1.5fr"
         head = (f'<div class="ntr nth" style="{grid}">'
                 '<span>#</span><span>이름</span><span class="r">매출</span>'
@@ -590,9 +614,22 @@ def rank_table(dframe, name_col, top=None, collapse_after=None):
             rk = f'<span class="rk {"top" if i == 0 else ""}">{i + 1}</span>'
             cnt = (f'<span class="r num" style="color:var(--text-2)">{int(r["건수"]):,}</span>'
                    if has_cnt else "")
-            h += (f'<div class="ntr" style="{grid}">{rk}'
-                  f'<span class="nname">{r[name_col]}</span>'
-                  f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{pct_bar(frac, mx)}</div>')
+            nm = f'<span class="nname">{r[name_col]}</span>'
+            per = ""
+            if has_st:
+                s = status_map.get(r[name_col]) or {}
+                stat = s.get("상태", "")
+                if stat:
+                    ic, _, tx = stat.partition(" ")
+                    nm = (f'<span><span class="nname">{r[name_col]}</span>'
+                          f'<span class="tstat {_STAT_CLS.get(ic, "unk")}">{ic} {tx}</span></span>')
+                # 종료된 건 끝 날짜를 굵게 — '언제 끝났나'가 급감 해석의 핵심
+                _e = _md(s.get("마지막거래일"))
+                _e = f"<b>{_e}</b>" if stat.startswith("🔚") else _e
+                per = (f'<span class="tper num">{_md(s.get("첫거래일"))} ~ {_e}</span>'
+                       if s else '<span class="tper num">—</span>')
+            h += (f'<div class="ntr" style="{grid}">{rk}{nm}'
+                  f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{per}{pct_bar(frac, mx)}</div>')
         return h
 
     if collapse_after and len(d) > collapse_after:
@@ -814,6 +851,35 @@ if sel_ip:
 sales = paid_sales(df)
 coupons = coupon_txns(df)
 cpn_all = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
+
+
+# ── 타이틀 판매기간·상태 (프레임 순위표에 표시) ──────────────
+# 매출이 빠졌을 때 '끝나서'인지 '안 끝났는데'인지 가르려고 Jira 종료일을 함께 본다.
+# ★ 기간으로 자르지 않은 df_all 을 넘긴다 — 기간으로 자르면 첫 거래일이
+#   전부 기간 시작일이 돼서 죄다 '신규'로 나온다.
+@st.cache_data(ttl=900, show_spinner=False)
+def _title_status(_v, _p0, _p1, _countries, _stores):
+    from title_runs import title_status
+    from jira_ip_dates import fetch_ip_dates
+    base = paid_sales(df_all)
+    if _countries:
+        base = base[base["국가"].isin(list(_countries))]
+    if _stores:
+        base = base[base["매장 이름"].isin(list(_stores))]
+    try:
+        jira = fetch_ip_dates(brand="snapism", force_refresh=False)
+    except Exception:
+        jira = {}          # Jira 가 죽어도 판매기간(실측)은 그대로 나온다
+    return title_status(base, jira, _p0, _p1)
+
+
+try:
+    _tstat = _title_status(data_io.file_version(MASTER_FILE),
+                           date_range[0] if len(date_range) == 2 else None,
+                           date_range[1] if len(date_range) == 2 else None,
+                           tuple(sel_country), tuple(sel_store))
+except Exception:
+    _tstat = {}
 
 # ══════════════════════════════════════════════════════════════
 #  관리자 전용: '계산 방식 설명' 토글 + helpbox 헬퍼
@@ -1085,7 +1151,7 @@ with tab_cat:
         # 구분선 + 프레임 전체 순위(토글 + 전체폭 표)
         st.markdown('<div style="border-top:1px solid var(--border);margin-top:16px"></div>',
                     unsafe_allow_html=True)
-        _hh, _tt = st.columns([5, 5], vertical_alignment="center")
+        _hh, _tt = st.columns([4.2, 5.8], vertical_alignment="center")
         with _hh:
             st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
                         '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
@@ -1096,15 +1162,39 @@ with tab_cat:
         fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
                   .groupby("프레임 이름").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count")).reset_index())
         fr_all = fr_all[fr_all["매출"] > 0]
-        st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
+
+        # 상태 필터 — 실제로 존재하는 상태만 칩으로 노출(빈 필터 클릭 방지)
+        _sc = fr_all["프레임 이름"].map(lambda t: (_tstat.get(t) or {}).get("상태", "")) if _tstat else None
+        if _tstat and _sc is not None:
+            _have = [s for s in ["🔴 확인필요", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
+                     if (_sc == s).any()]
+            _cnt = " · ".join(f"{s} {int((_sc == s).sum())}" for s in _have)
+            _pick = st.segmented_control("상태", ["전체"] + _have, default="전체",
+                                         key="cat_frame_stat", label_visibility="collapsed") or "전체"
+            if _pick != "전체":
+                fr_all = fr_all[(_sc == _pick).reindex(fr_all.index, fill_value=False)]
+            st.caption(f"프레임(IP) {len(fr_all):,}개 · {_cnt}")
+        else:
+            st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
+
         if not fr_all.empty:
-            rank_table(fr_all, "프레임 이름", collapse_after=10)
+            rank_table(fr_all, "프레임 이름", collapse_after=10, status_map=_tstat or None)
         else:
             st.info("데이터가 없어요.")
         helpbox("""
 **아티스트/캐릭터 비중 · 프레임(IP) 전체 순위**
 - 상단 도넛 = 탭1과 동일(아티스트·캐릭터 2조각, `cat3()` 분류).
 - 하단 표 = `전체 / 아티스트 / 캐릭터` 토글로 거른 뒤 `프레임 이름`별 `KRW환산금액` 합·건수. TOP 10 + 나머지 접기.
+
+**판매기간 · 상태** — 매출이 빠졌을 때 *끝나서* 빠진 건지, *안 끝났는데* 빠진 건지 가르려고 붙였어요.
+- **판매기간** = 그 타이틀의 **실제 첫·마지막 거래일**(조회 기간이 아니라 전체 이력 기준, 결측 0%).
+- **상태**는 실측 거래일 + **Jira 종료일**(`duedate`)로 판정해요. 마지막 거래일만으론 '종료'인지 '그냥 안 팔리는 중'인지 구분이 안 되거든요.
+  - **🔚 종료** — Jira 종료일이 지남 → **급감이 예정된 것**
+  - **🆕 신규** — 첫 거래일이 조회 기간 안 → 올라간 게 정상
+  - **⏳ 종료예정** — 30일 안에 종료 예정
+  - **🔴 확인필요** — 판매기간이 남았는데 **7일 이상 거래 없음** → 점검 대상
+  - **🟢 판매중** / **⚪ 미확인**(Jira 미연결이라 종료 여부 단정 불가)
+- Jira 매칭은 타이틀명 정규화 + `ip_aliases.json` 별칭 기준이라 **매출의 약 84%** 가 연결돼요. 나머지는 `⚪ 미확인`으로 두고 **추측하지 않아요.**
 """)
 
     with card("🧩 상품 카테고리 (비중 · 매출)"):
