@@ -233,10 +233,10 @@ pages = [
     st.Page("views/0_🎯_KPI목표.py",               title="KPI목표",            icon="🎯", url_path="kpi", default=True),
     st.Page("views/0_📊_스내피즘.py",              title="스내피즘",           icon="📊", url_path="snapism"),
     st.Page("views/1_📸_포토이즘.py",              title="포토이즘",           icon="📸", url_path="photoism"),
-    st.Page("views/7_🆚_타이틀_런_비교.py",        title="타이틀 런 비교",      icon="🆚", url_path="runs"),
 ]
 # IP정산현황·기간 후 매출분석 = 소유자 전용 (다른 계정 사이드바엔 숨김 + url 접근도 차단)
 if _is_owner:
+    pages.append(st.Page("views/7_🆚_타이틀_런_비교.py",        title="타이틀 런 비교",        icon="🆚", url_path="runs"))
     pages.append(st.Page("views/2_💰_IP정산현황_(스내피즘).py", title="IP정산현황 (스내피즘)", icon="💰", url_path="settlement"))
     pages.append(st.Page("views/3_⚠️_기간_후_매출분석.py",       title="기간 후 매출분석",      icon="⚠️", url_path="expired"))
 pages.append(st.Page("views/4_📋_주간리포트.py",            title="주간리포트",          icon="📋", url_path="weekly"))

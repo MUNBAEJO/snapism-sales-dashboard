@@ -18,6 +18,12 @@ import data_io
 from jira_ip_dates import fetch_ip_dates
 from title_runs import build_runs, coverage
 
+# 소유자 전용 — URL 직접 접근 차단
+_email = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
+if not auth.is_owner(_email):
+    st.error("🔒 이 페이지는 소유자만 볼 수 있어요.")
+    st.stop()
+
 BASE_DIR    = Path(__file__).parent.parent
 MASTER_FILE = BASE_DIR / "data" / "master.parquet"
 CONFIG_FILE = BASE_DIR / "config.json"
