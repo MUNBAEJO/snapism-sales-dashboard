@@ -295,6 +295,32 @@ def run_sales_deep_resync():
         log(f"매출 딥 재수집 오류: {e}")
 
 
+# ── [1회성] SM PICK 백필 (자정 실행) ─────────────────────────────
+#  sm_collect 가 PICK 구좌('PW ...' 타이틀)를 건너뛰던 버그로 2026-01-23~07-19 촬영수가 불완전.
+#  sm_backfill_monthly.bat 이 월별 청크로 재수집(각 청크마다 저장, upsert 라 재실행 안전).
+#  완료 플래그로 1회만 실행 — 다시 돌리려면 logs/sm_backfill_done.txt 삭제.
+SM_BACKFILL_FLAG = LOG_DIR / "sm_backfill_done.txt"
+
+
+def run_sm_backfill_once():
+    if SM_BACKFILL_FLAG.exists():
+        return
+    LOG_DIR.mkdir(exist_ok=True)
+    SM_BACKFILL_FLAG.write_text(datetime.now().isoformat(), encoding="utf-8")  # 선기록(중복 실행 방지)
+    log("=== [1회성] SM PICK 백필 시작 (월별 청크, 최대 8시간) ===")
+    try:
+        r = subprocess.run(
+            ["cmd", "/c", str(BASE_DIR / "sm_backfill_monthly.bat")],
+            cwd=str(BASE_DIR), capture_output=True, text=True, timeout=8 * 3600,
+        )
+        log("SM PICK 백필 완료." if r.returncode == 0
+            else f"SM PICK 백필 종료 (exit {r.returncode}) — logs/sm_backfill.log 확인")
+    except subprocess.TimeoutExpired:
+        log("SM PICK 백필 타임아웃(8시간 초과)")
+    except Exception as e:
+        log(f"SM PICK 백필 오류: {e}")
+
+
 def main():
     _ensure_single_instance()   # 이중 실행 방지(이미 돌면 여기서 종료)
     run_time = load_schedule_time()
@@ -305,6 +331,9 @@ def main():
     schedule.every().day.at(run_time).do(run_photoism_crawler)
     schedule.every().monday.at("07:00").do(run_sm_weekly)          # SM 촬영수 주간 갱신
     schedule.every().monday.at("05:00").do(run_sales_deep_resync)  # 매출 60일 딥 재수집(늦은 취소 반영)
+    if not SM_BACKFILL_FLAG.exists():                              # [1회성] SM PICK 백필
+        schedule.every().day.at("00:00").do(run_sm_backfill_once)
+        log("→ [1회성] SM PICK 백필 예약됨: 오늘 자정 00:00 (완료 후 자동 비활성)")
 
     # 시작 즉시 환율 1회 갱신
     run_update_rates()
