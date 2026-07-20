@@ -136,7 +136,10 @@ def _runs(_v):
     if df.empty:
         return pd.DataFrame()
     try:
-        jira = fetch_ip_dates(brand="snapism", force_refresh=False)
+        # brand="all" — Jira 브랜드 필드로는 거를 수 없다(스내피즘 매출인데
+        # 티켓 브랜드가 Photoism 이거나 비어 있는 경우가 많음). 자세한 이유는
+        # views/0_📊_스내피즘.py 의 _title_status 주석 참고.
+        jira = fetch_ip_dates(brand="all", force_refresh=False)
     except Exception:
         jira = {}       # Jira 가 죽어도 런 분리 자체는 매출만으로 된다
     return build_runs(df, jira)

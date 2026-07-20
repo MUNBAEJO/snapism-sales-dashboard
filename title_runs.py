@@ -18,7 +18,9 @@ ALIAS_FILE  = BASE_DIR / "ip_aliases.json"
 GAP_DAYS = 21
 
 # Jira 타이틀 정리용 — "25.10 QWER 아티스트 프레임" → "QWER"
-_DATE_RE  = re.compile(r"^\s*\d{2}[.\-/]\d{2}\s+")      # 앞의 25.10 / 26-03 같은 출시월
+# 출시월 접두가 세 형태로 섞여 있다: "25.10 " / "26.2 "(월 1자리) / "260605 "(YYMMDD).
+# 앞에 "렌탈 "이 더 붙기도 한다("렌탈 260518 태양 팝업부스").
+_DATE_RE  = re.compile(r"^\s*(렌탈\s*)?(\d{6}|\d{2}[.\-/]\d{1,2})\s*")
 _TAG_RE   = re.compile(r"\[[^\]]*\]")                    # [KR] [캐릭터/스내피즘]
 _PAREN_RE = re.compile(r"\([^)]*\)")                     # (한국, 일본) (스내피즘)
 _SUFFIX_RE = re.compile(
@@ -53,7 +55,8 @@ _ALIASES = _load_aliases()
 def normalize_title(name):
     """매출 '프레임 이름' 과 Jira 타이틀을 같은 키로 맞춘다."""
     s = _TAG_RE.sub(" ", str(name))
-    s = _DATE_RE.sub("", s)
+    for _ in range(2):                 # "[KR]260710 …" 처럼 태그를 걷어내면 날짜가 다시 앞에 온다
+        s = _DATE_RE.sub("", s.strip())
     s = _PAREN_RE.sub(" ", s)
     for _ in range(4):                 # "아티스트 스티커 프레임" 처럼 겹쳐 붙은 접미 제거
         s = _SUFFIX_RE.sub(" ", s)

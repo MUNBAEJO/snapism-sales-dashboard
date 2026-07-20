@@ -867,7 +867,12 @@ def _title_status(_v, _p0, _p1, _countries, _stores):
     if _stores:
         base = base[base["매장 이름"].isin(list(_stores))]
     try:
-        jira = fetch_ip_dates(brand="snapism", force_refresh=False)
+        # brand="all" 인 이유 — Jira 브랜드 필드로는 거를 수 없다.
+        # 스내피즘에서 팔린 IP인데 티켓 브랜드가 Photoism 인 경우가 많고
+        # (TREASURE·tripleS·KISS OF LIFE 등), 아예 비어 있는 것도 있다(10CM).
+        # brand="snapism" 으로 좁히면 매출 커버리지가 93% → 82% 로 떨어진다.
+        # 엉뚱한 티켓이 붙는 건 '런 기간과 실제로 겹칠 때만 연결' 규칙이 막아준다.
+        jira = fetch_ip_dates(brand="all", force_refresh=False)
     except Exception:
         jira = {}          # Jira 가 죽어도 판매기간(실측)은 그대로 나온다
     return title_status(base, jira, _p0, _p1)
