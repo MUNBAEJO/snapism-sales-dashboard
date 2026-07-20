@@ -1,6 +1,6 @@
 """
-Jira CANDIP에서 IP별 종료일(duedate) 수집
-WBS 필드의 타이틀명을 키로 {duedate, ticket_key, brand, status} 매핑
+Jira CANDIP에서 IP별 오픈일(시작 날짜)·종료일(duedate) 수집
+WBS 필드의 타이틀명을 키로 {startdate, duedate, ticket_key, brand, status} 매핑
 """
 import json
 import re
@@ -18,6 +18,9 @@ _STATUSES = [
     "TEST 맵핑", "검수 완료", "배포 완료", "In Review", "리소스 업로드 완료",
 ]
 _STATUS_JQL = ", ".join(f'"{s}"' for s in _STATUSES)
+
+# Jira '시작 날짜' 커스텀 필드. (Target start=10022, Actual start=10008 은 미사용)
+_STARTDATE_FIELD = "customfield_10015"
 
 # [KR], [GLO], [Global], [JP], [CN] 등 지역 태그 제거
 _TAG_RE   = re.compile(r'^\s*\[[A-Za-z가-힣]{2,10}\]\s*')
@@ -109,7 +112,8 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
     brand: "snapism" | "photoism" | "all"
     캐시 1시간 재사용
     """
-    cache_key = f"ip_dates_{brand}"
+    # v2: startdate(시작 날짜) 추가 — 옛 캐시는 이 키를 안 가지므로 자동 재조회됨
+    cache_key = f"ip_dates_v2_{brand}"
     if not force_refresh and CACHE_FILE.exists():
         try:
             with open(CACHE_FILE, encoding="utf-8") as f:
@@ -145,7 +149,7 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
     try:
         issues = _search_all(cfg, jql, fields=[
             cfg["wbs_field"], "summary", "parent", "duedate",
-            "customfield_10390", "status",
+            "customfield_10390", "status", _STARTDATE_FIELD,
         ])
     except Exception as e:
         raise RuntimeError(f"Jira 조회 실패: {e}")
@@ -157,12 +161,14 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
         parent_title = (f.get("parent") or {}).get("fields", {}).get("summary", "")
         wbs_raw      = _extract_wbs_text(f.get(cfg["wbs_field"]))
         duedate      = f.get("duedate")
+        startdate    = f.get(_STARTDATE_FIELD)   # 오픈(시작) 예정일 — 88% 정도만 채워져 있음
         status       = (f.get("status") or {}).get("name", "")
 
         brand_val  = f.get("customfield_10390") or []
         brand_str  = ", ".join(b.get("value", "") for b in brand_val) if isinstance(brand_val, list) else ""
 
         entry_base = {
+            "startdate":  startdate,
             "duedate":    duedate,
             "ticket_key": issue["key"],
             "parent":     parent_title,
