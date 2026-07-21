@@ -1398,6 +1398,11 @@ with tab_team:
 
             _SNAP_COLOR = {"A팀": "#c3aef0", "C팀": "#f9aecb"}  # 팀색 연한 톤
 
+            # @st.fragment — 안의 기준월 selectbox·막대구분 radio 를 조작해도
+            # 이 조각만 다시 그린다. 없으면 전체 스크립트가 재실행되고,
+            # Streamlit 1.45 의 st.tabs 는 선택 상태를 기억하지 못해서
+            # 화면이 첫 탭('전체')으로 튕긴다(탭 상태 저장은 1.56+).
+            @st.fragment
             def _render_team(team):
                 sub = tms[tms["팀"] == team]
                 if sub.empty:
@@ -1647,115 +1652,121 @@ with tab_yoy:
         if yoy_df.empty:
             st.info("아직 25년 비교 데이터가 없어요. 사이드바에서 **IPX MASTER DATA.xlsx**를 올려 주세요.")
         else:
-            avail_groups = sorted(yoy_df["구분"].unique().tolist())
-            default_idx  = avail_groups.index("TTL") if "TTL" in avail_groups else 0
-            yoy_group    = st.radio("비교 기준", avail_groups, index=default_idx, horizontal=True, key="yoy_group")
+            # @st.fragment — 안의 "비교 기준" 라디오를 눌러도 이 조각만 다시 그린다.
+            # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
+            @st.fragment
+            def _yoy_body():
+                avail_groups = sorted(yoy_df["구분"].unique().tolist())
+                default_idx  = avail_groups.index("TTL") if "TTL" in avail_groups else 0
+                yoy_group    = st.radio("비교 기준", avail_groups, index=default_idx, horizontal=True, key="yoy_group")
 
-            yoy_25 = yoy_df[yoy_df["구분"] == yoy_group][["월","실적"]].rename(columns={"실적":"25년 실적"})
+                yoy_25 = yoy_df[yoy_df["구분"] == yoy_group][["월","실적"]].rename(columns={"실적":"25년 실적"})
 
-            # 26년 실적
-            if not act_26.empty:
-                act26 = act_26[["월","실제매출"]].rename(columns={"실제매출":"26년 실적"})
-                merged_yoy = pd.merge(yoy_25, act26, on="월", how="outer")
-            else:
-                merged_yoy = yoy_25.copy(); merged_yoy["26년 실적"] = 0
+                # 26년 실적
+                if not act_26.empty:
+                    act26 = act_26[["월","실제매출"]].rename(columns={"실제매출":"26년 실적"})
+                    merged_yoy = pd.merge(yoy_25, act26, on="월", how="outer")
+                else:
+                    merged_yoy = yoy_25.copy(); merged_yoy["26년 실적"] = 0
 
-            # 26년 목표
-            if not tgt_26.empty:
-                t26 = tgt_26[["월","매출목표"]].rename(columns={"매출목표":"26년 목표"})
-                merged_yoy = pd.merge(merged_yoy, t26, on="월", how="outer")
+                # 26년 목표
+                if not tgt_26.empty:
+                    t26 = tgt_26[["월","매출목표"]].rename(columns={"매출목표":"26년 목표"})
+                    merged_yoy = pd.merge(merged_yoy, t26, on="월", how="outer")
 
-            merged_yoy = merged_yoy.sort_values("월").fillna(0).reset_index(drop=True)
-            merged_yoy["월_label"] = merged_yoy["월"].apply(lambda x: f"{x}월")
+                merged_yoy = merged_yoy.sort_values("월").fillna(0).reset_index(drop=True)
+                merged_yoy["월_label"] = merged_yoy["월"].apply(lambda x: f"{x}월")
 
-            # YoY %
-            merged_yoy["YoY%"] = merged_yoy.apply(
-                lambda r: round((r["26년 실적"] - r["25년 실적"]) / r["25년 실적"] * 100, 1)
-                if r.get("25년 실적", 0) > 0 else None, axis=1
-            )
-
-            # 누적
-            merged_yoy["25년 누적"] = merged_yoy["25년 실적"].cumsum().astype(int)
-            merged_yoy["26년 누적"] = merged_yoy["26년 실적"].cumsum().astype(int)
-
-            # KPI 카드
-            tot25  = int(merged_yoy["25년 실적"].sum())
-            tot26  = int(merged_yoy["26년 실적"].sum())
-            tot26t = int(merged_yoy["26년 목표"].sum()) if "26년 목표" in merged_yoy.columns else 0
-            yoy_cum = (tot26 - tot25) / tot25 * 100 if tot25 > 0 else 0
-            act_rate = tot26 / tot26t * 100 if tot26t > 0 else None
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("25년 누적 실적", fmt_krw(tot25))
-            c2.metric("26년 누적 실적", fmt_krw(tot26), f"전년대비 {yoy_cum:+.1f}%",
-                      delta_color="normal" if yoy_cum >= 0 else "inverse")
-            c3.metric("26년 목표", fmt_krw(tot26t) if tot26t > 0 else "미설정")
-            c4.metric("26년 목표 달성률",
-                      f"{act_rate:.1f}%" if act_rate is not None else "—",
-                      "✅" if act_rate and act_rate >= 100 else ("⚠️" if act_rate and act_rate >= 80 else ""))
-            st.divider()
-
-            # 25 vs 26 월별 바 차트
-            st.markdown('<div class="section-title">25년 vs 26년 월별 실적 비교</div>', unsafe_allow_html=True)
-            fig_yoy = go.Figure()
-            fig_yoy.add_trace(go.Bar(x=merged_yoy["월_label"], y=merged_yoy["25년 실적"],
-                                      name="25년 실적", marker_color="#adb5bd",
-                                      hovertemplate="%{x}<br>25년: %{y:,}원<extra></extra>"))
-            fig_yoy.add_trace(go.Bar(x=merged_yoy["월_label"], y=merged_yoy["26년 실적"],
-                                      name="26년 실적", marker_color="#7209b7", opacity=0.9,
-                                      hovertemplate="%{x}<br>26년: %{y:,}원<extra></extra>"))
-            if "26년 목표" in merged_yoy.columns:
-                fig_yoy.add_trace(go.Scatter(x=merged_yoy["월_label"], y=merged_yoy["26년 목표"],
-                                              name="26년 목표", mode="lines+markers",
-                                              line=dict(color="#e74c3c", width=2, dash="dash"),
-                                              hovertemplate="%{x}<br>목표: %{y:,}원<extra></extra>"))
-            # YoY% 라인
-            yoy_valid = merged_yoy[merged_yoy["YoY%"].notna() & (merged_yoy["25년 실적"] > 0)]
-            if not yoy_valid.empty:
-                fig_yoy.add_trace(go.Scatter(
-                    x=yoy_valid["월_label"], y=yoy_valid["YoY%"],
-                    name="YoY %", yaxis="y2", mode="lines+markers+text",
-                    line=dict(color="#f72585", width=2),
-                    text=yoy_valid["YoY%"].apply(lambda x: f"{x:+.0f}%"),
-                    textposition="top center", textfont=dict(size=11, color="#f72585"),
-                    hovertemplate="%{x}<br>YoY: %{y:+.1f}%<extra></extra>",
-                ))
-                fig_yoy.add_hline(y=0, line_color="#dee2e6", line_width=1, yref="y2")
-
-            fig_yoy.update_layout(
-                height=460, barmode="group",
-                yaxis=dict(tickformat=",", title="매출 (KRW)"),
-                yaxis2=dict(title="YoY %", overlaying="y", side="right",
-                            ticksuffix="%", showgrid=False, zeroline=True, zerolinecolor="#ccc"),
-                legend=dict(orientation="h", y=1.08),
-                margin=dict(t=20, b=0),
-            )
-            st.plotly_chart(fig_yoy, use_container_width=True)
-
-            st.divider()
-
-            # 누적 비교 테이블
-            st.markdown('<div class="section-title">월별 누적 비교 테이블</div>', unsafe_allow_html=True)
-            tbl_yoy = merged_yoy[["월_label","25년 실적","26년 실적","25년 누적","26년 누적"]].copy()
-            if "26년 목표" in merged_yoy.columns:
-                tbl_yoy.insert(3, "26년 목표", merged_yoy["26년 목표"].astype(int))
-            tbl_yoy["YoY (전년대비)"] = merged_yoy["YoY%"].apply(
-                lambda x: f"{x:+.1f}%" if x is not None else "—"
-            )
-            tbl_yoy["누적 YoY"] = merged_yoy.apply(
-                lambda r: f"{(r['26년 누적']-r['25년 누적'])/r['25년 누적']*100:+.1f}%"
-                if r["25년 누적"] > 0 else "—", axis=1
-            )
-            # 달성률 컬럼 추가
-            if "26년 목표" in tbl_yoy.columns:
-                tbl_yoy["달성률"] = merged_yoy.apply(
-                    lambda r: f"{r['26년 실적']/r['26년 목표']*100:.1f}%" if r.get("26년 목표",0)>0 else "—", axis=1
+                # YoY %
+                merged_yoy["YoY%"] = merged_yoy.apply(
+                    lambda r: round((r["26년 실적"] - r["25년 실적"]) / r["25년 실적"] * 100, 1)
+                    if r.get("25년 실적", 0) > 0 else None, axis=1
                 )
-            # 금액 포맷
-            for col in ["25년 실적","26년 실적","25년 누적","26년 누적"]:
-                tbl_yoy[col] = tbl_yoy[col].apply(lambda x: fmt_krw(x) if x > 0 else "—")
-            if "26년 목표" in tbl_yoy.columns:
-                tbl_yoy["26년 목표"] = merged_yoy["26년 목표"].apply(lambda x: fmt_krw(x) if x > 0 else "—")
-            tbl_yoy = tbl_yoy.rename(columns={"월_label":"월"})
-            tbl_yoy.index = range(1, len(tbl_yoy)+1)
-            st.dataframe(tbl_yoy, use_container_width=True, height=min(530, len(tbl_yoy)*40+55))
+
+                # 누적
+                merged_yoy["25년 누적"] = merged_yoy["25년 실적"].cumsum().astype(int)
+                merged_yoy["26년 누적"] = merged_yoy["26년 실적"].cumsum().astype(int)
+
+                # KPI 카드
+                tot25  = int(merged_yoy["25년 실적"].sum())
+                tot26  = int(merged_yoy["26년 실적"].sum())
+                tot26t = int(merged_yoy["26년 목표"].sum()) if "26년 목표" in merged_yoy.columns else 0
+                yoy_cum = (tot26 - tot25) / tot25 * 100 if tot25 > 0 else 0
+                act_rate = tot26 / tot26t * 100 if tot26t > 0 else None
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("25년 누적 실적", fmt_krw(tot25))
+                c2.metric("26년 누적 실적", fmt_krw(tot26), f"전년대비 {yoy_cum:+.1f}%",
+                          delta_color="normal" if yoy_cum >= 0 else "inverse")
+                c3.metric("26년 목표", fmt_krw(tot26t) if tot26t > 0 else "미설정")
+                c4.metric("26년 목표 달성률",
+                          f"{act_rate:.1f}%" if act_rate is not None else "—",
+                          "✅" if act_rate and act_rate >= 100 else ("⚠️" if act_rate and act_rate >= 80 else ""))
+                st.divider()
+
+                # 25 vs 26 월별 바 차트
+                st.markdown('<div class="section-title">25년 vs 26년 월별 실적 비교</div>', unsafe_allow_html=True)
+                fig_yoy = go.Figure()
+                fig_yoy.add_trace(go.Bar(x=merged_yoy["월_label"], y=merged_yoy["25년 실적"],
+                                          name="25년 실적", marker_color="#adb5bd",
+                                          hovertemplate="%{x}<br>25년: %{y:,}원<extra></extra>"))
+                fig_yoy.add_trace(go.Bar(x=merged_yoy["월_label"], y=merged_yoy["26년 실적"],
+                                          name="26년 실적", marker_color="#7209b7", opacity=0.9,
+                                          hovertemplate="%{x}<br>26년: %{y:,}원<extra></extra>"))
+                if "26년 목표" in merged_yoy.columns:
+                    fig_yoy.add_trace(go.Scatter(x=merged_yoy["월_label"], y=merged_yoy["26년 목표"],
+                                                  name="26년 목표", mode="lines+markers",
+                                                  line=dict(color="#e74c3c", width=2, dash="dash"),
+                                                  hovertemplate="%{x}<br>목표: %{y:,}원<extra></extra>"))
+                # YoY% 라인
+                yoy_valid = merged_yoy[merged_yoy["YoY%"].notna() & (merged_yoy["25년 실적"] > 0)]
+                if not yoy_valid.empty:
+                    fig_yoy.add_trace(go.Scatter(
+                        x=yoy_valid["월_label"], y=yoy_valid["YoY%"],
+                        name="YoY %", yaxis="y2", mode="lines+markers+text",
+                        line=dict(color="#f72585", width=2),
+                        text=yoy_valid["YoY%"].apply(lambda x: f"{x:+.0f}%"),
+                        textposition="top center", textfont=dict(size=11, color="#f72585"),
+                        hovertemplate="%{x}<br>YoY: %{y:+.1f}%<extra></extra>",
+                    ))
+                    fig_yoy.add_hline(y=0, line_color="#dee2e6", line_width=1, yref="y2")
+
+                fig_yoy.update_layout(
+                    height=460, barmode="group",
+                    yaxis=dict(tickformat=",", title="매출 (KRW)"),
+                    yaxis2=dict(title="YoY %", overlaying="y", side="right",
+                                ticksuffix="%", showgrid=False, zeroline=True, zerolinecolor="#ccc"),
+                    legend=dict(orientation="h", y=1.08),
+                    margin=dict(t=20, b=0),
+                )
+                st.plotly_chart(fig_yoy, use_container_width=True)
+
+                st.divider()
+
+                # 누적 비교 테이블
+                st.markdown('<div class="section-title">월별 누적 비교 테이블</div>', unsafe_allow_html=True)
+                tbl_yoy = merged_yoy[["월_label","25년 실적","26년 실적","25년 누적","26년 누적"]].copy()
+                if "26년 목표" in merged_yoy.columns:
+                    tbl_yoy.insert(3, "26년 목표", merged_yoy["26년 목표"].astype(int))
+                tbl_yoy["YoY (전년대비)"] = merged_yoy["YoY%"].apply(
+                    lambda x: f"{x:+.1f}%" if x is not None else "—"
+                )
+                tbl_yoy["누적 YoY"] = merged_yoy.apply(
+                    lambda r: f"{(r['26년 누적']-r['25년 누적'])/r['25년 누적']*100:+.1f}%"
+                    if r["25년 누적"] > 0 else "—", axis=1
+                )
+                # 달성률 컬럼 추가
+                if "26년 목표" in tbl_yoy.columns:
+                    tbl_yoy["달성률"] = merged_yoy.apply(
+                        lambda r: f"{r['26년 실적']/r['26년 목표']*100:.1f}%" if r.get("26년 목표",0)>0 else "—", axis=1
+                    )
+                # 금액 포맷
+                for col in ["25년 실적","26년 실적","25년 누적","26년 누적"]:
+                    tbl_yoy[col] = tbl_yoy[col].apply(lambda x: fmt_krw(x) if x > 0 else "—")
+                if "26년 목표" in tbl_yoy.columns:
+                    tbl_yoy["26년 목표"] = merged_yoy["26년 목표"].apply(lambda x: fmt_krw(x) if x > 0 else "—")
+                tbl_yoy = tbl_yoy.rename(columns={"월_label":"월"})
+                tbl_yoy.index = range(1, len(tbl_yoy)+1)
+                st.dataframe(tbl_yoy, use_container_width=True, height=min(530, len(tbl_yoy)*40+55))
+
+            _yoy_body()
