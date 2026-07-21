@@ -113,6 +113,7 @@ h2, h3{ letter-spacing:-0.02em !important; }
         border-radius:6px; padding:1.5px 6px; white-space:nowrap; vertical-align:middle; }
 .tstat.end{  background:#f1f2f5; color:#6b7280; }
 .tstat.warn{ background:#fdecea; color:var(--red); }
+.tstat.post{ background:#fff4e6; color:#c2410c; }
 .tstat.new{  background:var(--brand-soft); color:var(--brand); }
 .tstat.soon{ background:#fdf3e7; color:var(--amber); }
 .tstat.live{ background:#eefaf4; color:var(--green); }
@@ -575,7 +576,8 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None):
         st.markdown(_rows(d), unsafe_allow_html=True)
 
 
-_STAT_CLS = {"🔚": "end", "🔴": "warn", "🆕": "new", "⏳": "soon", "🟢": "live", "⚪": "unk"}
+_STAT_CLS = {"🔚": "end", "🔴": "warn", "⚠️": "post", "🆕": "new",
+             "⏳": "soon", "🟢": "live", "⚪": "unk"}
 
 
 def _md(dt):
@@ -1172,7 +1174,7 @@ with tab_cat:
         # 상태 필터 — 실제로 존재하는 상태만 칩으로 노출(빈 필터 클릭 방지)
         _sc = fr_all["프레임 이름"].map(lambda t: (_tstat.get(t) or {}).get("상태", "")) if _tstat else None
         if _tstat and _sc is not None:
-            _have = [s for s in ["🔴 확인필요", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
+            _have = [s for s in ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
                      if (_sc == s).any()]
             _cnt = " · ".join(f"{s} {int((_sc == s).sum())}" for s in _have)
             _pick = st.segmented_control("상태", ["전체"] + _have, default="전체",
@@ -1195,7 +1197,8 @@ with tab_cat:
 **판매기간 · 상태** — 매출이 빠졌을 때 *끝나서* 빠진 건지, *안 끝났는데* 빠진 건지 가르려고 붙였어요.
 - **판매기간** = 그 타이틀의 **실제 첫·마지막 거래일**(조회 기간이 아니라 전체 이력 기준, 결측 0%).
 - **상태**는 실측 거래일 + **Jira 종료일**(`duedate`)로 판정해요. 마지막 거래일만으론 '종료'인지 '그냥 안 팔리는 중'인지 구분이 안 되거든요.
-  - **🔚 종료** — Jira 종료일이 지남 → **급감이 예정된 것**
+  - **🔚 종료** — Jira 종료일이 지났고 거래도 멈춤 → **급감이 예정된 것**
+  - **⚠️ 기간후판매** — 종료일이 지났는데 **아직 팔리는 중** → 계약·정산에서 확인이 필요해요
   - **🆕 신규** — 첫 거래일이 조회 기간 안 → 올라간 게 정상
   - **⏳ 종료예정** — 30일 안에 종료 예정
   - **🔴 확인필요** — 판매기간이 남았는데 **7일 이상 거래 없음** → 점검 대상

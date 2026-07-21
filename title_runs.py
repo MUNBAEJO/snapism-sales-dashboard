@@ -136,7 +136,7 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
     jira_keyed = _jira_by_key(jira_map)
     rows = []
 
-    for title, g in d.groupby(title_col, sort=False):
+    for title, g in d.groupby(title_col, sort=False, observed=True):
         g = g.sort_values("_날짜")
         days = pd.Series(sorted(g["_날짜"].unique()))
         # 판매 공백이 gap_days 이상이면 새 런 (date 객체라 datetime 으로 올려서 차이 계산)
@@ -185,7 +185,8 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
 IDLE_DAYS = 7
 
 # 상태 기호는 KPI 페이지(포토이즘 IP 무버)와 같은 뜻으로 맞춘다.
-STATUS_ORDER = ["🔴 확인필요", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
+STATUS_ORDER = ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "⏳ 종료예정",
+                "🆕 신규", "🟢 판매중", "⚪ 미확인"]
 
 
 def title_status(df, jira_map=None, period_start=None, period_end=None,
@@ -215,7 +216,7 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
     jira_keyed = _jira_by_key(jira_map)
     out = {}
 
-    for title, g in d.groupby(title_col, sort=False):
+    for title, g in d.groupby(title_col, sort=False, observed=True):
         first, last = g["_날짜"].min(), g["_날짜"].max()
 
         # 이 타이틀의 Jira 종료일 중 기준일에 가장 가까운(=현재 회차) 것.
@@ -235,7 +236,11 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
         idle = max(0, (ref - last).days)
         is_new = period_start is not None and first >= period_start
 
-        if due and due < ref:
+        if due and due < ref and idle < idle_days:
+            # 판매기간이 끝났는데 아직도 팔린다 = '기간 후 매출'.
+            # 🔚 종료로 뭉뚱그리면 "왜 아직 팔리지?"를 놓친다(전용 분석 페이지가 따로 있을 만큼 중요).
+            status = "⚠️ 기간후판매"
+        elif due and due < ref:
             status = "🔚 종료"          # 예정된 하락 — 급감해도 정상
         elif is_new:
             status = "🆕 신규"
