@@ -430,7 +430,7 @@ def load_exchange_rates():
     return load_config().get("exchange_rates", {"KRW": 1})
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효(옛 항목은 메모리만 차지)
 def _load_data(_v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
@@ -741,7 +741,7 @@ _prod_opts = _uniq("상품 카테고리")
 _ip_opts = _uniq("프레임 이름")
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
 def _stores_by_country(_v):
     """국가 → 매장 목록 (매장 필터를 선택 국가로 좁히기용)."""
     if "국가" not in df_all.columns or "매장 이름" not in df_all.columns:
@@ -857,7 +857,8 @@ cpn_all = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
 # 매출이 빠졌을 때 '끝나서'인지 '안 끝났는데'인지 가르려고 Jira 종료일을 함께 본다.
 # ★ 기간으로 자르지 않은 df_all 을 넘긴다 — 기간으로 자르면 첫 거래일이
 #   전부 기간 시작일이 돼서 죄다 '신규'로 나온다.
-@st.cache_data(ttl=900, show_spinner=False)
+# max_entries=16 — 기간·국가·매장 조합마다 항목이 생긴다(반환값은 작은 dict).
+@st.cache_data(ttl=900, show_spinner=False, max_entries=16)
 def _title_status(_v, _p0, _p1, _countries, _stores):
     from title_runs import title_status
     from jira_ip_dates import fetch_ip_dates

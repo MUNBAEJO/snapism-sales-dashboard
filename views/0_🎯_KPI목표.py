@@ -314,7 +314,7 @@ def _mtime(p) -> float:
         return 0.0
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=1)
 def _photoism_ip_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
     """포토이즘 agg → 날짜·IP구분·국내여부별 KRW 매출액 (취소 제외, 일 단위 집계)."""
     cols = ["날짜", "IP구분", "_kr", "매출액"]
@@ -349,7 +349,7 @@ def photoism_ip_daily() -> pd.DataFrame:
     return _photoism_ip_daily(_mtime(AGG_FILE), _mtime(CONFIG_FILE))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=1)
 def _photoism_ipname_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
     """포토이즘 agg → 날짜·IP구분·IP명·국내여부별 KRW 매출액 (취소 제외).
     개별 IP 증감(무버) 산출용. 매출 산식은 _photoism_ip_daily 와 100% 동일."""
@@ -386,7 +386,7 @@ def photoism_ipname_daily() -> pd.DataFrame:
     return _photoism_ipname_daily(_mtime(AGG_FILE), _mtime(CONFIG_FILE))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=1)
 def _jira_due_map(_cache_mtime) -> dict:
     """타이틀명 → 종료일(YYYY-MM-DD). 로컬 Jira 캐시에서만 읽음(네트워크 X).
     2099년 이후(무기한)·미설정은 제외."""
@@ -406,7 +406,7 @@ def _jira_due_map(_cache_mtime) -> dict:
     return out
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=6)
 def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
     """IP명 → 종료상태. 포토이즘 A·C·픽 한정.
     그 IP의 (종료일이 등록된) 모든 타이틀이 이번 달 전에 끝났으면 '🔚 종료',
@@ -448,7 +448,7 @@ def _region_daily() -> pd.DataFrame:
     return out
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=6)
 def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame:
     """포토이즘(A·C·픽) 국가별 매출액 — _since(YYYY-MM-DD) 이후. 매출 산식은 벤토와 동일."""
     cols = ["국가", "매출액"]
@@ -479,7 +479,7 @@ def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame
     return out.sort_values("매출액", ascending=False)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=1)
 def _snapism_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
     """스내피즘 master → 날짜·국내여부별 정산금액(KRW환산+쿠폰, 취소 제외, 일 단위)."""
     import data_io
@@ -511,7 +511,7 @@ def snapism_daily() -> pd.DataFrame:
     )
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=1)
 def _snapism_team_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
     """스내피즘 master → 날짜·국내여부·팀별 정산금액. 카테고리로 팀 배정:
     아티스트·기타 → A팀, 캐릭터 → C팀. (산식은 _snapism_daily 와 동일)"""

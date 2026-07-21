@@ -108,7 +108,7 @@ def save_mapping(ip_name: str, frames: list):
         json.dump(mapping, f, ensure_ascii=False, indent=2)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
 def _load_sales(_v):
     if not MASTER.exists():
         return pd.DataFrame()
@@ -131,7 +131,7 @@ def load_sales():
     return _load_sales(data_io.file_version(MASTER))
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, max_entries=1)
 def load_jira():
     try:
         return fetch_rs_data()

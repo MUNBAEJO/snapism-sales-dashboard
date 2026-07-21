@@ -412,7 +412,9 @@ def _file_mtime(p):
         return 0.0
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+# max_entries=1 — 반환 DataFrame 이 370만행·314MB 다. 캐시 키가 파일 mtime 이라
+# 파일이 바뀌면 옛 항목은 쓸모없는데, 상한이 없으면 그대로 메모리에 남아 쌓인다.
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
 def _load_data(_agg_mtime, _cfg_mtime):
     """집계 parquet 로드 (category 인코딩). 캐시 키 = 집계·환율 파일 mtime →
     파일이 바뀔 때만 재계산(매일 ingest/환율 갱신 시). 평소엔 즉시 캐시 히트."""
@@ -478,7 +480,7 @@ def load_data():
     return _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # mtime 키 → 최신 1개만 유효
 def _sidebar_options(_agg_mtime):
     """필터 드롭다운 옵션을 데이터 버전당 한 번만 계산(캐시)."""
     d = _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
@@ -516,7 +518,7 @@ def _sidebar_options(_agg_mtime):
     }
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # mtime 키 → 최신 1개만 유효
 def _load_hourly(_mtime):
     """시간대 집계 parquet 로드 (시간대 차트 전용). 캐시 키 = 파일 mtime."""
     if not HOURLY_FILE.exists():
@@ -566,7 +568,9 @@ _DETAIL_EXPR = {
 }
 
 
-@st.cache_data(ttl=60)
+# max_entries=32 — 파라미터가 7개라 필터 조합마다 새 항목이 생긴다.
+# 상한이 없으면 사용자가 필터를 만질수록(여러 명이면 곱으로) 무한정 쌓인다.
+@st.cache_data(ttl=60, max_entries=32)
 def load_sales_detail(group_col, start_date, end_date, ip_list=None,
                       countries=(), stores=(), brands=(), gubuns=()):
     """전체 parquet에서 세부 판매 항목(IP명/프레임/테마 등) DuckDB on-demand 집계.
@@ -609,6 +613,14 @@ def load_sales_detail(group_col, start_date, end_date, ip_list=None,
     where_sql = " AND ".join(where)
 
     con = duckdb.connect()
+    # 1,385만행 parquet 을 스캔하므로 상한 없이 두면 쿼리 하나가 메모리를 크게 가져간다.
+    # (build_photoism_agg.py 와 같은 방식 — 넘치면 OOM 대신 디스크로 스필)
+    try:
+        con.execute("PRAGMA memory_limit='512MB'")
+        con.execute("PRAGMA threads=2")
+        con.execute("PRAGMA preserve_insertion_order=false")
+    except Exception:
+        pass       # 옛 DuckDB 라 PRAGMA 가 없어도 쿼리는 그대로 진행
     try:
         df = con.execute(f"""
             SELECT

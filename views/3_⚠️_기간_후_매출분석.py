@@ -55,12 +55,12 @@ _DATE_RE      = re.compile(r"^\s*\d{6,8}\s*")
 
 
 # ── 데이터 로더 ────────────────────────────────────────────────
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, max_entries=1)
 def load_jira():
     return fetch_ip_dates(brand="all", force_refresh=False)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, max_entries=1)
 def _load_snap(_v):
     if not SNAP_MASTER.exists():
         return pd.DataFrame()
@@ -83,7 +83,7 @@ def load_snap():
     return _load_snap(data_io.file_version(SNAP_MASTER))
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60, max_entries=1)
 def load_photo():
     """포토이즘 매출. 집계 parquet(7.3 MB, 일·타이틀 단위) 우선 → 전체 parquet → CSV fallback.
     기간후 분석은 '타이틀별·날짜별 매출 합계'면 충분하므로 집계본 사용 (1.2초/219MB).

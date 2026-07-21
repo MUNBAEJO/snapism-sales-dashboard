@@ -109,7 +109,7 @@ def fmt_krw(n):
 
 
 # ── 데이터 ──────────────────────────────────────────────────
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
 def _load(_v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
@@ -130,7 +130,7 @@ def _load(_v):
     return df[~df["취소 여부"] & (df["최종 결제 금액"] > 0)]
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
 def _runs(_v):
     df = _load(_v)
     if df.empty:

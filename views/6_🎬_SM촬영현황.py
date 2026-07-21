@@ -151,7 +151,7 @@ with tab_raw:
 st.divider()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=4)   # 다운로드용 바이트 — 몇 개만 보관
 def _xlsx(df: pd.DataFrame) -> bytes:
     return sm_report.build_xlsx(df)
 
