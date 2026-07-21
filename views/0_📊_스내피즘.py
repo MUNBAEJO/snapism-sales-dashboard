@@ -997,51 +997,57 @@ tab_etc = _tabs[4] if SHOW_TAB_ETC else None
 with tab_home:
     sec("1", "매출 동향", "잘 가고 있나? — 기간별 실결제·쿠폰 흐름")
     with card():
-        _th, _tg = st.columns([2.4, 1])
-        with _th:
-            st.markdown('<div class="ct" style="margin-bottom:0">📈 매출 추이</div>', unsafe_allow_html=True)
-        with _tg:
-            gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
-                                        key="trend_gran", label_visibility="collapsed") or "월"
+        # @st.fragment — 기간(월·주·일) 토글을 눌러도 이 조각만 다시 그린다.
+        # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
+        @st.fragment
+        def _trend():  # 기간 토글 → 매출 추이 차트
+            _th, _tg = st.columns([2.4, 1])
+            with _th:
+                st.markdown('<div class="ct" style="margin-bottom:0">📈 매출 추이</div>', unsafe_allow_html=True)
+            with _tg:
+                gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
+                                            key="trend_gran", label_visibility="collapsed") or "월"
 
-        def _pkey(dates, g):
-            d = pd.to_datetime(dates)
-            return d.dt.to_period("M") if g == "월" else (d.dt.to_period("W") if g == "주" else d.dt.date)
+            def _pkey(dates, g):
+                d = pd.to_datetime(dates)
+                return d.dt.to_period("M") if g == "월" else (d.dt.to_period("W") if g == "주" else d.dt.date)
 
-        s_paid = sales.assign(_p=_pkey(sales["날짜"], gran)).groupby("_p")["KRW환산금액"].sum().rename("실결제")
-        _cp = cpn_all.assign(_p=_pkey(cpn_all["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum().rename("쿠폰")
-        trend = pd.concat([s_paid, _cp], axis=1).fillna(0).sort_index()
-        if trend.empty:
-            css_trend([], gran)
-        else:
-            trend = trend.reset_index()
-            if gran == "월":
-                trend["label"] = trend["_p"].apply(lambda p: f"{p.year}.{p.month:02d}")
-            elif gran == "주":
-                trend["label"] = trend["_p"].apply(lambda p: p.start_time.strftime("%m/%d") + "주")
+            s_paid = sales.assign(_p=_pkey(sales["날짜"], gran)).groupby("_p")["KRW환산금액"].sum().rename("실결제")
+            _cp = cpn_all.assign(_p=_pkey(cpn_all["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum().rename("쿠폰")
+            trend = pd.concat([s_paid, _cp], axis=1).fillna(0).sort_index()
+            if trend.empty:
+                css_trend([], gran)
             else:
-                trend["label"] = trend["_p"].astype(str)
-            css_trend(list(zip(trend["label"], trend["실결제"].astype(int),
-                               trend["쿠폰"].astype(int))), gran)
-            # 시안: 차트 아래 인사이트 한 줄 (예: 월 단위 · 6월 ₩329M → 7월(10일) ₩45M, 월초라 낮아요)
-            if gran == "월" and len(trend) >= 2:
-                _pp, _lp = trend["_p"].iloc[-2], trend["_p"].iloc[-1]
-                _pv, _cv = int(trend["실결제"].iloc[-2]), int(trend["실결제"].iloc[-1])
-                _end = date_range[1] if len(date_range) == 2 else last_date
-                _partial = (_lp.year == _end.year and _lp.month == _end.month
-                            and _end.day < _lp.days_in_month)
-                _txt = (f"월 단위 · {_pp.month}월 ₩{_pv / 1e6:,.0f}M → "
-                        f"{_lp.month}월{f'({_end.day}일)' if _partial else ''} ₩{_cv / 1e6:,.0f}M")
-                if _partial and _cv < _pv:
-                    _txt += ", 월초라 낮아요" if _end.day <= 12 else " (진행 중이에요)"
-                st.caption(_txt)
-        helpbox("""
-**매출 추이 (실결제 + 쿠폰, 월/주/일)**
-- **실결제 막대** = `실결제` 거래를 기간(월=`to_period('M')`, 주=`to_period('W')`, 일=날짜)으로 묶어 `KRW환산금액` 합.
-- **쿠폰 할인 막대** = 같은 기간으로 `cpn_all`의 `쿠폰KRW` 합. 실결제 위에 쌓아 정가 대비 할인 규모를 표시.
-- **하단 인사이트** = '월' 보기에서 직전월 → 최근월 실결제 증감. 최근월이 진행 중이면 `(N일)`로 부분집계임을 표기.
-- ※ 공통 기준(원본·환율·실결제 정의)은 상단 'KPI 카드' 설명 참고.
-""")
+                trend = trend.reset_index()
+                if gran == "월":
+                    trend["label"] = trend["_p"].apply(lambda p: f"{p.year}.{p.month:02d}")
+                elif gran == "주":
+                    trend["label"] = trend["_p"].apply(lambda p: p.start_time.strftime("%m/%d") + "주")
+                else:
+                    trend["label"] = trend["_p"].astype(str)
+                css_trend(list(zip(trend["label"], trend["실결제"].astype(int),
+                                   trend["쿠폰"].astype(int))), gran)
+                # 시안: 차트 아래 인사이트 한 줄 (예: 월 단위 · 6월 ₩329M → 7월(10일) ₩45M, 월초라 낮아요)
+                if gran == "월" and len(trend) >= 2:
+                    _pp, _lp = trend["_p"].iloc[-2], trend["_p"].iloc[-1]
+                    _pv, _cv = int(trend["실결제"].iloc[-2]), int(trend["실결제"].iloc[-1])
+                    _end = date_range[1] if len(date_range) == 2 else last_date
+                    _partial = (_lp.year == _end.year and _lp.month == _end.month
+                                and _end.day < _lp.days_in_month)
+                    _txt = (f"월 단위 · {_pp.month}월 ₩{_pv / 1e6:,.0f}M → "
+                            f"{_lp.month}월{f'({_end.day}일)' if _partial else ''} ₩{_cv / 1e6:,.0f}M")
+                    if _partial and _cv < _pv:
+                        _txt += ", 월초라 낮아요" if _end.day <= 12 else " (진행 중이에요)"
+                    st.caption(_txt)
+            helpbox("""
+    **매출 추이 (실결제 + 쿠폰, 월/주/일)**
+    - **실결제 막대** = `실결제` 거래를 기간(월=`to_period('M')`, 주=`to_period('W')`, 일=날짜)으로 묶어 `KRW환산금액` 합.
+    - **쿠폰 할인 막대** = 같은 기간으로 `cpn_all`의 `쿠폰KRW` 합. 실결제 위에 쌓아 정가 대비 할인 규모를 표시.
+    - **하단 인사이트** = '월' 보기에서 직전월 → 최근월 실결제 증감. 최근월이 진행 중이면 `(N일)`로 부분집계임을 표기.
+    - ※ 공통 기준(원본·환율·실결제 정의)은 상단 'KPI 카드' 설명 참고.
+    """)
+
+        _trend()
 
     sec("2", "무엇이 매출을 만드나", "비중 — 어떤 상품·종류가 매출을 끄나")
     _c1, _c2 = st.columns(2)
@@ -1127,23 +1133,29 @@ with tab_home:
 """)
     with _n2:
         with card("🏬 국가별 매출 TOP 5 매장", key="scard-hstore"):
-            _opts = (sales.groupby("국가")["KRW환산금액"].sum().sort_values(ascending=False).index.tolist()
-                     if "국가" in sales.columns else [])
-            if _opts:
-                _pick = st.selectbox("국가", _opts, key="home_store_country", label_visibility="collapsed")
-                _ss = (sales[sales["국가"] == _pick].groupby("매장 이름")
-                       .agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count"))
-                       .reset_index().sort_values("매출", ascending=False).head(5))
-                if not _ss.empty:
-                    hbar_list(_ss, "매장 이름", top=5)
-                    st.caption("선택한 국가의 매출 상위 5개 매장")
+            # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
+            # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
+            @st.fragment
+            def _home_store():  # 국가 선택 → TOP5 매장
+                _opts = (sales.groupby("국가")["KRW환산금액"].sum().sort_values(ascending=False).index.tolist()
+                         if "국가" in sales.columns else [])
+                if _opts:
+                    _pick = st.selectbox("국가", _opts, key="home_store_country", label_visibility="collapsed")
+                    _ss = (sales[sales["국가"] == _pick].groupby("매장 이름")
+                           .agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count"))
+                           .reset_index().sort_values("매출", ascending=False).head(5))
+                    if not _ss.empty:
+                        hbar_list(_ss, "매장 이름", top=5)
+                        st.caption("선택한 국가의 매출 상위 5개 매장")
+                    else:
+                        st.info("이 국가의 매장 데이터가 없어요.")
                 else:
-                    st.info("이 국가의 매장 데이터가 없어요.")
-            else:
-                st.info("데이터가 없어요.")
-            helpbox("""
-**국가별 매출 TOP 5 매장**
-- 위 셀렉트박스에서 고른 국가의 실결제 거래를 `매장 이름`으로 묶어 `KRW환산금액` 합·건수 → 상위 5개 매장.
+                    st.info("데이터가 없어요.")
+                helpbox("""
+    **국가별 매출 TOP 5 매장**
+    - 위 셀렉트박스에서 고른 국가의 실결제 거래를 `매장 이름`으로 묶어 `KRW환산금액` 합·건수 → 상위 5개 매장.
+
+            _home_store()
 """)
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '상품 카테고리 분석'·'매장별 분석' 탭에서 봐요.")
 
@@ -1159,55 +1171,61 @@ with tab_cat:
             _m = {r["_c"]: int(r["매출"]) for _, r in ac.iterrows()}
             _sub = "아티스트 " + fmt_krw(_m.get("아티스트", 0)) + " · 캐릭터 " + fmt_krw(_m.get("캐릭터", 0))
             css_donut(list(zip(ac2["_c"], ac2["매출"])), ["var(--brand-2)", "var(--teal)"], sub=_sub)
-        # 구분선 + 프레임 전체 순위(토글 + 전체폭 표)
-        st.markdown('<div style="border-top:1px solid var(--border);margin-top:16px"></div>',
-                    unsafe_allow_html=True)
-        _hh, _tt = st.columns([4.2, 5.8], vertical_alignment="center")
-        with _hh:
-            st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
-                        '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
-        with _tt:
-            _tog = st.segmented_control("구분", ["전체", "아티스트", "캐릭터"], default="전체",
-                                        key="cat_frame_tog", label_visibility="collapsed") or "전체"
-        _fs = _s if _tog == "전체" else _s[_s["_c"] == _tog]
-        fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
-                  .groupby("프레임 이름").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count")).reset_index())
-        fr_all = fr_all[fr_all["매출"] > 0]
+        # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
+        # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
+        @st.fragment
+        def _frame_rank():  # 구분·상태 토글 → 프레임 순위
+            # 구분선 + 프레임 전체 순위(토글 + 전체폭 표)
+            st.markdown('<div style="border-top:1px solid var(--border);margin-top:16px"></div>',
+                        unsafe_allow_html=True)
+            _hh, _tt = st.columns([4.2, 5.8], vertical_alignment="center")
+            with _hh:
+                st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
+                            '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
+            with _tt:
+                _tog = st.segmented_control("구분", ["전체", "아티스트", "캐릭터"], default="전체",
+                                            key="cat_frame_tog", label_visibility="collapsed") or "전체"
+            _fs = _s if _tog == "전체" else _s[_s["_c"] == _tog]
+            fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
+                      .groupby("프레임 이름").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count")).reset_index())
+            fr_all = fr_all[fr_all["매출"] > 0]
 
-        # 상태 필터 — 실제로 존재하는 상태만 칩으로 노출(빈 필터 클릭 방지)
-        _sc = fr_all["프레임 이름"].map(lambda t: (_tstat.get(t) or {}).get("상태", "")) if _tstat else None
-        if _tstat and _sc is not None:
-            _have = [s for s in ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
-                     if (_sc == s).any()]
-            _cnt = " · ".join(f"{s} {int((_sc == s).sum())}" for s in _have)
-            _pick = st.segmented_control("상태", ["전체"] + _have, default="전체",
-                                         key="cat_frame_stat", label_visibility="collapsed") or "전체"
-            if _pick != "전체":
-                fr_all = fr_all[(_sc == _pick).reindex(fr_all.index, fill_value=False)]
-            st.caption(f"프레임(IP) {len(fr_all):,}개 · {_cnt}")
-        else:
-            st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
+            # 상태 필터 — 실제로 존재하는 상태만 칩으로 노출(빈 필터 클릭 방지)
+            _sc = fr_all["프레임 이름"].map(lambda t: (_tstat.get(t) or {}).get("상태", "")) if _tstat else None
+            if _tstat and _sc is not None:
+                _have = [s for s in ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
+                         if (_sc == s).any()]
+                _cnt = " · ".join(f"{s} {int((_sc == s).sum())}" for s in _have)
+                _pick = st.segmented_control("상태", ["전체"] + _have, default="전체",
+                                             key="cat_frame_stat", label_visibility="collapsed") or "전체"
+                if _pick != "전체":
+                    fr_all = fr_all[(_sc == _pick).reindex(fr_all.index, fill_value=False)]
+                st.caption(f"프레임(IP) {len(fr_all):,}개 · {_cnt}")
+            else:
+                st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
 
-        if not fr_all.empty:
-            rank_table(fr_all, "프레임 이름", collapse_after=10, status_map=_tstat or None)
-        else:
-            st.info("데이터가 없어요.")
-        helpbox("""
-**아티스트/캐릭터 비중 · 프레임(IP) 전체 순위**
-- 상단 도넛 = 탭1과 동일(아티스트·캐릭터 2조각, `cat3()` 분류).
-- 하단 표 = `전체 / 아티스트 / 캐릭터` 토글로 거른 뒤 `프레임 이름`별 `KRW환산금액` 합·건수. TOP 10 + 나머지 접기.
+            if not fr_all.empty:
+                rank_table(fr_all, "프레임 이름", collapse_after=10, status_map=_tstat or None)
+            else:
+                st.info("데이터가 없어요.")
+            helpbox("""
+    **아티스트/캐릭터 비중 · 프레임(IP) 전체 순위**
+    - 상단 도넛 = 탭1과 동일(아티스트·캐릭터 2조각, `cat3()` 분류).
+    - 하단 표 = `전체 / 아티스트 / 캐릭터` 토글로 거른 뒤 `프레임 이름`별 `KRW환산금액` 합·건수. TOP 10 + 나머지 접기.
 
-**판매기간 · 상태** — 매출이 빠졌을 때 *끝나서* 빠진 건지, *안 끝났는데* 빠진 건지 가르려고 붙였어요.
-- **판매기간** = 그 타이틀의 **실제 첫·마지막 거래일**(조회 기간이 아니라 전체 이력 기준, 결측 0%).
-- **상태**는 실측 거래일 + **Jira 종료일**(`duedate`)로 판정해요. 마지막 거래일만으론 '종료'인지 '그냥 안 팔리는 중'인지 구분이 안 되거든요.
-  - **🔚 종료** — Jira 종료일이 지났고 거래도 멈춤 → **급감이 예정된 것**
-  - **⚠️ 기간후판매** — 종료일이 지났는데 **아직 팔리는 중** → 계약·정산에서 확인이 필요해요
-  - **🆕 신규** — 첫 거래일이 조회 기간 안 → 올라간 게 정상
-  - **⏳ 종료예정** — 30일 안에 종료 예정
-  - **🔴 확인필요** — 판매기간이 남았는데 **7일 이상 거래 없음** → 점검 대상
-  - **🟢 판매중** / **⚪ 미확인**(Jira 미연결이라 종료 여부 단정 불가)
-- Jira 매칭은 타이틀명 정규화 + `ip_aliases.json` 별칭 기준이라 **매출의 약 84%** 가 연결돼요. 나머지는 `⚪ 미확인`으로 두고 **추측하지 않아요.**
-""")
+    **판매기간 · 상태** — 매출이 빠졌을 때 *끝나서* 빠진 건지, *안 끝났는데* 빠진 건지 가르려고 붙였어요.
+    - **판매기간** = 그 타이틀의 **실제 첫·마지막 거래일**(조회 기간이 아니라 전체 이력 기준, 결측 0%).
+    - **상태**는 실측 거래일 + **Jira 종료일**(`duedate`)로 판정해요. 마지막 거래일만으론 '종료'인지 '그냥 안 팔리는 중'인지 구분이 안 되거든요.
+      - **🔚 종료** — Jira 종료일이 지났고 거래도 멈춤 → **급감이 예정된 것**
+      - **⚠️ 기간후판매** — 종료일이 지났는데 **아직 팔리는 중** → 계약·정산에서 확인이 필요해요
+      - **🆕 신규** — 첫 거래일이 조회 기간 안 → 올라간 게 정상
+      - **⏳ 종료예정** — 30일 안에 종료 예정
+      - **🔴 확인필요** — 판매기간이 남았는데 **7일 이상 거래 없음** → 점검 대상
+      - **🟢 판매중** / **⚪ 미확인**(Jira 미연결이라 종료 여부 단정 불가)
+    - Jira 매칭은 타이틀명 정규화 + `ip_aliases.json` 별칭 기준이라 **매출의 약 84%** 가 연결돼요. 나머지는 `⚪ 미확인`으로 두고 **추측하지 않아요.**
+    """)
+
+        _frame_rank()
 
     with card("🧩 상품 카테고리 (비중 · 매출)"):
         pc = (sales.groupby("상품 카테고리").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count"))
@@ -1365,40 +1383,46 @@ with tab_nat:
 # ════════════ 탭 4: 매장별 분석 (상세, 전체) ════════════
 with tab_store:
     with card("🏬 국가별 매장 전체 순위", key="scard-storesel"):
-        # 실결제+쿠폰을 함께 봐서 전액 쿠폰(실결제 0) 매장·국가도 놓치지 않게(대만 케이스)
-        _base = pd.concat([sales, coupons])
-        _opts = ([str(c) for c in _base.assign(_t=_base["KRW환산금액"] + _base["쿠폰KRW"])
-                  .groupby("국가")["_t"].sum().sort_values(ascending=False).index.tolist()]
-                 if "국가" in _base.columns else [])
-        if not _opts:
-            st.info("데이터가 없어요.")
-        else:
-            pick = st.selectbox("국가", ["전체"] + _opts, key="store_country", label_visibility="collapsed")
-            _src = _base if pick == "전체" else _base[_base["국가"] == pick]
-            ss = (_src.groupby("매장 이름")
-                  .agg(매출=("KRW환산금액", "sum"), 쿠폰=("쿠폰KRW", "sum"), 건수=("KRW환산금액", "count"))
-                  .reset_index())
-            ss = ss[(ss["매출"] > 0) | (ss["쿠폰"] > 0)]
-            ss_paid = ss[ss["매출"] > 0].sort_values("매출", ascending=False)
-            ss_cpn = ss[(ss["매출"] == 0) & (ss["쿠폰"] > 0)].sort_values("쿠폰", ascending=False)
-            st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기" + ("" if pick == "전체" else f" · {pick}"))
-            if ss_paid.empty and ss_cpn.empty:
-                st.info("이 국가의 매장 데이터가 없어요.")
+        # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
+        # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
+        @st.fragment
+        def _store_rank():  # 국가 선택 → 매장 순위
+            # 실결제+쿠폰을 함께 봐서 전액 쿠폰(실결제 0) 매장·국가도 놓치지 않게(대만 케이스)
+            _base = pd.concat([sales, coupons])
+            _opts = ([str(c) for c in _base.assign(_t=_base["KRW환산금액"] + _base["쿠폰KRW"])
+                      .groupby("국가")["_t"].sum().sort_values(ascending=False).index.tolist()]
+                     if "국가" in _base.columns else [])
+            if not _opts:
+                st.info("데이터가 없어요.")
             else:
-                if not ss_paid.empty:
-                    hbar_list(ss_paid, "매장 이름", collapse_after=10)   # 시안: 가로 막대
-                if not ss_cpn.empty:
-                    _bits = " · ".join(f'{r["매장 이름"]} <b>{fmt_krw(int(r["쿠폰"]))}</b>'
-                                       for _, r in ss_cpn.head(12).iterrows())
-                    _more = f' 외 {len(ss_cpn) - 12}곳' if len(ss_cpn) > 12 else ''
-                    st.markdown('<div class="strip">🎟 쿠폰만 매장 (실결제 0) — '
-                                + _bits + _more + '</div>', unsafe_allow_html=True)
-        helpbox("""
-**국가별 매장 전체 순위**
-- 실결제+쿠폰 거래를 `매장 이름`으로 묶어 실결제(`KRW환산금액`)·쿠폰(`쿠폰KRW`) 합.
-- 실결제 있는 매장 = 막대 순위(TOP10 + 나머지 접기). 전액 쿠폰(실결제 0) 매장 = 하단 🎟 스트립에 쿠폰 매출로 표시.
-- ★국가 드롭다운도 실결제+쿠폰 기준이라 대만처럼 쿠폰만 있는 국가도 고를 수 있음.
-""")
+                pick = st.selectbox("국가", ["전체"] + _opts, key="store_country", label_visibility="collapsed")
+                _src = _base if pick == "전체" else _base[_base["국가"] == pick]
+                ss = (_src.groupby("매장 이름")
+                      .agg(매출=("KRW환산금액", "sum"), 쿠폰=("쿠폰KRW", "sum"), 건수=("KRW환산금액", "count"))
+                      .reset_index())
+                ss = ss[(ss["매출"] > 0) | (ss["쿠폰"] > 0)]
+                ss_paid = ss[ss["매출"] > 0].sort_values("매출", ascending=False)
+                ss_cpn = ss[(ss["매출"] == 0) & (ss["쿠폰"] > 0)].sort_values("쿠폰", ascending=False)
+                st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기" + ("" if pick == "전체" else f" · {pick}"))
+                if ss_paid.empty and ss_cpn.empty:
+                    st.info("이 국가의 매장 데이터가 없어요.")
+                else:
+                    if not ss_paid.empty:
+                        hbar_list(ss_paid, "매장 이름", collapse_after=10)   # 시안: 가로 막대
+                    if not ss_cpn.empty:
+                        _bits = " · ".join(f'{r["매장 이름"]} <b>{fmt_krw(int(r["쿠폰"]))}</b>'
+                                           for _, r in ss_cpn.head(12).iterrows())
+                        _more = f' 외 {len(ss_cpn) - 12}곳' if len(ss_cpn) > 12 else ''
+                        st.markdown('<div class="strip">🎟 쿠폰만 매장 (실결제 0) — '
+                                    + _bits + _more + '</div>', unsafe_allow_html=True)
+            helpbox("""
+    **국가별 매장 전체 순위**
+    - 실결제+쿠폰 거래를 `매장 이름`으로 묶어 실결제(`KRW환산금액`)·쿠폰(`쿠폰KRW`) 합.
+    - 실결제 있는 매장 = 막대 순위(TOP10 + 나머지 접기). 전액 쿠폰(실결제 0) 매장 = 하단 🎟 스트립에 쿠폰 매출로 표시.
+    - ★국가 드롭다운도 실결제+쿠폰 기준이라 대만처럼 쿠폰만 있는 국가도 고를 수 있음.
+    """)
+
+        _store_rank()
 
 # ════════════ 탭 5: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
 if SHOW_TAB_ETC:
