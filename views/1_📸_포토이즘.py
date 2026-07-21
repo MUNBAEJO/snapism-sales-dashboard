@@ -142,7 +142,10 @@ h2, h3{ letter-spacing:-0.02em !important; }
 /* CSS 차트 (Plotly 대체) */
 .donut-wrap{ display:flex; align-items:center; gap:18px; padding:2px 0; }
 .donut{ border-radius:50%; flex:0 0 auto; }
-.leg2{ display:flex; flex-direction:column; gap:8px; font-size:13px; flex:1; }
+/* 범례 폭 상한 — flex:1 로 두면 전체폭 카드에서 라벨과 %가 양끝으로 밀려
+   가운데가 텅 빈다(margin-left:auto 때문). 좁은 칼럼에선 상한이라 영향 없음. */
+.leg2{ display:flex; flex-direction:column; gap:8px; font-size:13px;
+       flex:1 1 auto; max-width:420px; }
 .leg2 .row{ display:flex; align-items:center; gap:9px; color:var(--text); }
 .leg2 .row b{ margin-left:auto; font-weight:800; font-variant-numeric:tabular-nums; }
 .leg2 .sub{ color:var(--text-3); font-size:12px; }
