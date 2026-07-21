@@ -301,7 +301,19 @@ SNAP_MASTER = BASE_DIR / "data" / "master.csv"
 
 # 팀/항목 정의 — 확장 지점(렌탈/기획 편입 시 여기 수정)
 #   픽(PICK)은 A·C(아티스트/캐릭터)로 나뉘지 않아 하나로 묶은 독립 팀/항목.
+#
+# ★`ip_classify.IP_GUBUN_SHOWN` 과 값이 같지만 '일부러' 따로 둔다(2026-07-21).
+#   - IP_GUBUN_SHOWN = 포토이즘 대시보드의 **화면 노출 정책**(보기 싫은 걸 감추는 용도).
+#   - TEAM_GUBUN     = **팀 목표 대비 실적**의 집계 범위. 목표치(kpi_targets)가
+#     A팀·C팀·픽 구성 기준으로 세워져 있다.
+#   묶어 두면 "화면에서 렌탈 좀 다시 보자" 같은 요청에 달성률까지 흔들린다.
+#   지금은 두 값이 우연히 같아 두 페이지 숫자가 일치하지만(검증: 2026-06·07 차이 0원),
+#   한쪽을 바꿔도 다른 쪽은 그대로인 게 의도된 동작이다.
 TEAM_GUBUN = {"A팀": ["아티스트"], "C팀": ["캐릭터"], "픽": ["PICK"]}
+# KPI 실적에 잡히는 IP구분 전체 = 팀 정의에서 파생.
+# (예전엔 ["아티스트","캐릭터","PICK"] 를 세 군데에 각각 박아둬서, TEAM_GUBUN 만
+#  고치면 나머지가 따라오지 않는 구조였다. 확장 지점을 한 곳으로 모은다.)
+TEAM_ALL_GUBUN = [g for gs in TEAM_GUBUN.values() for g in gs]
 DIV_ORDER  = ["A팀", "C팀", "픽", "스내피즘"]
 DIV_COLORS = {"A팀": "#6366f1", "C팀": "#0f9d77", "픽": "#b45309", "스내피즘": "#38a3e8"}
 DIV_LABEL  = {"A팀": "A팀 (아티스트)", "C팀": "C팀 (캐릭터)", "픽": "픽 (PICK)", "스내피즘": "스내피즘"}
@@ -418,7 +430,7 @@ def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
         df = pq.read_table(str(AGG_FILE), columns=["IP구분", "IP명", "타이틀명"]).to_pandas()
     except Exception:
         return {}
-    df = df[df["IP구분"].astype(str).isin(["아티스트", "캐릭터", "PICK"])]
+    df = df[df["IP구분"].astype(str).isin(TEAM_ALL_GUBUN)]
     df = df[["IP명", "타이틀명"]].astype(str).drop_duplicates()
     first_this = f"{_ym}-01"
     by_ip: dict = {}
@@ -435,7 +447,7 @@ def _region_daily() -> pd.DataFrame:
     지역 필터와 무관하게 항상 전체(국내+해외)를 담는다 — 국내/해외 비교가 목적."""
     frames = []
     ip = photoism_ip_daily()
-    ip = ip[ip["IP구분"].isin(["아티스트", "캐릭터", "PICK"])]
+    ip = ip[ip["IP구분"].isin(TEAM_ALL_GUBUN)]
     if not ip.empty:
         frames.append(ip[["날짜", "_kr", "매출액"]])
     sp = snapism_daily()
@@ -463,7 +475,7 @@ def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df[df["날짜"].notna() & ~df["취소 여부"].astype(bool)]
     df = df[df["날짜"] >= pd.Timestamp(_since)]
-    df = df[df["IP구분"].astype(str).isin(["아티스트", "캐릭터", "PICK"])]
+    df = df[df["IP구분"].astype(str).isin(TEAM_ALL_GUBUN)]
     if df.empty:
         return pd.DataFrame(columns=cols)
     ex   = load_exchange_rates()
