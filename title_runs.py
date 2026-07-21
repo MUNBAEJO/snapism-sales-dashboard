@@ -97,12 +97,57 @@ def _jira_by_key(jira_map):
     return out
 
 
-def _entries_for(jira_keyed, title):
-    """그 타이틀의 후보 티켓. 날짜까지 맞는 게 있으면 그것만 쓴다(회차 정확)."""
+def _tokens(name):
+    """접두(날짜)·접미(상품유형)·괄호를 뗀 뒤 토큰 목록. 접두 매칭용."""
+    s = _TAG_RE.sub(" ", str(name))
+    for _ in range(2):
+        s = _DATE_RE.sub("", s.strip())
+    s = _PAREN_RE.sub(" ", s)
+    for _ in range(4):
+        s = _SUFFIX_RE.sub(" ", s)
+    return [t for t in re.split(r"[\s,·_]+", s.strip().lower()) if t]
+
+
+def _entries_for(jira_keyed, title, token_index=None):
+    """
+    그 타이틀의 후보 티켓.
+      ① 날짜까지 맞는 키가 있으면 그것만(회차 정확)
+      ② 정규화 키 완전일치
+      ③ 그래도 없으면 '토큰 접두' 일치 — Jira 쪽에 수식어가 더 붙은 경우.
+         예: 매출 'NAZE' ↔ Jira 'NAZE 신오쿠보 특별관',
+             매출 '코르티스' ↔ Jira '코르티스 2026년 계약 2차'.
+         ★문자 단위가 아니라 토큰 단위라 '로아'가 '로아온라인'에 붙지 않는다.
+    """
     ek = _exact_key(title)
     if ek and jira_keyed.get(ek):
         return jira_keyed[ek]
-    return jira_keyed.get(normalize_title(title), [])
+    hit = list(jira_keyed.get(normalize_title(title), []))
+    if token_index:
+        # ★정규화로 찾았어도 토큰 후보를 '합친다'. 이름이 짧은 티켓만 잡히고
+        #  수식어가 붙은 진짜 회차 티켓을 놓치기 때문 — 코르티스는 '코르티스'로
+        #  잡히는 옛 티켓(종료 06-30) 때문에 '코르티스 2026년 계약 2차'
+        #  (CANDIP-22032, 종료 2027-03-31)가 후보에서 빠졌다.
+        tk = tuple(_tokens(title))
+        if tk:
+            seen = {id(e) for e in hit}
+            keys = {e.get("ticket_key") for e in hit if e.get("ticket_key")}
+            for e in token_index.get(tk, []):
+                if id(e) not in seen and e.get("ticket_key") not in keys:
+                    hit.append(e)
+    return hit
+
+
+def _token_prefix_index(jira_map):
+    """{매출쪽 토큰열: [엔트리...]} — Jira 타이틀의 앞부분 토큰열을 전부 키로 등록."""
+    out = {}
+    for title, entry in (jira_map or {}).items():
+        toks = _tokens(title)
+        e = dict(entry)
+        e.setdefault("title", title)
+        # 앞에서부터 1개, 2개 … 토큰을 키로 (전체 일치는 이미 다른 경로에서 처리)
+        for n in range(1, len(toks)):
+            out.setdefault(tuple(toks[:n]), []).append(e)
+    return out
 
 
 def _pick_ticket(entries, first_day, last_day, prefer_brand="snapism"):
@@ -164,6 +209,7 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
     d["_매출"] = pd.to_numeric(d[amount_col], errors="coerce").fillna(0)
 
     jira_keyed = _jira_by_key(jira_map)
+    tok_idx = _token_prefix_index(jira_map)
     rows = []
 
     for title, g in d.groupby(title_col, sort=False, observed=True):
@@ -175,7 +221,7 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
         day2run = dict(zip(days, run_no))
         g["_런"] = g["_날짜"].map(day2run)
 
-        entries = _entries_for(jira_keyed, title)
+        entries = _entries_for(jira_keyed, title, tok_idx)
 
         for rn, rg in g.groupby("_런"):
             first, last = rg["_날짜"].min(), rg["_날짜"].max()
@@ -251,16 +297,34 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
 
     ref = period_end or d["_날짜"].max()          # 판정 기준일 = 조회 기간 끝
     jira_keyed = _jira_by_key(jira_map)
+    tok_idx = _token_prefix_index(jira_map)
     out = {}
 
     for title, g in d.groupby(title_col, sort=False, observed=True):
         # ★'가장 최근 런'만 본다. 타이틀 전체(first~last)로 보면 같은 이름으로
         #  두 번 출시된 게 한 덩어리가 된다 — 스내피즘 '허성범'은 2025-08~2026-07로
         #  11개월이 붙어 2025년 티켓이 매칭되고 2026년 거래가 '기간후판매'로 오탐났다.
+        entries = _entries_for(jira_keyed, title, tok_idx)
+
         days = pd.Series(sorted(g["_날짜"].unique()))
         gaps = pd.to_datetime(days).diff().dt.days.fillna(0)
         run_no = (gaps >= gap_days).cumsum()
         cur = days[run_no == run_no.max()]
+
+        # ★판매가 끊기지 않아도 회차가 바뀔 수 있다. Jira 에 이름이 같은 티켓이
+        #  여러 개면 '가장 늦은 시작일'부터를 현재 회차로 본다.
+        #  (로이킴: 05-09~06-30 티켓과 07-14~08-13 티켓이 있는데 거래는 연속이라
+        #   공백 기준으로는 안 갈린다 → 07-14 부터가 새 회차)
+        starts = []
+        for e in entries:
+            sd = pd.to_datetime(e.get("startdate"), errors="coerce")
+            if not pd.isna(sd):
+                starts.append(sd.date())
+        if starts:
+            cut = max(s for s in starts if s <= cur.max()) if any(s <= cur.max() for s in starts) else None
+            if cut and cut > cur.min() and (cur >= cut).any():
+                cur = cur[cur >= cut]
+
         first, last = cur.min(), cur.max()
 
         # 이 타이틀의 Jira 티켓 중 '실제 판매 기간과 겹치는' 것을 고른다.
@@ -268,7 +332,7 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
         #  회차가 다른 타이틀이 같은 키로 뭉친다(포토이즘 '251201 다마고치'와
         #  '260701 다마고치'가 같은 '다마고치'). 그러면 2025년 출시분에 2026년
         #  종료일이 붙는다. _pick_ticket 은 기간이 겹칠 때만 연결한다.
-        ticket, _ = _pick_ticket(_entries_for(jira_keyed, title), first, last, prefer_brand)
+        ticket, _ = _pick_ticket(entries, first, last, prefer_brand)
         due = pd.to_datetime((ticket or {}).get("duedate"), errors="coerce")
         due = due.date() if not pd.isna(due) else None
 
