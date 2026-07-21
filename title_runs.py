@@ -97,6 +97,17 @@ def _jira_by_key(jira_map):
     return out
 
 
+# 렌탈·팝업부스 행사 티켓 표식. 일반 타이틀 매출에 이런 티켓이 붙으면 기간이 딴판이다.
+# 예: 매출 '260226 티니핑'(캐릭터)에 CANDIP-17621
+#     '26.02 티니핑 캐릭터 팝업 포토부스 (rt-2509-g)' 이 붙어 종료일이 어긋났다.
+# RT-2509-G 같은 코드는 렌탈부스 식별자(스내피즘 매장명에도 'RT-2510-D 렌탈부스'로 나온다).
+_RENTAL_RE = re.compile(r"(렌탈|대여|팝업\s*부스|포토\s*부스|부스|rt-?\d{4})", re.IGNORECASE)
+
+
+def _is_rental(name):
+    return bool(_RENTAL_RE.search(str(name)))
+
+
 def _tokens(name):
     """접두(날짜)·접미(상품유형)·괄호를 뗀 뒤 토큰 목록. 접두 매칭용."""
     s = _TAG_RE.sub(" ", str(name))
@@ -118,10 +129,18 @@ def _entries_for(jira_keyed, title, token_index=None):
              매출 '코르티스' ↔ Jira '코르티스 2026년 계약 2차'.
          ★문자 단위가 아니라 토큰 단위라 '로아'가 '로아온라인'에 붙지 않는다.
     """
+    # 렌탈·팝업부스 행사 티켓은 일반 타이틀에 붙이지 않는다(기간이 딴판).
+    # 매출 쪽이 렌탈이면 그대로 둔다 — 그때는 맞는 티켓이니까.
+    src_rental = _is_rental(title)
+
+    def _ok(es):
+        return es if src_rental else [e for e in es
+                                      if not _is_rental(e.get("title", "") or e.get("wbs_raw", ""))]
+
     ek = _exact_key(title)
-    if ek and jira_keyed.get(ek):
-        return jira_keyed[ek]
-    hit = list(jira_keyed.get(normalize_title(title), []))
+    if ek and _ok(jira_keyed.get(ek, [])):
+        return _ok(jira_keyed[ek])
+    hit = _ok(jira_keyed.get(normalize_title(title), []))
     if token_index:
         # ★정규화로 찾았어도 토큰 후보를 '합친다'. 이름이 짧은 티켓만 잡히고
         #  수식어가 붙은 진짜 회차 티켓을 놓치기 때문 — 코르티스는 '코르티스'로
@@ -131,7 +150,7 @@ def _entries_for(jira_keyed, title, token_index=None):
         if tk:
             seen = {id(e) for e in hit}
             keys = {e.get("ticket_key") for e in hit if e.get("ticket_key")}
-            for e in token_index.get(tk, []):
+            for e in _ok(token_index.get(tk, [])):
                 if id(e) not in seen and e.get("ticket_key") not in keys:
                     hit.append(e)
     return hit
