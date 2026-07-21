@@ -502,7 +502,8 @@ def _sidebar_options(_agg_mtime):
         vals = sorted(str(v) for v in d[col].dropna().unique())
         return [v for v in vals if v not in ("", "nan")] if drop_empty else vals
 
-    nonex = d[d["IP구분"] != "제외"]
+    # 노출 대상 구분만 — 기획(P)·렌탈·제외의 IP명이 필터 목록에 남지 않게.
+    nonex = d[d["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
 
     def ip_list(frame):
         return sorted(
@@ -618,9 +619,11 @@ def load_sales_detail(group_col, start_date, end_date, ip_list=None,
                _in_clause('"브랜드"', brands)):
         if _c:
             where.append(_c)
-    if gubuns:
-        _g_in = ",".join("'" + esc(g) + "'" for g in gubuns)
-        where.append(f"({ip_classify.IP_GUBUN_SQL}) IN ({_g_in})")
+    # 세부검색은 원본 parquet 을 DuckDB 로 직접 읽으므로 df_all 의 노출 필터가
+    # 적용되지 않는다. 여기서도 같은 조건을 걸어야 다른 카드와 숫자가 맞는다.
+    _shown = gubuns if gubuns else ip_classify.IP_GUBUN_SHOWN
+    _g_in = ",".join("'" + esc(g) + "'" for g in _shown)
+    where.append(f"({ip_classify.IP_GUBUN_SQL}) IN ({_g_in})")
     where_sql = " AND ".join(where)
 
     con = duckdb.connect()
@@ -932,6 +935,14 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
 # ══════════════════════════════════════════════════════════════
 df_all = load_data()
 
+# ── 노출 대상 IP구분 ──────────────────────────────────────────
+# 아티스트·캐릭터·PICK 만 대시보드에 노출한다(사용자 결정, 2026-07-21).
+# 기획(P)·렌탈·제외(기본/자체 프레임)는 데이터는 그대로 두고 화면에서만 뺀다.
+# ★df_all 직후에 한 번 걸어야 KPI·국가별·매장별·타이틀 순위까지 전부 일관되게 반영된다.
+#   (필터 옵션 목록에서만 빼면 데이터는 계속 합산돼 총매출이 안 맞는다)
+if "IP구분" in df_all.columns:
+    df_all = df_all[df_all["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
+
 st.title("📸 포토이즘 매출 대시보드")
 st.caption("기간·국가·매장·IP를 골라 매출을 봐요. 매출 = 실결제 + 쿠폰 + 서비스코인(지정 국가 가산) 기준이에요.")
 render_guide("photoism")
@@ -951,8 +962,9 @@ ex         = load_exchange_rates()
 # ══════════════════════════════════════════════════════════════
 _opts = _sidebar_options(_file_mtime(AGG_FILE))
 
-# IP 구분(다중선택) — 비우면 전체(기본 프레임 포함), 고르면 그 구분만. (기획P는 필터 옵션에서 제외)
-IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g != "기획(P)"]
+# IP 구분(다중선택) — 비우면 노출 대상 전체, 고르면 그 구분만.
+# 노출 대상은 IP_GUBUN_SHOWN(아티스트·캐릭터·PICK) 으로 이미 df_all 에서 걸러져 있다.
+IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g in ip_classify.IP_GUBUN_SHOWN]
 
 default_start = max(last_date - timedelta(days=29), first_date)
 
