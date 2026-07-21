@@ -1081,7 +1081,9 @@ def _title_status_ph(_agg_mtime, _p0, _p1, _countries, _brands, _stores, _gubuns
         jira = fetch_ip_dates(brand="all", force_refresh=False)
     except Exception:
         jira = {}        # Jira 가 죽어도 판매기간(실측)은 그대로 나온다
-    return title_status(base, jira, _p0, _p1, title_col="타이틀")
+    # prefer_brand="photoism" — 같은 IP가 양 브랜드에 있으면 포토이즘 티켓을 써야 한다
+    # (안 그러면 AG-ENT·AND2BLE 처럼 Snapism 티켓의 종료일이 붙는다).
+    return title_status(base, jira, _p0, _p1, title_col="타이틀", prefer_brand="photoism")
 
 
 try:
