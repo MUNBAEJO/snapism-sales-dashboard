@@ -184,6 +184,11 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
 # 마지막 거래 후 이 일수 넘게 조용하면 '멈춘' 것으로 본다.
 IDLE_DAYS = 7
 
+# 종료일 이후 이 일수까지는 '기간 후 판매'로 보지 않는다.
+# 포토이즘은 30개국이라 타임존 차이로 KST 기준 종료 다음날 새벽 거래가 찍힌다
+# (실제로 '종료일 +1일' 이 수십 건 — 기간 후 판매가 아니라 날짜 경계 문제).
+POST_GRACE_DAYS = 2
+
 # 상태 기호는 KPI 페이지(포토이즘 IP 무버)와 같은 뜻으로 맞춘다.
 STATUS_ORDER = ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "⏳ 종료예정",
                 "🆕 신규", "🟢 판매중", "⚪ 미확인"]
@@ -219,26 +224,23 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
     for title, g in d.groupby(title_col, sort=False, observed=True):
         first, last = g["_날짜"].min(), g["_날짜"].max()
 
-        # 이 타이틀의 Jira 종료일 중 기준일에 가장 가까운(=현재 회차) 것.
-        # 같은 IP가 두 브랜드에 동시 출시되면 티켓이 둘 다 잡히는데,
-        # 스내피즘 매출이니 Snapism 티켓을 먼저 쓴다(브랜드마다 종료일이 다름).
-        due, due_key = None, None
-        for e in jira_keyed.get(normalize_title(title), []):
-            v = pd.to_datetime(e.get("duedate"), errors="coerce")
-            if pd.isna(v):
-                continue
-            v = v.date()
-            key = ("snapism" in str(e.get("brand", "")).lower(), -abs((v - ref).days))
-            if due_key is None or key > due_key:
-                due, due_key = v, key
+        # 이 타이틀의 Jira 티켓 중 '실제 판매 기간과 겹치는' 것을 고른다.
+        # ★기준일에 가장 가까운 종료일을 고르면 안 된다 — 정규화가 날짜를 떼기 때문에
+        #  회차가 다른 타이틀이 같은 키로 뭉친다(포토이즘 '251201 다마고치'와
+        #  '260701 다마고치'가 같은 '다마고치'). 그러면 2025년 출시분에 2026년
+        #  종료일이 붙는다. _pick_ticket 은 기간이 겹칠 때만 연결한다.
+        ticket, _ = _pick_ticket(jira_keyed.get(normalize_title(title), []), first, last)
+        due = pd.to_datetime((ticket or {}).get("duedate"), errors="coerce")
+        due = due.date() if not pd.isna(due) else None
 
         # 조회 기간 뒤로도 팔리고 있으면(last > ref) 유휴 아님 → 0
         idle = max(0, (ref - last).days)
         is_new = period_start is not None and first >= period_start
 
-        if due and due < ref and idle < idle_days:
-            # 판매기간이 끝났는데 아직도 팔린다 = '기간 후 매출'.
-            # 🔚 종료로 뭉뚱그리면 "왜 아직 팔리지?"를 놓친다(전용 분석 페이지가 따로 있을 만큼 중요).
+        if due and due < ref and (last - due).days > POST_GRACE_DAYS:
+            # 판매기간이 끝난 '뒤에도' 거래가 찍혔다 = '기간 후 매출'.
+            # ★기준은 '종료일 이후 거래'다. '최근에 거래가 있음'으로 잡으면
+            #  종료일 당일까지만 팔린 정상 종료까지 여기로 딸려온다.
             status = "⚠️ 기간후판매"
         elif due and due < ref:
             status = "🔚 종료"          # 예정된 하락 — 급감해도 정상
