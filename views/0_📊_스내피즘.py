@@ -399,6 +399,11 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 BASE_DIR = Path(__file__).parent.parent
 MASTER_FILE = BASE_DIR / "data" / "master.csv"
 CONFIG_FILE = BASE_DIR / "config.json"
+DEVICE_FILE = BASE_DIR / "data" / "devices_snapism.parquet"   # device_ingest_snapism.py
+
+# 어드민 국가코드 → 매출 데이터의 '국가' 표기 (매출이 발생한 국가만)
+CC_TO_NAT = {"KR": "대한민국", "JP": "일본", "CN": "중국", "TW": "대만", "HK": "홍콩",
+             "TH": "태국", "ID": "인도네시아", "MY": "말레이시아", "VN": "베트남"}
 
 CURRENCY_SYMBOLS = {
     "KRW": "₩", "CNY": "¥", "JPY": "¥", "IDR": "Rp", "TWD": "NT$", "THB": "฿",
@@ -464,6 +469,60 @@ def paid_sales(df):
 
 def coupon_txns(df):
     return df[~df["취소 여부"] & (df["최종 결제 금액"] == 0) & (df["쿠폰 할인 금액"] > 0)]
+
+
+# ── 키오스크(스내피즘 어드민) ──────────────────────────────────
+# 포토이즘과 어드민이 아예 달라 별도 파일이다. 대신 이쪽은 **계약 기간(시작~종료)**이
+# 있어서 가동 구간을 어림하지 않고 정확히 자를 수 있다. (device_ingest_snapism.py)
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
+def _load_devices(_mtime):
+    if not DEVICE_FILE.exists():
+        return pd.DataFrame()
+    try:
+        d = pd.read_parquet(DEVICE_FILE, columns=["국가코드", "가동중", "테스트장비", "렌탈",
+                                                  "시작일", "종료일", "매출매장명"])
+        d = d[~d["테스트장비"]].copy()
+        for c in ("시작일", "종료일"):
+            d[c] = pd.to_datetime(d[c], errors="coerce")
+        return d.reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_devices():
+    try:
+        _m = DEVICE_FILE.stat().st_mtime
+    except Exception:
+        _m = 0.0
+    return _load_devices(_m)
+
+
+def device_days(dev, p0, p1):
+    """국가코드별 '대·일'(가동 키오스크 × 실가동일수)·대수·기간 내 신규/종료.
+
+    계약 [시작일, 종료일] 과 조회기간의 겹치는 날짜만 센다. 포토이즘은 철거일이 없어
+    중지 장비를 통째로 뺐지만, 스내피즘은 계약 종료일이 있어 그럴 필요가 없다."""
+    empty = pd.DataFrame(columns=["국가코드", "대수", "대일", "신규", "종료"])
+    if dev.empty or not p0 or not p1:
+        return empty
+    s0, s1 = pd.Timestamp(p0), pd.Timestamp(p1)
+    d = dev
+    beg = d["시작일"].fillna(s0).clip(lower=s0)
+    # ★계약 종료일 ≠ 폐점. 가맹 계약이 대부분 1년이라 오늘도 89대가 '종료일'을 맞는데,
+    #   그건 갱신일이지 문 닫는 날이 아니다. 실제로 끝난 건 운영 상태가 '가맹 해지'인 것뿐이라
+    #   해지 매장만 종료일로 자르고, 나머지는 조회기간 끝까지 돌린 것으로 본다.
+    closed = ~d["가동중"]
+    end = d["종료일"].where(closed).fillna(s1).clip(upper=s1)
+    days = (end - beg).dt.days + 1
+    t = pd.DataFrame({"국가코드": d["국가코드"], "대일": days,
+                      "신규": d["시작일"].between(s0, s1).astype(int),
+                      "종료": (closed & d["종료일"].between(s0, s1)).astype(int)})
+    t = t[t["대일"] > 0]
+    if t.empty:
+        return empty
+    return (t.groupby("국가코드").agg(대수=("대일", "size"), 대일=("대일", "sum"),
+                                      신규=("신규", "sum"), 종료=("종료", "sum"))
+            .reset_index())
 
 
 def fmt_krw(n):
@@ -1327,6 +1386,96 @@ with tab_nat:
 - **건수** = 거래 수 · **현지 매출** = `총원화금액`(= 최종 결제 금액 + 쿠폰 할인 금액, 현지통화 정가) 합.
 - **실결제(KRW)** = `KRW환산금액` 합(쿠폰 제외) · **쿠폰(KRW)** = `쿠폰KRW` 합 · **실결제 비중** = 그 나라 실결제 ÷ 전체 실결제.
 - ★전액 쿠폰 결제 국가는 실결제=0이라 예전엔 `매출>0` 필터에 걸려 사라졌음 → 이제 `실결제 또는 쿠폰`이 있으면 표시하고 '쿠폰만' 배지를 붙임(대만 케이스).
+""")
+
+        # ── 키오스크 1대당 매출 ────────────────────────────────
+        _dev = load_devices()
+        if not _dev.empty and len(date_range) == 2:
+            _dd = device_days(_dev[~_dev["렌탈"]], date_range[0], date_range[1])
+            per = pd.DataFrame()
+            if not _dd.empty:
+                _dd["국가"] = _dd["국가코드"].map(CC_TO_NAT)
+                # ★정산금액(실결제+쿠폰)으로 나눈다. 실결제만 쓰면 전액 쿠폰 결제인
+                #   대만이 1대당 0원으로 나와 비교가 망가진다(국가별 매출 표의 '쿠폰만' 케이스).
+                _base = pd.concat([sales, coupons])
+                _rev = (_base.groupby("국가")
+                        .agg(매출=("정산금액", "sum"), 건수=("정산금액", "size"))
+                        .reset_index())
+                per = _dd.merge(_rev, on="국가", how="inner")
+                per = per[(per["대일"] > 0) & (per["매출"] > 0)].copy()
+                per["대당월"] = (per["매출"] / per["대일"] * 30).round(0).astype("int64")
+                per["대당건"] = (per["건수"] / per["대일"] * 30).round(1)
+                per = per.sort_values("대당월", ascending=False)
+
+            if not per.empty:
+                with card("🎰 키오스크 1대당 매출 <span class='muted'>(팝업·렌탈 제외)</span>",
+                          key="scard-perkiosk"):
+                    _mx = per["대당월"].max()
+                    grid = ("grid-template-columns:1.3fr .65fr .95fr .85fr 1.15fr "
+                            ".8fr 1.05fr")
+                    html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
+                            '<span>국가</span><span class="r">가동 대수</span>'
+                            '<span class="r">기간 내 변동</span>'
+                            '<span class="r">대·일</span><span class="r">1대당 월매출</span>'
+                            '<span class="r">1대당 월건수</span><span>상대 수준</span></div>')
+                    for _, r in per.iterrows():
+                        _new, _end = int(r["신규"]), int(r["종료"])
+                        _bits = []
+                        if _new:
+                            _bits.append(f'<span style="color:var(--green)">+{_new}</span>')
+                        if _end:
+                            _bits.append(f'<span style="color:var(--red)">-{_end}</span>')
+                        _chg = " ".join(_bits) or '<span style="color:var(--text-3)">–</span>'
+                        html += (f'<div class="ntr" style="{grid}">'
+                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
+                                 f'<span class="r num">{int(r["대수"]):,}대</span>'
+                                 f'<span class="r num" style="font-size:12px">{_chg}</span>'
+                                 f'<span class="r num">{int(r["대일"]):,}</span>'
+                                 f'<span class="r num">{fmt_krw(int(r["대당월"]))}</span>'
+                                 f'<span class="r num">{r["대당건"]:,.1f}건</span>'
+                                 f'{pct_bar(r["대당월"] / _mx if _mx else 0, 1.0)}</div>')
+                    st.markdown(html + "</div>", unsafe_allow_html=True)
+                    st.caption("키오스크 1대가 30일 돌았을 때의 매출로 환산했어요. "
+                               "매장 수가 달라도 국가끼리 바로 비교할 수 있어요. "
+                               "'기간 내 변동'은 이 기간에 새로 계약한 대수(+)와 계약이 끝난 대수(-)예요.")
+
+                    with st.expander("📜 키오스크 계약 이력 (최근 12개월, 월별 신규·종료)"):
+                        _h = _dev[~_dev["렌탈"]].copy()
+                        _endm = pd.Timestamp(date_range[1]).to_period("M")
+                        rows = []
+                        for cc, g in _h.groupby("국가코드"):
+                            # ★ 여기서 nat 을 쓰면 바깥 국가별 매출표의 nat(DataFrame)을 덮어써
+                            #    아래 도넛이 터진다. 루프 변수는 반드시 다른 이름으로.
+                            _natname = CC_TO_NAT.get(cc, cc)
+                            # 종료는 실제 해지만 — 계약 종료일은 대부분 갱신일이다.
+                            for col, lab, mask in (("시작일", "신규", g["시작일"].notna()),
+                                                   ("종료일", "종료", ~g["가동중"])):
+                                mm = g.loc[mask, col].dropna().dt.to_period("M")
+                                mm = mm[(mm <= _endm) & (mm > _endm - 12)]
+                                for k, v in mm.value_counts().items():
+                                    rows.append({"국가": _natname, "구분": lab,
+                                                 "월": str(k)[2:].replace("-", "."),
+                                                 "대수": int(v)})
+                        if not rows:
+                            st.caption("최근 12개월 안에 신규·종료된 계약이 없어요.")
+                        else:
+                            _piv = (pd.DataFrame(rows)
+                                    .pivot_table(index=["국가", "구분"], columns="월",
+                                                 values="대수", aggfunc="sum", fill_value=0))
+                            _piv["합계"] = _piv.sum(axis=1)
+                            st.dataframe(_piv.sort_values("합계", ascending=False),
+                                         use_container_width=True)
+                            st.caption("계약 기간(시작~종료) 기준이에요. 신규가 몰린 달 뒤로 "
+                                       "그 나라 매출이 함께 올랐는지 보면 증설 효과를 가늠할 수 있어요.")
+                    helpbox("""
+**키오스크 1대당 매출**
+- **대·일** = 키오스크 × 조회기간과 계약 기간이 겹치는 날짜 수. 기간 중간에 계약이 시작·종료되면 그만큼만 세요.
+- **1대당 월매출** = 기간 매출 ÷ 대·일 × 30. 매장 수가 많은 나라가 무조건 위로 가지 않게 맞춘 값이에요.
+- 여기서 매출은 **실결제 + 쿠폰(정산금액)** 이에요. 실결제만 쓰면 전액 쿠폰으로 결제되는 국가(대만)가 1대당 0원이 돼요.
+- **팝업·렌탈은 분자·분모 모두 제외**했어요. 며칠만 도는 행사 장비라 상시 매장과 섞으면 왜곡돼요.
+- **기간 내 변동** `+N` = 신규 계약, `-N` = 실제 해지. 신규가 많은 나라는 대·일이 짧아 대당 매출이 눌려 보일 수 있어요.
+- ★**계약 종료일 ≠ 폐점**이에요. 가맹 계약이 대부분 1년이라 오늘도 89대가 종료일을 맞는데, 그건 갱신일이에요.
+  그래서 운영 상태가 **'가맹 해지'인 것만** 종료로 보고 분모를 잘라요.
 """)
 
         with card("🍩 국가별 매출 비중"):
