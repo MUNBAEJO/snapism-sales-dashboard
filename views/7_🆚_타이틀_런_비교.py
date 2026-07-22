@@ -15,6 +15,8 @@ import streamlit as st
 
 import auth
 import data_io
+import ip_classify
+import photoism_rules
 from jira_ip_dates import fetch_ip_dates
 from title_runs import build_runs, coverage
 
@@ -25,8 +27,20 @@ if not auth.is_owner(_email):
     st.stop()
 
 BASE_DIR    = Path(__file__).parent.parent
-MASTER_FILE = BASE_DIR / "data" / "master.parquet"
+MASTER_FILE = BASE_DIR / "data" / "master.parquet"                 # 스내피즘(거래 단위)
+PH_FILE     = BASE_DIR / "data" / "master_photoism_agg.parquet"    # 포토이즘(집계본)
 CONFIG_FILE = BASE_DIR / "config.json"
+
+# 브랜드별 차이는 전부 여기로 모은다 — 아래 로직은 이 표만 보고 동작한다.
+#  title_col: 런을 묶는 키. 스내피즘은 프레임 이름(=IP), 포토이즘은 '타이틀'이 아니라
+#             IP명이어야 한다('260505 코르티스'처럼 타이틀엔 출시일이 붙어 있어
+#             회차마다 다른 값이 되고, 그러면 회차 비교 자체가 불가능하다).
+BRANDS = {
+    "스내피즘": dict(file=MASTER_FILE, title_col="프레임 이름", amount_col="KRW환산금액",
+                   count_col=None,  prefer="snapism",  title_label="프레임 이름"),
+    "포토이즘": dict(file=PH_FILE,     title_col="IP명",       amount_col="매출액",
+                   count_col="건수", prefer="photoism", title_label="IP명"),
+}
 
 st.markdown("""
 <style>
@@ -109,20 +123,24 @@ def fmt_krw(n):
 
 
 # ── 데이터 ──────────────────────────────────────────────────
+def _rates():
+    import json
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("exchange_rates", {"KRW": 1})
+    except Exception:
+        return {"KRW": 1}
+
+
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
-def _load(_v):
+def _load_snapism(_v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
-    import json
     df = data_io.read_master(MASTER_FILE)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
     for col in ["최종 결제 금액", "쿠폰 할인 금액"]:
         df[col] = pd.to_numeric(df.get(col, 0), errors="coerce").fillna(0).astype(int)
-    try:
-        ex = json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("exchange_rates", {"KRW": 1})
-    except Exception:
-        ex = {"KRW": 1}
+    ex = _rates()
     df["결제 단위"] = df["결제 단위"].fillna("KRW").astype(str).str.strip()
     df["환율"] = df["결제 단위"].map(ex).fillna(1)
     df["KRW환산금액"] = (df["최종 결제 금액"] * df["환율"]).round(0).astype(int)
@@ -131,8 +149,33 @@ def _load(_v):
 
 
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
-def _runs(_v):
-    df = _load(_v)
+def _load_photoism(_v):
+    """포토이즘 집계본 — 런 계산에 필요한 컬럼만 읽는다(전체를 들면 메모리가 터진다)."""
+    if not PH_FILE.exists():
+        return pd.DataFrame()
+    import pyarrow.parquet as pq
+    keep = ["날짜", "IP명", "IP구분", "국가코드", "매장 이름", "결제 단위",
+            "건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]
+    have = [c for c in keep if c in pq.read_schema(str(PH_FILE)).names]
+    df = pq.read_table(str(PH_FILE), columns=have).to_pandas()
+    # 대시보드와 같은 노출 범위(아티스트·캐릭터·PICK)로 맞춘다.
+    if "IP구분" in df.columns:
+        df = df[df["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
+    df = df[df["IP명"].astype(str).str.strip() != ""]
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
+    df = df[df["날짜"].notna()]
+    photoism_rules.add_revenue(df, _rates())
+    return df[df["매출액"] > 0].reset_index(drop=True)
+
+
+def _load(brand, _v):
+    return _load_snapism(_v) if brand == "스내피즘" else _load_photoism(_v)
+
+
+@st.cache_data(ttl=900, max_entries=2)   # 브랜드 2개 → 상한 2
+def _runs(brand, _v):
+    cfg = BRANDS[brand]
+    df = _load(brand, _v)
     if df.empty:
         return pd.DataFrame()
     try:
@@ -142,22 +185,27 @@ def _runs(_v):
         jira = fetch_ip_dates(brand="all", force_refresh=False)
     except Exception:
         jira = {}       # Jira 가 죽어도 런 분리 자체는 매출만으로 된다
-    return build_runs(df, jira)
+    return build_runs(df, jira, title_col=cfg["title_col"], amount_col=cfg["amount_col"],
+                      count_col=cfg["count_col"], prefer_brand=cfg["prefer"])
 
 
 st.markdown('<div class="pghd">🆚 타이틀 런 비교</div>'
             '<div class="pgsub">같은 IP를 여러 번 냈을 때 회차별 성과를 나란히 봐요. '
             '런 길이가 달라서 <b>일평균</b>이 기본 지표예요.</div>', unsafe_allow_html=True)
 
-_v = data_io.file_version(MASTER_FILE)
-df = _load(_v)
+brand = st.radio("브랜드", list(BRANDS), horizontal=True, key="runs_brand",
+                 label_visibility="collapsed")
+CFG = BRANDS[brand]
+
+_v = data_io.file_version(CFG["file"])
+df = _load(brand, _v)
 if df.empty:
-    st.warning("매출 데이터가 없어요.")
+    st.warning(f"{brand} 매출 데이터가 없어요.")
     st.stop()
 
-runs = _runs(_v)
+runs = _runs(brand, _v)
 if runs.empty:
-    st.warning("런을 만들 수 없어요. `프레임 이름`이 있는 거래가 필요해요.")
+    st.warning(f"런을 만들 수 없어요. `{CFG['title_label']}`이(가) 있는 거래가 필요해요.")
     st.stop()
 
 cov = coverage(runs)
@@ -246,12 +294,12 @@ with card("② 성과 비교", key="scard-cmp"):
 
     helpbox("""
 **런 비교 계산 방식**
-- **런** = 같은 `프레임 이름`의 연속 판매 구간. 판매가 **21일 이상 끊기면** 다음 런으로 나눠요.
+- **런** = 같은 IP의 연속 판매 구간(스내피즘은 `프레임 이름`, 포토이즘은 `IP명` 기준). 판매가 **21일 이상 끊기면** 다음 런으로 나눠요.
   (연도로 자르지 않는 이유 — 원위 25.12 런은 `2025-12-25 ~ 2026-01-14`로 연말을 넘어가요)
 - **일평균 매출** = `총매출 ÷ 판매일수`. 런 길이가 제각각이라(22일 vs 76일) 총매출 비교는 긴 쪽이 무조건 이겨서, 일평균을 기본으로 둬요.
 - **매장당 매출** = `총매출 ÷ 판매 매장수`. 매장이 늘어난 효과를 걷어내요.
 - **변화** = A 대비 B의 증감률 `(B-A)/A`.
-- 대상은 **실결제만** — 취소 건과 전액 쿠폰(0원) 거래는 빼요.
+- 대상 매출: **스내피즘은 실결제만**(취소·전액쿠폰 0원 제외), **포토이즘은 대시보드와 같은 `매출액`**(실결제 + 지정 국가의 쿠폰·서비스코인 가산)이에요. 포토이즘은 노출 범위도 대시보드와 같게 **아티스트·캐릭터·PICK**만 봐요.
 """)
 
 # ── 일정 (Jira 계획 vs 실제) ─────────────────────────────────
@@ -279,7 +327,7 @@ with card("③ 일정 — 계획 vs 실제", key="scard-sch"):
     helpbox("""
 **일정 연결 방식**
 - Jira `CANDIP` 프로젝트의 `프로그램 및 검수` 하위 작업에서 **시작 날짜(`customfield_10015`)** 와 **종료일(`duedate`)** 을 가져와요.
-- Jira 타이틀(`25.10 QWER 아티스트 프레임`)과 매출 `프레임 이름`(`QWER`)이 달라서, **출시월 접두 · 상품유형 접미 · 지역 태그 · 괄호**를 떼고 `ip_aliases.json` 별칭까지 적용해 맞춰요.
+- Jira 타이틀(`25.10 QWER 아티스트 프레임`)과 매출 쪽 IP 이름(`QWER`)이 달라서, **출시월 접두 · 상품유형 접미 · 지역 태그 · 괄호**를 떼고 `ip_aliases.json` 별칭까지 적용해 맞춰요.
 - 한 IP에 회차별 티켓이 여러 개면 **런 기간과 실제로 겹치는** 티켓을 골라요. 겹치는 게 없으면 **연결하지 않아요** — 억지로 붙이면 '오픈지연 -418일' 같은 헛값이 나와서요.
 - **오픈지연일** = `첫 거래일 − 계획 시작일`. 음수면 계획보다 빨리 열린 거예요.
 """)
@@ -289,9 +337,9 @@ with card("④ 런 경과일별 매출 추이", key="scard-trend"):
     st.caption("시작일을 0일로 맞춰 겹쳐 봐요. 날짜가 달라도 '초반 반응'과 '지속력'을 바로 비교할 수 있어요.")
 
     def _series(R):
-        m = df[(df["프레임 이름"] == R["타이틀"]) &
+        m = df[(df[CFG["title_col"]] == R["타이틀"]) &
                (df["날짜"] >= R["첫거래일"]) & (df["날짜"] <= R["마지막거래일"])]
-        s = m.groupby("날짜")["KRW환산금액"].sum()
+        s = m.groupby("날짜")[CFG["amount_col"]].sum()
         idx = pd.date_range(R["첫거래일"], R["마지막거래일"], freq="D").date
         s = s.reindex(idx, fill_value=0)                  # 판매 없는 날도 0으로 채워 축을 맞춘다
         return pd.DataFrame({"경과일": range(len(s)), "매출": s.values})

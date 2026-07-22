@@ -206,7 +206,7 @@ def _pick_ticket(entries, first_day, last_day, prefer_brand="snapism"):
 
 def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
                title_col="프레임 이름", date_col="날짜", amount_col="KRW환산금액",
-               prefer_brand="snapism"):
+               prefer_brand="snapism", count_col=None):
     """
     거래 데이터 → 타이틀×런 단위 요약.
 
@@ -226,6 +226,12 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
     if amount_col not in d.columns:
         d[amount_col] = 0
     d["_매출"] = pd.to_numeric(d[amount_col], errors="coerce").fillna(0)
+    # 스내피즘은 거래 1건 = 1행이라 행 수가 곧 건수지만, 포토이즘은 집계본이라
+    # 한 행이 여러 건을 담는다. count_col 이 오면 그 합을 건수로 쓴다.
+    if count_col and count_col in d.columns:
+        d["_건수"] = pd.to_numeric(d[count_col], errors="coerce").fillna(0)
+    else:
+        d["_건수"] = 1
 
     jira_keyed = _jira_by_key(jira_map)
     tok_idx = _token_prefix_index(jira_map)
@@ -258,10 +264,10 @@ def build_runs(df, jira_map=None, gap_days=GAP_DAYS,
                 "첫거래일":   first,
                 "마지막거래일": last,
                 "판매일수":   span,
-                "건수":       len(rg),
+                "건수":       int(rg["_건수"].sum()),
                 "매출":       int(rg["_매출"].sum()),
                 "일평균매출": int(rg["_매출"].sum() / span) if span else 0,
-                "일평균건수": round(len(rg) / span, 1) if span else 0,
+                "일평균건수": round(rg["_건수"].sum() / span, 1) if span else 0,
                 "매장수":     rg["매장 이름"].nunique() if "매장 이름" in rg.columns else 0,
                 "계획시작일": plan_s,
                 "계획종료일": plan_d,

@@ -21,6 +21,7 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
 import ip_classify  # IP구분/IP명 분류 공용 모듈
+import photoism_rules  # 매출액 가산 규칙(쿠폰·코인 국가)
 import auth
 
 # ══════════════════════════════════════════════════════════════
@@ -364,8 +365,10 @@ CONFIG_FILE  = BASE_DIR / "config.json"
 DEVICE_FILE  = BASE_DIR / "data" / "devices.parquet"   # 장비관리 CMS(device_ingest.py)
 
 # 국가별 매출액 가산 규칙 (쿠폰/서비스코인 포함 국가)
-_COUPON_CC = {"la", "gb", "de", "th", "lv", "mx"}
-_COIN_CC   = {"cl", "la", "pe", "gb", "de", "lv", "mx"}
+# ★정의는 photoism_rules.py 한 곳에 둔다 — 런 비교 페이지도 같은 값을 써야
+#   두 화면의 매출이 어긋나지 않는다.
+_COUPON_CC = photoism_rules.COUPON_CC
+_COIN_CC   = photoism_rules.COIN_CC
 
 # 국가명 → ISO alpha-2 (국기 이미지용, 30개국 대응)
 COUNTRY_ISO = {
