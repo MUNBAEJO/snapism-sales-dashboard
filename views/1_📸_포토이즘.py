@@ -573,8 +573,11 @@ def _load_devices(_mtime):
     if not DEVICE_FILE.exists():
         return pd.DataFrame()
     try:
-        d = pd.read_parquet(DEVICE_FILE, columns=["국가코드", "가동중", "테스트장비", "렌탈", "설치일"])
-        d = d[d["가동중"] & ~d["테스트장비"] & ~d["렌탈"]].copy()
+        d = pd.read_parquet(DEVICE_FILE, columns=["국가코드", "가동중", "테스트장비", "렌탈",
+                                                  "설치일", "지점명", "부스번호"])
+        # 가동중은 남겨둔다 — 대당 매출 분모엔 가동 장비만 쓰지만, 이력 표에는
+        # '중지 N대'도 같이 보여줘야 숫자를 읽는 사람이 배경을 알 수 있다.
+        d = d[~d["테스트장비"] & ~d["렌탈"]].copy()
         d["국가코드"] = d["국가코드"].astype(str).str.lower().str.strip()
         d["설치일"] = pd.to_datetime(d["설치일"], errors="coerce")
         return d.reset_index(drop=True)
@@ -593,14 +596,18 @@ def device_days(dev, p0, p1):
     ★설치일을 무시하고 대수로만 나누면, 최근 증설한 국가가 실제보다 낮게 나온다.
     설치일 미상(19대)은 기간 시작 전부터 있던 것으로 본다."""
     if dev.empty or not p0 or not p1:
-        return pd.DataFrame(columns=["국가코드", "대수", "대일"])
+        return pd.DataFrame(columns=["국가코드", "대수", "대일", "신규", "중지"])
     s0, s1 = pd.Timestamp(p0), pd.Timestamp(p1)
-    inst = dev["설치일"].fillna(s0).clip(lower=s0)
+    act = dev[dev["가동중"]]
+    inst = act["설치일"].fillna(s0).clip(lower=s0)
     days = (s1 - inst).dt.days + 1
-    t = pd.DataFrame({"국가코드": dev["국가코드"], "대일": days.clip(lower=0)})
+    t = pd.DataFrame({"국가코드": act["국가코드"], "대일": days.clip(lower=0),
+                      "신규": act["설치일"].between(s0, s1).astype(int)})
     t = t[t["대일"] > 0]
-    return (t.groupby("국가코드").agg(대수=("대일", "size"), 대일=("대일", "sum"))
-            .reset_index())
+    g = (t.groupby("국가코드").agg(대수=("대일", "size"), 대일=("대일", "sum"),
+                                   신규=("신규", "sum")).reset_index())
+    stop = (dev[~dev["가동중"]].groupby("국가코드").size().rename("중지").reset_index())
+    return g.merge(stop, on="국가코드", how="left").fillna({"중지": 0})
 
 
 # 세부 항목 분류 기준 화이트리스트 (UI 라벨 → 실제 컬럼/파생키)
@@ -1606,26 +1613,61 @@ with tab_nat:
                 with card("🎰 키오스크 1대당 매출 <span class='muted'>(렌탈·팝업 제외)</span>",
                           key="scard-perkiosk"):
                     _mx = per["대당월"].max()
-                    grid = "grid-template-columns:1.4fr .7fr .9fr 1.2fr .9fr 1.3fr"
+                    grid = ("grid-template-columns:1.3fr .65fr .85fr .95fr 1.15fr "
+                            ".85fr 1.1fr")
                     html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
                             '<span>국가</span><span class="r">가동 대수</span>'
+                            '<span class="r">기간 내 변동</span>'
                             '<span class="r">대·일</span><span class="r">1대당 월매출</span>'
                             '<span class="r">1대당 월건수</span><span>상대 수준</span></div>')
                     for _, r in per.iterrows():
+                        # 왜 이 숫자가 나왔는지 읽히도록 장비 변동을 같은 줄에 둔다.
+                        # 신규가 많으면 그 나라 대·일이 대수 대비 짧아 대당 매출이 눌린다.
+                        _new, _stop = int(r["신규"]), int(r["중지"])
+                        _chg = (f'<span style="color:var(--green)">+{_new}</span>' if _new else
+                                '<span style="color:var(--text-3)">–</span>')
+                        if _stop:
+                            _chg += f'<span style="color:var(--text-3)"> / 중지 {_stop}</span>'
                         html += (f'<div class="ntr" style="{grid}">'
                                  f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
                                  f'<span class="r num">{int(r["대수"]):,}대</span>'
+                                 f'<span class="r num" style="font-size:12px">{_chg}</span>'
                                  f'<span class="r num">{int(r["대일"]):,}</span>'
                                  f'<span class="r num">{fmt_krw(int(r["대당월"]))}</span>'
                                  f'<span class="r num">{r["대당건"]:,.1f}건</span>'
                                  f'{pct_bar(r["대당월"] / _mx if _mx else 0)}</div>')
                     st.markdown(html + "</div>", unsafe_allow_html=True)
                     st.caption("장비 1대가 30일 돌았을 때의 매출로 환산했어요. "
-                               "매장 수·규모가 달라도 국가끼리 바로 비교할 수 있어요.")
+                               "매장 수·규모가 달라도 국가끼리 바로 비교할 수 있어요. "
+                               "'기간 내 변동'은 이 기간에 새로 깔린 대수(+)와 현재 중지 상태인 대수예요.")
+
+                    # 숫자 배경이 되는 설치 이력 — 매출이 오르내린 이유를 같이 보게 한다.
+                    with st.expander("📜 장비 설치 이력 (최근 12개월, 월별 신규 설치 대수)"):
+                        _h = _dev[_dev["설치일"].notna()].copy()
+                        _end = pd.Timestamp(date_range[1]).to_period("M")
+                        _h["월"] = _h["설치일"].dt.to_period("M")
+                        _h = _h[(_h["월"] <= _end) & (_h["월"] > _end - 12)]
+                        if _h.empty:
+                            st.caption("이 기간 이전 12개월 안에 새로 설치된 장비가 없어요.")
+                        else:
+                            _cc2nat = dict(zip(per["국가코드"], per["국가"]))
+                            _piv = (_h.assign(국가=_h["국가코드"].map(_cc2nat))
+                                    .dropna(subset=["국가"])
+                                    .pivot_table(index="국가", columns="월", values="가동중",
+                                                 aggfunc="size", fill_value=0))
+                            _piv.columns = [str(c)[2:].replace("-", ".") for c in _piv.columns]
+                            _piv["합계"] = _piv.sum(axis=1)
+                            _piv = _piv.sort_values("합계", ascending=False)
+                            st.dataframe(_piv, use_container_width=True)
+                            st.caption("설치일은 기기 S/N 앞 6자리(YYMMDD) 기준이에요. "
+                                       "숫자가 늘어난 달 뒤로 그 나라 매출이 함께 올랐는지 보면 "
+                                       "증설 효과를 가늠할 수 있어요.")
                     helpbox("""
 **키오스크 1대당 매출**
 - **대·일** = 가동 키오스크 × 그 기간 실제 가동일수. 기간 중간에 설치된 장비는 설치일부터만 세요.
 - **1대당 월매출** = 기간 매출 ÷ 대·일 × 30. 매장 수가 많은 나라가 무조건 위로 가지 않게 맞춘 값이에요.
+- **기간 내 변동** = 이 기간에 새로 깔린 대수(+)와 지금 '중지' 상태인 대수. 신규가 많은 나라는 대·일이 대수 대비 짧아요 — 그래서 대당 매출이 눌려 보일 수 있어요.
+- 아래 **설치 이력**(월별 신규 설치)을 펼치면 어느 달에 증설했는지 보여요. 매출이 뛴 시점과 겹치는지 보면 증설 효과를 가늠할 수 있어요.
 - 분자·분모 모두 **렌탈·팝업을 뺐어요**. 행사용 장비는 잠깐만 도는데 분모에 계속 남아 왜곡돼요.
 - 설치일은 CMS에 컬럼이 없어 **기기 S/N 앞 6자리**(YYMMDD)로 봐요.
 - ⚠️ **'중지' 장비는 분모에서 빠져요.** CMS에 철거일이 없어 언제 멈췄는지 알 수 없어서예요.
