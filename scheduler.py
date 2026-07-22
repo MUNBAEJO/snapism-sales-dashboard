@@ -269,6 +269,27 @@ def run_sm_weekly():
         log(f"SM 주간 수집 오류: {e}")
 
 
+def run_jira_cache_warm():
+    """Jira IP 일정 캐시 예열 — 대시보드 첫 접속자가 기다리지 않게.
+
+    brand='all' 은 4,200여 건을 100건씩 페이징으로 받아 콜드 조회에 20초쯤 걸린다.
+    캐시가 비어 있으면 그 시간을 '그때 접속한 사람'이 그대로 기다린다(실제로 타임아웃까지 났음).
+    TTL(12h)에 맞춰 하루 두 번 미리 채워두면 사용자는 항상 캐시 히트다.
+    """
+    log("Jira 일정 캐시 예열 시작...")
+    try:
+        from jira_ip_dates import fetch_ip_dates
+        for brand in ("all", "photoism", "snapism"):
+            try:
+                n = len(fetch_ip_dates(brand=brand, force_refresh=True))
+                log(f"  {brand}: {n:,}건")
+            except Exception as e:
+                log(f"  {brand}: 실패 ({e})")   # 한 브랜드 실패해도 나머지는 계속
+        log("Jira 일정 캐시 예열 완료.")
+    except Exception as e:
+        log(f"Jira 캐시 예열 오류: {e}")
+
+
 # ── 매출 딥 재수집 (매주 월요일) ─────────────────────────────────
 def run_sales_deep_resync():
     """매주: 매출을 더 긴 기간(기본 60일) 재수집해 '늦은 취소·정정'까지 반영.
@@ -331,6 +352,10 @@ def main():
     schedule.every().day.at(run_time).do(run_photoism_crawler)
     schedule.every().monday.at("07:00").do(run_sm_weekly)          # SM 촬영수 주간 갱신
     schedule.every().monday.at("05:00").do(run_sales_deep_resync)  # 매출 60일 딥 재수집(늦은 취소 반영)
+    # Jira 일정 캐시 예열 — TTL 12h 에 맞춰 하루 두 번(업무 시작 전 / 저녁).
+    # 안 해두면 캐시 만료 후 첫 접속자가 20초쯤 기다린다.
+    schedule.every().day.at("08:40").do(run_jira_cache_warm)
+    schedule.every().day.at("20:40").do(run_jira_cache_warm)
     if not SM_BACKFILL_FLAG.exists():                              # [1회성] SM PICK 백필
         schedule.every().day.at("00:00").do(run_sm_backfill_once)
         log("→ [1회성] SM PICK 백필 예약됨: 오늘 자정 00:00 (완료 후 자동 비활성)")

@@ -13,6 +13,12 @@ BASE_DIR    = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.json"
 CACHE_FILE  = BASE_DIR / "data" / "jira_ip_dates_cache.json"
 
+# 캐시 유효기간(시간). 예전엔 1시간이었는데, brand="all" 로 바꾸면서 한 번 조회에
+# 4,200여 건을 페이징으로 받게 돼(100건씩 ≈42회 호출) **매시간 첫 접속자가 그걸 다 기다렸다**.
+# 실제로 타임아웃까지 났다(2026-07-22). Jira 일정은 하루에 몇 번 바뀌는 값이 아니라
+# 12시간이면 충분하다. 즉시 반영이 필요하면 force_refresh=True 로 부르면 된다.
+CACHE_TTL_HOURS = 12
+
 _STATUSES = [
     "할 일", "진행 중", "송출 중", "완료",
     "TEST 맵핑", "검수 완료", "배포 완료", "In Review", "리소스 업로드 완료",
@@ -110,21 +116,34 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
     """
     타이틀명(WBS 기반) → {title, duedate, ticket_key, brand, status, ip_name} 매핑 반환
     brand: "snapism" | "photoism" | "all"
-    캐시 1시간 재사용
+    캐시 CACHE_TTL_HOURS 재사용 + 조회 실패 시 만료된 캐시로 폴백
     """
     # v3: startdate 추가 + Task 타입 포함 — 옛 캐시는 이 키가 없어 자동 재조회됨
     cache_key = f"ip_dates_v3_{brand}"
-    if not force_refresh and CACHE_FILE.exists():
+
+    def _cached(max_age_h=None):
+        """캐시에서 읽기. max_age_h=None 이면 나이 무시(만료본이라도 반환)."""
+        if not CACHE_FILE.exists():
+            return None
         try:
             with open(CACHE_FILE, encoding="utf-8") as f:
                 cache = json.load(f)
-            if cache_key in cache:
-                age_h = (datetime.now() - datetime.fromisoformat(
-                    cache[cache_key]["cached_at"])).total_seconds() / 3600
-                if age_h < 1:
-                    return cache[cache_key]["data"]
+            e = cache.get(cache_key)
+            if not e:
+                return None
+            if max_age_h is not None:
+                age_h = (datetime.now()
+                         - datetime.fromisoformat(e["cached_at"])).total_seconds() / 3600
+                if age_h >= max_age_h:
+                    return None
+            return e["data"]
         except Exception:
-            pass
+            return None
+
+    if not force_refresh:
+        fresh = _cached(CACHE_TTL_HOURS)
+        if fresh is not None:
+            return fresh
 
     cfg = _load_cfg()
 
@@ -156,6 +175,11 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
             "customfield_10390", "status", _STARTDATE_FIELD,
         ])
     except Exception as e:
+        # 네트워크 지연·타임아웃으로 실패했다고 '일정 없음'이 되면 안 된다.
+        # 만료된 캐시라도 있으면 그걸 쓴다 — 며칠 지난 종료일이 통째로 사라지는 것보다 낫다.
+        stale = _cached(None)
+        if stale is not None:
+            return stale
         raise RuntimeError(f"Jira 조회 실패: {e}")
 
     mapping = {}  # title_name → entry
