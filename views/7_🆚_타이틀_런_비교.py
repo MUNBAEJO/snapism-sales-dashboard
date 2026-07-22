@@ -214,13 +214,25 @@ cov = coverage(runs)
 runs["_라벨"] = (runs["타이틀"] + "  #" + runs["런번호"].astype(str)
                 + "  (" + runs["첫거래일"].astype(str) + " ~ " + runs["마지막거래일"].astype(str) + ")")
 
-multi = runs.groupby("타이틀").size()
-multi_titles = sorted(multi[multi > 1].index.tolist())
+# 종료 뒤 뒤늦게 한두 건 찍혀 만들어지는 '자투리 런'. 비교 대상은 못 되면서 목록만
+# 어지럽힌다(포토이즘 130개·스내피즘 21개). ★숨기기만 하고 데이터는 그대로 둔다 —
+# 아래 체크박스를 끄면 전부 다시 나온다. 지우거나 집계에서 빼지 않는다.
+MIN_RUN_TX = 10
 
 with card("① 비교할 런 고르기", key="scard-pick"):
-    only_multi = st.checkbox(f"여러 번 출시된 타이틀만 보기 ({len(multi_titles)}개)", value=True,
-                             help="같은 IP의 회차별 비교가 목적이면 켜 두세요. 끄면 서로 다른 IP끼리도 비교할 수 있어요.")
-    pool = runs[runs["타이틀"].isin(multi_titles)] if only_multi else runs
+    _tail = runs["건수"] < MIN_RUN_TX
+    c_a, c_b = st.columns(2)
+    hide_tail = c_a.checkbox(f"자투리 런 숨기기 ({int(_tail.sum())}개 · {MIN_RUN_TX}건 미만)",
+                             value=True,
+                             help="종료 뒤 뒤늦게 한두 건 찍힌 런이에요. 숨겨도 데이터는 그대로 남아 "
+                                  "있고, 끄면 다시 전부 나와요. 매출 비중은 0.03% 미만이에요.")
+    base = runs[~_tail] if hide_tail else runs
+
+    multi = base.groupby("타이틀").size()
+    multi_titles = sorted(multi[multi > 1].index.tolist())
+    only_multi = c_b.checkbox(f"여러 번 출시된 타이틀만 보기 ({len(multi_titles)}개)", value=True,
+                              help="같은 IP의 회차별 비교가 목적이면 켜 두세요. 끄면 서로 다른 IP끼리도 비교할 수 있어요.")
+    pool = base[base["타이틀"].isin(multi_titles)] if only_multi else base
     if pool.empty:
         st.info("조건에 맞는 런이 없어요.")
         st.stop()
@@ -299,6 +311,8 @@ with card("② 성과 비교", key="scard-cmp"):
 - **일평균 매출** = `총매출 ÷ 판매일수`. 런 길이가 제각각이라(22일 vs 76일) 총매출 비교는 긴 쪽이 무조건 이겨서, 일평균을 기본으로 둬요.
 - **매장당 매출** = `총매출 ÷ 판매 매장수`. 매장이 늘어난 효과를 걷어내요.
 - **변화** = A 대비 B의 증감률 `(B-A)/A`.
+- **자투리 런 숨기기** = 판매 건수 10건 미만인 런을 목록에서만 빼요. 종료 뒤 뒤늦게 찍힌 거래로 생긴 런이라
+  비교 대상이 못 되거든요. **데이터는 그대로 남아 있고**(집계·매출에서 빼지 않아요) 체크를 끄면 다시 다 나와요.
 - 대상 매출: **스내피즘은 실결제만**(취소·전액쿠폰 0원 제외), **포토이즘은 대시보드와 같은 `매출액`**(실결제 + 지정 국가의 쿠폰·서비스코인 가산)이에요. 포토이즘은 노출 범위도 대시보드와 같게 **아티스트·캐릭터·PICK**만 봐요.
 """)
 
