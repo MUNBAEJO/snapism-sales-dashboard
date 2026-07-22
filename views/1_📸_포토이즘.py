@@ -404,6 +404,18 @@ def fmt_orig(amount, currency):
     return f"{sym}{int(amount):,}"
 
 
+def josa(word, with_jong, without_jong):
+    """한글 조사 자동 선택 — '일본예요/대한민국는' 같은 어색한 표기 방지.
+    받침이 있으면 with_jong, 없으면 without_jong."""
+    w = str(word).strip()
+    if not w:
+        return without_jong
+    ch = w[-1]
+    if not ("가" <= ch <= "힣"):
+        return without_jong          # 영문·숫자로 끝나면 받침 없는 쪽이 대체로 자연스럽다
+    return with_jong if (ord(ch) - 0xAC00) % 28 else without_jong
+
+
 def fmt_krw(n):
     return f"₩{int(n):,}"
 
@@ -1640,6 +1652,36 @@ with tab_nat:
                                  f'<span class="r num">{r["대당건"]:,.1f}건</span>'
                                  f'{pct_bar(r["대당월"] / _mx if _mx else 0)}</div>')
                     st.markdown(html + "</div>", unsafe_allow_html=True)
+
+                    # 총매출 1위와 대당 효율 1위가 갈리는 게 이 카드의 핵심이다.
+                    # (물량은 한국이 압도적인데 1대당으로는 하위 — 이걸 놓치면 카드를 봐도 남는 게 없다)
+                    # ★효율 1위는 표본이 어느 정도 되는 국가에서만 고른다. 몇 대짜리 나라는
+                    #   매장 하나의 성적이 그대로 국가 대표값이 돼서 "4대뿐인 영국이 1위" 같은
+                    #   무의미한 문장이 나온다. 기준을 3대로 고정하면 한국 1,600대 옆에선 너무 얕아
+                    #   최대 보유국의 1%(최소 3대)로 규모에 맞춰 잡는다.
+                    _MIN_DEV = max(3, int(-(-per["대수"].max() // 100)))
+                    _cand = per[per["대수"] >= _MIN_DEV]
+                    if _cand.empty:
+                        _cand = per
+                    _top_rev = per.loc[per["매출"].idxmax()]
+                    _top_eff = _cand.iloc[0]
+                    if _top_rev["국가"] != _top_eff["국가"] and _top_rev["대당월"]:
+                        _x  = _top_eff["대당월"] / _top_rev["대당월"]
+                        _rk = list(_cand["국가"]).index(_top_rev["국가"]) + 1                             if _top_rev["국가"] in list(_cand["국가"]) else None
+                        _rev_n, _eff_n = _top_rev["국가"], _top_eff["국가"]
+                        _tail = (f'{_rev_n}{josa(_rev_n, "은", "는")} {len(_cand)}개국 중 '
+                                 f'<b>{_rk}위</b>{josa("위", "이에요", "예요")}.'
+                                 if _rk else f'{_rev_n}{josa(_rev_n, "은", "는")} 표본이 작아 순위에서 빠졌어요.')
+                        _note = (f' <span style="color:var(--text-3)">({_MIN_DEV}대 이상인 국가끼리 비교)</span>'
+                                 if len(_cand) < len(per) else '')
+                        st.markdown(
+                            '<div class="strip">💡 총매출 1위는 '
+                            f'<b>{_rev_n}</b>({fmt_krw(int(_top_rev["매출"]))}){josa(_rev_n, "인데", "인데")}, '
+                            f'1대당 효율 1위는 <b>{_eff_n}</b>{josa(_eff_n, "이에요", "예요")} — '
+                            f'1대당으로는 {_eff_n}{josa(_eff_n, "이", "가")} <b>{_x:.1f}배</b>, '
+                            f'{_tail}{_note}</div>',
+                            unsafe_allow_html=True)
+
                     st.caption(f"조회기간({_pkd}일) **실제 매출**을 장비 1대·30일 기준으로 환산한 값이에요"
                                "(예상치가 아니에요). '1위 대비'는 1등 국가를 100%로 둔 비율이고요 — "
                                "위 국가별 매출표의 '비중'(전체 대비 점유율)과는 다른 값이에요.")

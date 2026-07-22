@@ -525,6 +525,18 @@ def device_days(dev, p0, p1):
             .reset_index())
 
 
+def josa(word, with_jong, without_jong):
+    """한글 조사 자동 선택 — '일본예요/대한민국는' 같은 어색한 표기 방지.
+    받침이 있으면 with_jong, 없으면 without_jong."""
+    w = str(word).strip()
+    if not w:
+        return without_jong
+    ch = w[-1]
+    if not ("가" <= ch <= "힣"):
+        return without_jong          # 영문·숫자로 끝나면 받침 없는 쪽이 대체로 자연스럽다
+    return with_jong if (ord(ch) - 0xAC00) % 28 else without_jong
+
+
 def fmt_krw(n):
     return f"₩{int(n):,}"
 
@@ -1438,6 +1450,36 @@ with tab_nat:
                                  f'<span class="r num">{r["대당건"]:,.1f}건</span>'
                                  f'{pct_bar(r["대당월"] / _mx if _mx else 0, 1.0)}</div>')
                     st.markdown(html + "</div>", unsafe_allow_html=True)
+
+                    # 총매출 1위와 대당 효율 1위가 갈리는 게 이 카드의 핵심이다.
+                    # (물량은 한국이 압도적인데 1대당으로는 하위 — 이걸 놓치면 카드를 봐도 남는 게 없다)
+                    # ★효율 1위는 표본이 어느 정도 되는 국가에서만 고른다. 몇 대짜리 나라는
+                    #   매장 하나의 성적이 그대로 국가 대표값이 돼서 "4대뿐인 영국이 1위" 같은
+                    #   무의미한 문장이 나온다. 기준을 3대로 고정하면 한국 1,600대 옆에선 너무 얕아
+                    #   최대 보유국의 1%(최소 3대)로 규모에 맞춰 잡는다.
+                    _MIN_DEV = max(3, int(-(-per["대수"].max() // 100)))
+                    _cand = per[per["대수"] >= _MIN_DEV]
+                    if _cand.empty:
+                        _cand = per
+                    _top_rev = per.loc[per["매출"].idxmax()]
+                    _top_eff = _cand.iloc[0]
+                    if _top_rev["국가"] != _top_eff["국가"] and _top_rev["대당월"]:
+                        _x  = _top_eff["대당월"] / _top_rev["대당월"]
+                        _rk = list(_cand["국가"]).index(_top_rev["국가"]) + 1                             if _top_rev["국가"] in list(_cand["국가"]) else None
+                        _rev_n, _eff_n = _top_rev["국가"], _top_eff["국가"]
+                        _tail = (f'{_rev_n}{josa(_rev_n, "은", "는")} {len(_cand)}개국 중 '
+                                 f'<b>{_rk}위</b>{josa("위", "이에요", "예요")}.'
+                                 if _rk else f'{_rev_n}{josa(_rev_n, "은", "는")} 표본이 작아 순위에서 빠졌어요.')
+                        _note = (f' <span style="color:var(--text-3)">({_MIN_DEV}대 이상인 국가끼리 비교)</span>'
+                                 if len(_cand) < len(per) else '')
+                        st.markdown(
+                            '<div class="strip">💡 총매출 1위는 '
+                            f'<b>{_rev_n}</b>({fmt_krw(int(_top_rev["매출"]))}){josa(_rev_n, "인데", "인데")}, '
+                            f'1대당 효율 1위는 <b>{_eff_n}</b>{josa(_eff_n, "이에요", "예요")} — '
+                            f'1대당으로는 {_eff_n}{josa(_eff_n, "이", "가")} <b>{_x:.1f}배</b>, '
+                            f'{_tail}{_note}</div>',
+                            unsafe_allow_html=True)
+
                     st.caption(f"조회기간({_pkd}일) **실제 매출**을 키오스크 1대·30일 기준으로 환산한 값이에요"
                                "(예상치가 아니에요). '1위 대비'는 1등 국가를 100%로 둔 비율이고요 — "
                                "위 국가별 매출표의 '실결제 비중'(전체 대비 점유율)과는 다른 값이에요.")
@@ -1506,35 +1548,9 @@ with tab_nat:
 - 하단 🎟 스트립 = 쿠폰 붙은 전체 거래의 `쿠폰KRW` 합·건수.
 """)
 
-        # 키오스크당 매출 — 대당 효율. 키오스크 대수 데이터 미적재라 대수·당매출은 '준비중' 표기.
-        _pend_badge = ('<span style="font-size:11px;font-weight:700;color:#b45309;'
-                       'background:#fdf3e7;padding:2px 8px;border-radius:6px;margin-left:7px">준비중</span>')
-        with card("🖥 키오스크당 매출 (대당 효율)" + _pend_badge):
-            st.caption("키오스크 대수 데이터를 준비 중이에요. 대수가 연결되면 '키오스크당 매출'과 "
-                       "'총매출 1위 ≠ 대당 효율 1위' 인사이트가 자동으로 채워져요.")
-            kdf = (sales.groupby("국가")["KRW환산금액"].sum().rename("매출").reset_index()
-                   .sort_values("매출", ascending=False)) if "국가" in sales.columns else pd.DataFrame()
-            kdf = kdf[kdf["매출"] > 0] if not kdf.empty else kdf
-            if kdf.empty:
-                st.info("데이터가 없어요.")
-            else:
-                _pend = '<span class="cur" style="color:#b45309;background:#fdf3e7">준비중</span>'
-                grid = "grid-template-columns:1.5fr 1.5fr 1.1fr 1.4fr"
-                khtml = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
-                         '<span>국가</span><span class="r">총 매출</span>'
-                         '<span class="c">키오스크 대수</span><span class="r">키오스크당 매출</span></div>')
-                for _, r in kdf.iterrows():
-                    khtml += (f'<div class="ntr" style="{grid}">'
-                              f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
-                              f'<span class="r num">{fmt_krw(r["매출"])}</span>'
-                              f'<span class="c">{_pend}</span>'
-                              f'<span class="r">{_pend}</span></div>')
-                st.markdown(khtml + "</div>", unsafe_allow_html=True)
-            helpbox("""
-**키오스크당 매출 (준비중)**
-- '총 매출' = 국가별 실결제 `KRW환산금액` 합.
-- **키오스크 대수 데이터가 아직 적재 안 됨** → '대당 매출'은 계산 불가라 '준비중' 표기. 대수가 연결되면 `총매출 ÷ 대수`로 자동 계산돼요.
-""")
+        # ※ 예전 '키오스크당 매출(준비중)' 카드는 위 '키오스크 1대당 매출'로 대체됐다.
+        #    대수 데이터(devices_snapism.parquet)가 붙어 실제 계산이 되므로 자리표시자는 제거.
+        #    거기서 예고했던 '총매출 1위 ≠ 대당 효율 1위' 인사이트는 그 카드 안 스트립으로 옮겼다.
 
 # ════════════ 탭 4: 매장별 분석 (상세, 전체) ════════════
 with tab_store:
