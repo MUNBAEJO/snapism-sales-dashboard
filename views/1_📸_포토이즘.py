@@ -1631,10 +1631,19 @@ with tab_nat:
             if not per.empty:
                 with card("🎰 키오스크 1대당 매출 <span class='muted'>(렌탈·팝업 제외)</span>",
                           key="scard-perkiosk"):
-                    _mx   = per["대당월"].max()
-                    # ★'1위'가 무슨 1위인지 안 보여서 총매출 1위(한국)로 오해받았다.
-                    #   이 표의 정렬 기준은 1대당 월매출 → 선두 국가명을 헤더에 직접 박는다.
-                    _lead = str(per.iloc[0]["국가"])
+                    # ★표본 하한 — 몇 대뿐인 나라는 매장 하나 성적이 그대로 국가 대표값이 돼
+                    #   1위로 튄다(포토이즘에서 4대짜리 영국이 1위였다). 3대 고정은 한국 1,600대
+                    #   옆에서 너무 얕아 최대 보유국의 1%(최소 3대)로 규모에 맞춘다.
+                    #   숨기지는 않는다 — 기준 미달 국가는 표 아래쪽에 '표본 적음'으로 따로 보인다.
+                    _MIN_DEV = max(3, int(-(-per["대수"].max() // 100)))
+                    _big   = per[per["대수"] >= _MIN_DEV]
+                    _small = per[per["대수"] < _MIN_DEV]
+                    if _big.empty:                      # 전부 소규모면 하한을 접는다
+                        _big, _small = per, per.iloc[0:0]
+                    per = pd.concat([_big, _small])     # 둘 다 이미 대당월 내림차순
+                    # 100%·헤더 이름은 기준을 넘긴 국가에서만 잡는다.
+                    _mx   = _big["대당월"].max()
+                    _lead = str(_big.iloc[0]["국가"])
                     grid = ("grid-template-columns:1.3fr .65fr .85fr .95fr 1.15fr "
                             ".85fr 1.1fr")
                     html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
@@ -1653,8 +1662,12 @@ with tab_nat:
                                 '<span style="color:var(--text-3)">–</span>')
                         if _stop:
                             _chg += f'<span style="color:var(--text-3)"> / 중지 {_stop}</span>'
+                        _thin = ('<span style="font-size:10px;font-weight:700;color:#b45309;'
+                                 'background:#fdf3e7;padding:1px 6px;border-radius:5px;'
+                                 'margin-left:5px">표본 적음</span>'
+                                 if r["대수"] < _MIN_DEV else '')
                         html += (f'<div class="ntr" style="{grid}">'
-                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
+                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}{_thin}</span>'
                                  f'<span class="r num">{int(r["대수"]):,}대</span>'
                                  f'<span class="r num" style="font-size:12px">{_chg}</span>'
                                  f'<span class="r num">{int(r["대일"]):,}</span>'
@@ -1665,14 +1678,7 @@ with tab_nat:
 
                     # 총매출 1위와 대당 효율 1위가 갈리는 게 이 카드의 핵심이다.
                     # (물량은 한국이 압도적인데 1대당으로는 하위 — 이걸 놓치면 카드를 봐도 남는 게 없다)
-                    # ★효율 1위는 표본이 어느 정도 되는 국가에서만 고른다. 몇 대짜리 나라는
-                    #   매장 하나의 성적이 그대로 국가 대표값이 돼서 "4대뿐인 영국이 1위" 같은
-                    #   무의미한 문장이 나온다. 기준을 3대로 고정하면 한국 1,600대 옆에선 너무 얕아
-                    #   최대 보유국의 1%(최소 3대)로 규모에 맞춰 잡는다.
-                    _MIN_DEV = max(3, int(-(-per["대수"].max() // 100)))
-                    _cand = per[per["대수"] >= _MIN_DEV]
-                    if _cand.empty:
-                        _cand = per
+                    _cand = _big          # 표본 하한을 넘긴 국가끼리만 비교
                     _top_rev = per.loc[per["매출"].idxmax()]
                     _top_eff = _cand.iloc[0]
                     if _top_rev["국가"] != _top_eff["국가"] and _top_rev["대당월"]:
@@ -1728,6 +1734,7 @@ with tab_nat:
   - 그래서 **짧은 기간을 보면 그 며칠의 편차(주말·이벤트)가 30배로 커져** 보여요. 최소 2~4주로 보는 걸 권해요.
 - **'○○ 대비'** = 이 표의 1위, 즉 **1대당 매출이 가장 높은 국가**를 100%로 둔 비율이에요. 헤더에 그 나라 이름이 그대로 나와요.
   - ★**총매출 1위와 다른 나라일 수 있어요.** 한국은 총매출은 1위지만 1대당으로는 아래쪽이라 100%가 아니에요.
+  - ⚠️ **표본이 적은 국가**(가동 대수가 기준 미만)는 `표본 적음` 배지를 달고 표 아래쪽으로 내려요. 매장 한 곳 성적이 그대로 국가 대표값이 돼서 1위로 튀거든요. 기준은 **최대 보유국의 1%**(최소 3대)라 나라 규모가 커지면 같이 올라가요. 100%와 헤더 국가명도 기준을 넘긴 나라에서만 잡아요.
   - 위 '국가별 매출' 표의 **비중(전체 대비 점유율)과도 다른 값**이에요.
 - **기간 내 변동** = 이 기간에 새로 깔린 대수(+)와 지금 '중지' 상태인 대수. 신규가 많은 나라는 총 가동일이 대수 대비 짧아요 — 그래서 대당 매출이 눌려 보일 수 있어요.
 - 아래 **설치 이력**(월별 신규 설치)을 펼치면 어느 달에 증설했는지 보여요. 매출이 뛴 시점과 겹치는지 보면 증설 효과를 가늠할 수 있어요.
