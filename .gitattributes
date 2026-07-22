@@ -1,0 +1,3 @@
+
+# 배치 파일은 cmd 가 CP949+CRLF 를 기대한다 — git 이 LF 로 바꾸면 파싱이 깨진다
+*.bat text eol=crlf working-tree-encoding=CP949
