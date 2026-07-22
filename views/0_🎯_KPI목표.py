@@ -20,6 +20,7 @@ KPI 목표 달성률 대시보드  (상단 요약 + 4탭)
 """
 import io, json, re
 import streamlit as st
+import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import plotly.graph_objects as go
@@ -175,13 +176,16 @@ def load_monthly_actual(seg: str = "TTL"):
     # ① agg parquet 우선 (7.2 MB → 빠름)
     if AGG_FILE.exists():
         try:
-            df = pq.read_table(str(AGG_FILE)).to_pandas(strings_to_categorical=True)
+            df = pq.read_table(str(AGG_FILE), columns=[
+                "날짜", "국가코드", "결제 단위", "취소 여부",
+                "최종 결제 금액", "쿠폰 할인 금액", "서비스코인",
+            ]).to_pandas(strings_to_categorical=True)
             df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
             df = df[df["날짜"].notna()]
             df["취소 여부"] = df["취소 여부"].astype(bool)
             df = df[~df["취소 여부"]]
-            # seg 필터
-            _cc_s = df["국가코드"].astype(str).str.lower().str.strip()
+            # seg 필터 (★categorical 카테고리 기반 — 행 단위 문자열 변환 회피)
+            _cc_s = _cc_lower(df)
             if seg == "국내":
                 df = df[_cc_s == "kr"]
             elif seg == "해외":
@@ -191,12 +195,11 @@ def load_monthly_actual(seg: str = "TTL"):
             df["월"]   = pd.to_datetime(df["날짜"]).dt.month
             # KRW 환산
             ex = load_exchange_rates()
-            df["결제 단위"] = df["결제 단위"].astype(str).str.strip().replace("nan","KRW")
-            df["환율"]      = df["결제 단위"].map(ex).fillna(1)
+            df["환율"]      = _rate_series(df, ex)
             df["KRW환산금액"]   = (df["최종 결제 금액"] * df["환율"]).round(0)
             df["쿠폰KRW"]       = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
             df["서비스코인KRW"] = (df["서비스코인"]     * df["환율"]).round(0)
-            _cc = df["국가코드"].astype(str).str.lower().str.strip()
+            _cc = _cc_lower(df)
             df["매출액"] = (
                 df["KRW환산금액"]
                 + df["쿠폰KRW"]       * _cc.isin(_COUPON_CC).astype(int)
@@ -326,22 +329,62 @@ def _mtime(p) -> float:
         return 0.0
 
 
+# ── 대용량 문자열 컬럼 처리 헬퍼 ──────────────────────────────
+#  포토이즘 agg 는 373만 행이고 결제단위·국가코드·IP구분은 전부 categorical(고유값 수십 개).
+#  여기에 `.astype(str).str.strip()` 을 걸면 행 수만큼 파이썬 문자열을 만든다
+#  — 실측으로 str 접근자에서만 13초, 람다 호출 3,043만 회가 나왔다(KPI 로드 23초의 절반).
+#  카테고리(수십 개)에만 함수를 적용하고 코드로 매핑하면 사실상 0이 된다.
+#  ※ 포토이즘 페이지 _load_data 에는 이미 이 방식이 적용돼 있었다(같은 교훈).
+def _cat_apply(s, fn):
+    """categorical 이면 카테고리에만 fn 적용 후 코드로 되짚어 매핑.
+
+    ※ `s.map(...)` 을 쓰면 결과가 categorical 로 남아 이후 `fillna("")` 가
+      'Cannot setitem on a Categorical with a new category' 로 터진다.
+      코드 배열에 numpy take 를 쓰면 일반 object 시리즈가 나와 안전하고 더 빠르다.
+    """
+    if hasattr(s, "cat"):
+        vals  = np.array([fn(c) for c in s.cat.categories], dtype=object)
+        codes = s.cat.codes.to_numpy()
+        out   = np.empty(len(codes), dtype=object)
+        m     = codes >= 0                      # -1 = 결측
+        out[m] = vals[codes[m]]
+        return pd.Series(out, index=s.index)
+    return s.map(fn)
+
+
+def _rate_series(df, ex):
+    """결제 단위 → 환율. 매핑 실패는 1(원화 취급)."""
+    if "결제 단위" not in df.columns:
+        return pd.Series(1.0, index=df.index)
+    return _cat_apply(df["결제 단위"],
+                      lambda v: ex.get(str(v).strip(), 1)).astype(float).fillna(1.0)
+
+
+def _cc_lower(df):
+    """국가코드 소문자·공백제거 (비교·isin 용)."""
+    if "국가코드" not in df.columns:
+        return pd.Series("", index=df.index)
+    return _cat_apply(df["국가코드"], lambda v: str(v).lower().strip()).fillna("")
+
+
 @st.cache_data(show_spinner=False, max_entries=1)
 def _photoism_ip_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
     """포토이즘 agg → 날짜·IP구분·국내여부별 KRW 매출액 (취소 제외, 일 단위 집계)."""
     cols = ["날짜", "IP구분", "_kr", "매출액"]
     if not AGG_FILE.exists():
         return pd.DataFrame(columns=cols)
-    df = pq.read_table(str(AGG_FILE)).to_pandas(strings_to_categorical=True)
+    df = pq.read_table(str(AGG_FILE), columns=[
+        "날짜", "IP구분", "국가코드", "결제 단위", "취소 여부",
+        "최종 결제 금액", "쿠폰 할인 금액", "서비스코인",
+    ]).to_pandas(strings_to_categorical=True)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df[df["날짜"].notna()]
     df = df[~df["취소 여부"].astype(bool)]
     if df.empty:
         return pd.DataFrame(columns=cols)
     ex   = load_exchange_rates()
-    unit = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW")
-    rate = unit.map(ex).fillna(1)
-    cc   = df["국가코드"].astype(str).str.lower().str.strip()
+    rate = _rate_series(df, ex)          # ★categorical 카테고리 기반(행 단위 문자열 변환 회피)
+    cc   = _cc_lower(df)
     for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     base = pd.DataFrame({
@@ -368,16 +411,18 @@ def _photoism_ipname_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
     cols = ["날짜", "IP구분", "IP명", "_kr", "매출액"]
     if not AGG_FILE.exists():
         return pd.DataFrame(columns=cols)
-    df = pq.read_table(str(AGG_FILE)).to_pandas(strings_to_categorical=True)
+    df = pq.read_table(str(AGG_FILE), columns=[
+        "날짜", "IP구분", "IP명", "국가코드", "결제 단위", "취소 여부",
+        "최종 결제 금액", "쿠폰 할인 금액", "서비스코인",
+    ]).to_pandas(strings_to_categorical=True)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df[df["날짜"].notna()]
     df = df[~df["취소 여부"].astype(bool)]
     if df.empty:
         return pd.DataFrame(columns=cols)
     ex   = load_exchange_rates()
-    unit = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW")
-    rate = unit.map(ex).fillna(1)
-    cc   = df["국가코드"].astype(str).str.lower().str.strip()
+    rate = _rate_series(df, ex)          # ★categorical 카테고리 기반(행 단위 문자열 변환 회피)
+    cc   = _cc_lower(df)
     for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     base = pd.DataFrame({
@@ -430,7 +475,7 @@ def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
         df = pq.read_table(str(AGG_FILE), columns=["IP구분", "IP명", "타이틀명"]).to_pandas()
     except Exception:
         return {}
-    df = df[df["IP구분"].astype(str).isin(TEAM_ALL_GUBUN)]
+    df = df[df["IP구분"].isin(TEAM_ALL_GUBUN)]
     df = df[["IP명", "타이틀명"]].astype(str).drop_duplicates()
     first_this = f"{_ym}-01"
     by_ip: dict = {}
@@ -475,12 +520,12 @@ def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df[df["날짜"].notna() & ~df["취소 여부"].astype(bool)]
     df = df[df["날짜"] >= pd.Timestamp(_since)]
-    df = df[df["IP구분"].astype(str).isin(TEAM_ALL_GUBUN)]
+    df = df[df["IP구분"].isin(TEAM_ALL_GUBUN)]
     if df.empty:
         return pd.DataFrame(columns=cols)
     ex   = load_exchange_rates()
-    rate = df["결제 단위"].astype(str).str.strip().replace("nan", "KRW").map(ex).fillna(1)
-    cc   = df["국가코드"].astype(str).str.lower().str.strip()
+    rate = _rate_series(df, ex)
+    cc   = _cc_lower(df)
     for c in ["최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     df["매출액"] = ((df["최종 결제 금액"] * rate).round(0)

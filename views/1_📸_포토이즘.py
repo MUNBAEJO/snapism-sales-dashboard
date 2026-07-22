@@ -436,6 +436,12 @@ def _load_data(_agg_mtime, _cfg_mtime):
         try:
             table = pq.read_table(str(AGG_FILE))
             df = table.to_pandas(strings_to_categorical=True)
+            # ★노출 대상만 남기고 캐시한다. @st.cache_data 는 반환값을 피클로 직렬화하는데,
+            #   373만행 전체(314MB)를 넘기면 그 직렬화에서 MemoryError 가 났다(실측).
+            #   어차피 화면엔 아티스트·캐릭터·PICK 만 쓰므로 여기서 거르면 행이 절반 이하가 된다.
+            #   (원본 parquet 은 그대로 — 되살리려면 IP_GUBUN_SHOWN 만 고치면 된다)
+            if "IP구분" in df.columns:
+                df = df[df["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
         except Exception as e:
             st.warning(f"집계 파일을 불러오지 못했어요. 파일을 다시 만든 뒤 새로고침해 주세요. (원인: {e})")
             return pd.DataFrame()
@@ -446,9 +452,12 @@ def _load_data(_agg_mtime, _cfg_mtime):
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df = df[df["날짜"].notna()]
     df["취소 여부"] = df["취소 여부"].astype(bool)
+    # int32 로 낮춘다 — 219만행 × 4컬럼이 int64면 67MB, int32면 33MB.
+    # 캐시는 이 프레임을 피클로 들고 있어서 메모리 압박이 곧 OOM 으로 이어진다.
+    # 현지통화 최댓값(VND 수백만)도 int32 상한(21.4억)에 한참 못 미친다.
     for col in ["건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int32")
         else:
             df[col] = 0
 
@@ -464,10 +473,11 @@ def _load_data(_agg_mtime, _cfg_mtime):
     else:
         df["결제 단위"] = "KRW"
         df["환율"] = 1.0
-    df["KRW환산금액"] = (df["최종 결제 금액"] * df["환율"]).round(0).astype(int)
-    df["쿠폰KRW"]    = (df["쿠폰 할인 금액"] * df["환율"]).round(0).astype(int)
-    df["정산금액"]   = df["KRW환산금액"] + df["쿠폰KRW"]
-    df["서비스코인KRW"] = (df["서비스코인"] * df["환율"]).round(0).astype(int)
+    # 파생 금액도 int32 — 원화 환산액은 집계 한 행 기준 수천만 원 수준이라 상한(21.4억)에 여유가 크다.
+    df["KRW환산금액"] = (df["최종 결제 금액"] * df["환율"]).round(0).astype("int32")
+    df["쿠폰KRW"]    = (df["쿠폰 할인 금액"] * df["환율"]).round(0).astype("int32")
+    df["정산금액"]   = (df["KRW환산금액"] + df["쿠폰KRW"]).astype("int32")
+    df["서비스코인KRW"] = (df["서비스코인"] * df["환율"]).round(0).astype("int32")
 
     # 쿠폰·코인 가산대상(지정 국가) — 카테고리만 검사해 3.5M 문자열 변환 회피
     if "국가코드" in df.columns:
@@ -484,9 +494,9 @@ def _load_data(_agg_mtime, _cfg_mtime):
     else:
         _is_coup = _is_coin = False
     # 매출 구성: 실결제(순수) + 쿠폰기여 + 코인기여 (지정 국가만 쿠폰·코인 가산)
-    df["쿠폰기여"] = (df["쿠폰KRW"]       * _is_coup).astype(int)
-    df["코인기여"] = (df["서비스코인KRW"] * _is_coin).astype(int)
-    df["매출액"]   = df["KRW환산금액"] + df["쿠폰기여"] + df["코인기여"]
+    df["쿠폰기여"] = (df["쿠폰KRW"]       * _is_coup).astype("int32")
+    df["코인기여"] = (df["서비스코인KRW"] * _is_coin).astype("int32")
+    df["매출액"]   = (df["KRW환산금액"] + df["쿠폰기여"] + df["코인기여"]).astype("int32")
     return df
 
 
@@ -938,13 +948,8 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
 # ══════════════════════════════════════════════════════════════
 df_all = load_data()
 
-# ── 노출 대상 IP구분 ──────────────────────────────────────────
-# 아티스트·캐릭터·PICK 만 대시보드에 노출한다(사용자 결정, 2026-07-21).
-# 기획(P)·렌탈·제외(기본/자체 프레임)는 데이터는 그대로 두고 화면에서만 뺀다.
-# ★df_all 직후에 한 번 걸어야 KPI·국가별·매장별·타이틀 순위까지 전부 일관되게 반영된다.
-#   (필터 옵션 목록에서만 빼면 데이터는 계속 합산돼 총매출이 안 맞는다)
-if "IP구분" in df_all.columns:
-    df_all = df_all[df_all["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
+# 노출 대상 IP구분(아티스트·캐릭터·PICK) 필터는 _load_data 안에서 이미 적용됨.
+# 캐시 '이전'에 걸어야 안 쓰는 행까지 직렬화하지 않는다(그러다 MemoryError 가 났었다).
 
 st.title("📸 포토이즘 매출 대시보드")
 st.caption("기간·국가·매장·IP를 골라 매출을 봐요. 매출 = 실결제 + 쿠폰 + 서비스코인(지정 국가 가산) 기준이에요.")
