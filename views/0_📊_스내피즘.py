@@ -191,6 +191,12 @@ h2, h3{ letter-spacing:-0.02em !important; }
   border:5px solid transparent; border-top-color:#1b2330;
   opacity:0; pointer-events:none; transition:opacity .07s ease; z-index:60; }
 .tip:hover::after, .tip:hover::before{ opacity:1; }
+/* ★표(.ntbl)는 모서리를 둥글리려 overflow:hidden 이라, 위로 뜨는 기본 툴팁이 통째로
+   잘려 안 보인다. 표 헤더에는 .dn 을 붙여 '아래쪽·오른쪽 정렬'로 표 안에서 펼친다. */
+.tip.dn::after{ bottom:auto; top:100%; left:auto; right:0; transform:translateY(7px);
+  white-space:normal; width:max-content; max-width:260px; text-align:left; font-weight:600; }
+.tip.dn::before{ bottom:auto; top:100%; left:auto; right:12px; transform:translateY(2px);
+  border-top-color:transparent; border-bottom-color:#1b2330; }
 /* 세로 막대(추이·시간대): 막대 바로 위에 뜨는 박스(막대 높이에 맞춤) */
 .col, .hours .hc{ position:relative; }
 .vtip{
@@ -1432,11 +1438,11 @@ with tab_nat:
                     html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
                             '<span>국가</span><span class="r">가동 대수</span>'
                             '<span class="r">기간 내 변동</span>'
-                            '<span class="r tip" data-tip="키오스크마다 실제로 돈 날짜를 모두 더한 값'
+                            '<span class="r tip dn" data-tip="키오스크마다 실제로 돈 날짜를 모두 더한 값'
                             ' · 예: 3대가 30일씩 = 90">총 가동일 ⓘ</span>'
                             '<span class="r">1대당 월매출</span>'
                             '<span class="r">1대당 월건수</span>'
-                            f'<span class="tip" data-tip="1대당 월매출이 가장 높은 {_lead}{josa(_lead, '을', '를')} 100%로 둔 비율 · 총매출 1위와는 다른 순위예요">{_lead} 대비 ⓘ</span></div>')
+                            f'<span class="tip dn" data-tip="1대당 월매출이 가장 높은 {_lead}{josa(_lead, '을', '를')} 100%로 둔 비율 · 총매출 1위와는 다른 순위예요">{_lead} 대비 ⓘ</span></div>')
                     for _, r in per.iterrows():
                         _new, _end = int(r["신규"]), int(r["종료"])
                         _bits = []

@@ -179,6 +179,12 @@ h2, h3{ letter-spacing:-0.02em !important; }
   border:5px solid transparent; border-top-color:#1b2330;
   opacity:0; pointer-events:none; transition:opacity .07s ease; z-index:60; }
 .tip:hover::after, .tip:hover::before{ opacity:1; }
+/* ★표(.ntbl)는 모서리를 둥글리려 overflow:hidden 이라, 위로 뜨는 기본 툴팁이 통째로
+   잘려 안 보인다. 표 헤더에는 .dn 을 붙여 '아래쪽·오른쪽 정렬'로 표 안에서 펼친다. */
+.tip.dn::after{ bottom:auto; top:100%; left:auto; right:0; transform:translateY(7px);
+  white-space:normal; width:max-content; max-width:260px; text-align:left; font-weight:600; }
+.tip.dn::before{ bottom:auto; top:100%; left:auto; right:12px; transform:translateY(2px);
+  border-top-color:transparent; border-bottom-color:#1b2330; }
 .col, .hours .hc{ position:relative; }
 .vtip{
   position:absolute; left:50%; transform:translateX(-50%) translateY(-8px);
@@ -1634,11 +1640,11 @@ with tab_nat:
                     html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
                             '<span>국가</span><span class="r">가동 대수</span>'
                             '<span class="r">기간 내 변동</span>'
-                            '<span class="r tip" data-tip="장비마다 실제로 돈 날짜를 모두 더한 값'
+                            '<span class="r tip dn" data-tip="장비마다 실제로 돈 날짜를 모두 더한 값'
                             ' · 예: 3대가 30일씩 = 90">총 가동일 ⓘ</span>'
                             '<span class="r">1대당 월매출</span>'
                             '<span class="r">1대당 월건수</span>'
-                            f'<span class="tip" data-tip="1대당 월매출이 가장 높은 {_lead}{josa(_lead, '을', '를')} 100%로 둔 비율 · 총매출 1위와는 다른 순위예요">{_lead} 대비 ⓘ</span></div>')
+                            f'<span class="tip dn" data-tip="1대당 월매출이 가장 높은 {_lead}{josa(_lead, '을', '를')} 100%로 둔 비율 · 총매출 1위와는 다른 순위예요">{_lead} 대비 ⓘ</span></div>')
                     for _, r in per.iterrows():
                         # 왜 이 숫자가 나왔는지 읽히도록 장비 변동을 같은 줄에 둔다.
                         # 신규가 많으면 그 나라 대·일이 대수 대비 짧아 대당 매출이 눌린다.
