@@ -220,6 +220,22 @@ runs["_라벨"] = (runs["타이틀"] + "  #" + runs["런번호"].astype(str)
 MIN_RUN_TX = 10
 
 with card("① 비교할 런 고르기", key="scard-pick"):
+    # ★적재 범위를 먼저 보여준다. 포토이즘은 2026-01 부터라 '25년 vs 26년' 비교가
+    #   아예 불가능한데, 안 적어두면 "왜 25년 회차가 없지?"로 헤매게 된다.
+    _d0, _d1 = min(runs["첫거래일"]), max(runs["마지막거래일"])
+    # ★연도 판단은 두 번 틀리기 쉽다.
+    #   1) 연도 종류만 세면 — 포토이즘 2025-12-31 타임존 꼬리(1,145행) 때문에 "2025년도 있다"가 된다.
+    #   2) '런 시작일'로 세면 — 12-31 에 시작해 1월까지 이어진 런의 매출이 통째로 2025년에 붙는다.
+    #   그래서 런이 아니라 '실제 거래일'로 연도별 매출을 재고, 비중 1% 미만인 해는 꼬리로 본다.
+    _yr = (df.assign(_y=[d.year for d in df["날짜"]])
+             .groupby("_y")[CFG["amount_col"]].sum())
+    _real = sorted(_yr[_yr / _yr.sum() >= 0.01].index.tolist()) or sorted(_yr.index.tolist())
+    _msg = f"**{brand}** 데이터는 **{_d0} ~ {_d1}** 범위예요."
+    if len(_real) < 2:
+        _msg += (f" 사실상 **{_real[0]}년치뿐이라 해를 넘긴 비교(예: 25년 vs 26년)는 아직 안 돼요** — "
+                 "같은 해 안의 회차끼리만 비교할 수 있어요.")
+    st.caption(_msg)
+
     _tail = runs["건수"] < MIN_RUN_TX
     c_a, c_b = st.columns(2)
     hide_tail = c_a.checkbox(f"자투리 런 숨기기 ({int(_tail.sum())}개 · {MIN_RUN_TX}건 미만)",
