@@ -20,21 +20,13 @@ BASE_DIR   = Path(__file__).parent
 DEV_DIR    = BASE_DIR / "data" / "devices"
 OUT_FILE   = BASE_DIR / "data" / "devices.parquet"
 ALIAS_FILE = BASE_DIR / "store_aliases.json"
-SALES_FILE = BASE_DIR / "data" / "master.parquet"
+SALES_FILE = BASE_DIR / "data" / "master_photoism_agg.parquet"
 
 # 실매장이 아닌 것 — 대당 매출 분모에 들어가면 안 된다.
 TEST_RE = re.compile(r"테스트|test|샘플|sample|데모|demo|본사|오피스|창고|회의실|시험", re.I)
 
-# 지역 파일 → 그 파일에 기기정보가 비어 있을 때 쓸 기본 국가코드.
-# (kr·cn·jp 파일은 사실상 단일 국가, tw·id 파일은 여러 나라가 섞여 있어 보정하지 않는다)
-SRC_DEFAULT_CC = {"kr": "KR", "cn": "CN", "jp": "JP"}
-
-# 국가코드 → 매출 데이터의 '국가' 표기
-CC_TO_COUNTRY = {
-    "KR": "대한민국", "JP": "일본", "CN": "중국", "TW": "대만", "HK": "홍콩",
-    "TH": "태국", "ID": "인도네시아", "MY": "말레이시아", "VN": "베트남",
-    "PH": "필리핀", "SG": "싱가포르", "LA": "라오스", "GU": "괌",
-}
+# 여러 나라가 섞여 오는 지역 파일 — 기기정보가 비어 있어도 파일명으로 국가를 단정하면 안 된다.
+MULTI_COUNTRY_SRC = {"tw", "ph", "id", "jp"}
 
 
 def norm_key(s: str) -> str:
@@ -61,10 +53,17 @@ def build() -> pd.DataFrame:
     d = load_raw()
 
     d["지점명"] = d["지점명"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
+
+    # ★ 같은 장비가 두 지역 파일에 걸쳐 나오는 경우가 있다(라오스처럼 전용 호스트와
+    #    지역 호스트 양쪽에 등록). 지점·부스·기기ID가 같으면 같은 장비다.
+    d = d.drop_duplicates(["지점명", "부스번호", "기기ID"], keep="first").reset_index(drop=True)
+
     d["국가코드"] = (d["기기정보"].astype(str).str.split("-").str[0]
                      .replace({"nan": pd.NA, "": pd.NA}))
-    d["국가코드"] = d["국가코드"].fillna(d["지역파일"].map(SRC_DEFAULT_CC))
-    d["국가"] = d["국가코드"].map(CC_TO_COUNTRY)
+    # 기기정보가 비어 있으면 단일 국가 파일에 한해 파일명으로 보정한다.
+    single = ~d["지역파일"].isin(MULTI_COUNTRY_SRC)
+    d.loc[single, "국가코드"] = d.loc[single, "국가코드"].fillna(
+        d.loc[single, "지역파일"].str.upper())
 
     # 설치일: S/N 앞 6자리. 앞자리가 안 맞는 소수(자릿수 오입력)는 결측 처리.
     sn = d["기기 S/N"].astype(str).str.extract(r"^(\d{6})")[0]
@@ -80,7 +79,8 @@ def build() -> pd.DataFrame:
     #    전역 유일키는 '지역파일 + 기기ID'.
     d["장비키"] = d["지역파일"] + ":" + d["기기ID"].astype(str)
 
-    # 매출 매장명과 연결
+    # 매출 매장명과 연결 — 포토이즘 매출(집계본)의 '매장 이름' 기준.
+    # 스내피즘은 어드민이 아예 달라 매장명 체계도 다르므로 여기서 붙이지 않는다.
     sales = pd.read_parquet(SALES_FILE, columns=["매장 이름"])
     store_names = (sales["매장 이름"].astype(str)
                    .str.replace(r"\s+", " ", regex=True).str.strip().unique())
@@ -99,7 +99,7 @@ def build() -> pd.DataFrame:
 
     d["매출매장명"] = d["지점명"].map(match)
 
-    cols = ["장비키", "지역파일", "국가코드", "국가", "지점명", "매출매장명", "부스번호",
+    cols = ["장비키", "지역파일", "국가코드", "지점명", "매출매장명", "부스번호",
             "브랜드", "대분류", "상태(한글)", "가동중", "테스트장비", "렌탈",
             "기기ID", "기기 S/N", "설치일", "부스 컬러", "카메라 종류", "프린터 사양"]
     return d[cols]
@@ -118,9 +118,9 @@ def main():
           f" · 지점 {real.loc[linked, '지점명'].nunique():,}곳")
     print(f"  설치일 확보 {d['설치일'].notna().sum():,}대"
           f" ({d['설치일'].min():%Y-%m-%d} ~ {d['설치일'].max():%Y-%m-%d})")
-    print("\n국가별 가동 중 장비:")
+    print("\n국가별 가동 중 장비(렌탈·팝업 제외):")
     act = real[real["가동중"] & ~real["렌탈"]]
-    print(act.groupby("국가", dropna=False).size().sort_values(ascending=False).to_string())
+    print(act.groupby("국가코드", dropna=False).size().sort_values(ascending=False).to_string())
 
 
 if __name__ == "__main__":

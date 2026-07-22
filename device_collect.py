@@ -24,9 +24,25 @@ DEST_DIR    = BASE_DIR / "data" / "devices"
 
 # ★ cmsapi 는 국가가 아니라 '지역' 단위다. 한 호스트가 그 지역 전 국가 장비를 통째로
 #   돌려주므로(tw 로 받으면 HK 까지, id 로 받으면 TH·MY·VN·PH·SG·LA 까지) 호스트당
-#   1회만 받으면 된다. 8개국 다 돌리면 같은 파일을 세 번 받는 꼴.
-#   아래는 매출 발생 8개국(KR·JP·CN·TW·HK·TH·ID·MY)을 덮는 최소 집합.
-DEFAULT_COUNTRIES = ["kr", "jp", "cn", "tw", "id"]
+#   1회만 받으면 된다. 국가를 다 돌리면 같은 파일을 여러 번 받는 꼴이라, 인자 없이
+#   실행하면 cmsapi 가 같은 국가는 알파벳순 첫 국가 하나만 대표로 남긴다.
+def dedup_by_host(cfg, codes):
+    """cmsapi 호스트가 같은 국가는 하나만 남긴다. (대표=주어진 순서상 첫 국가)"""
+    seen, keep, skipped = {}, [], []
+    for cc in codes:
+        info = cfg["photoism"]["countries"].get(cc)
+        if not info:
+            keep.append(cc)          # 없는 코드는 그대로 두고 collect 에서 경고
+            continue
+        host = info["cmsapi"]
+        if host in seen:
+            skipped.append(f"{cc}→{seen[host]}")
+            continue
+        seen[host] = cc
+        keep.append(cc)
+    if skipped:
+        log(f"[중복 생략] 같은 cmsapi 라 대표 국가로 대체: {', '.join(skipped)}")
+    return keep
 COUNTRY_DELAY = 5   # 국가 간 대기(초) — 서버 부담 완화
 
 # 캡처한 실제 요청 규격(_device_excel_spec.json)과 동일
@@ -137,5 +153,6 @@ def collect(codes):
 
 
 if __name__ == "__main__":
-    codes = [c.lower() for c in sys.argv[1:]] or DEFAULT_COUNTRIES
-    collect(codes)
+    cfg   = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    codes = [c.lower() for c in sys.argv[1:]] or list(cfg["photoism"]["countries"])
+    collect(dedup_by_host(cfg, codes))
