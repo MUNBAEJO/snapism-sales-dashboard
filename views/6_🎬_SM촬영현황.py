@@ -20,8 +20,10 @@ import auth
 
 # 소유자 전용 — URL 직접 접근 차단
 _email = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
-if not auth.is_owner(_email):
-    st.error("🔒 이 페이지는 소유자만 볼 수 있어요.")
+# 팀에 이 페이지가 허용됐으면 소유자가 아니어도 들어올 수 있다.
+# (라우터가 사이드바에서 이미 걸러주지만, url 직접 입력 대비로 여기서도 막는다)
+if not auth.can_view_page(_email, "sm"):
+    st.error("🔒 이 페이지에 접근할 권한이 없어요. 필요하면 관리자에게 요청해 주세요.")
     st.stop()
 
 BASE_DIR = Path(__file__).parent.parent

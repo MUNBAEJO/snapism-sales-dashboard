@@ -16,6 +16,7 @@ st.set_page_config(
 # ── Google 로그인 + 승인제 접근 통제 ──
 # 통과하지 못하면 로그인/승인대기 화면을 그리고 여기서 멈춘다.
 import auth
+import pages_registry
 auth.require_login()
 
 INK = "#1a1a2e"
@@ -226,27 +227,30 @@ pio.templates["premium"] = _go.layout.Template(layout=dict(
 pio.templates.default = "plotly_white+premium"
 
 # ── 페이지 순서 (KPI목표 → 스내피즘 → 포토이즘 → IP정산 → 기간후 → 주간) ──
-# url_path 를 명시해 경로 충돌 방지, KPI 를 기본 진입 페이지로 지정
-_is_owner = auth.is_owner(st.user.email if getattr(st, "user", None) else None)
+# 페이지 목록은 pages_registry 한 곳에서만 정의한다(권한 UI 와 같은 목록을 봐야 어긋나지 않음).
+# 사이드바에 안 올린 페이지는 st.navigation 에 없으니 url 직접 접근도 함께 막힌다.
+_email    = (st.user.email if getattr(st, "user", None) else None)
+_is_owner = auth.is_owner(_email)
+_allowed  = set(auth.allowed_pages(_email))
 
-pages = [
-    st.Page("views/0_🎯_KPI목표.py",               title="KPI목표",            icon="🎯", url_path="kpi", default=True),
-    st.Page("views/0_📊_스내피즘.py",              title="스내피즘",           icon="📊", url_path="snapism"),
-    st.Page("views/1_📸_포토이즘.py",              title="포토이즘",           icon="📸", url_path="photoism"),
-]
-# IP정산현황·기간 후 매출분석 = 소유자 전용 (다른 계정 사이드바엔 숨김 + url 접근도 차단)
-if _is_owner:
-    pages.append(st.Page("views/7_🆚_타이틀_런_비교.py",        title="타이틀 런 비교",        icon="🆚", url_path="runs"))
-    pages.append(st.Page("views/2_💰_IP정산현황_(스내피즘).py", title="IP정산현황 (스내피즘)", icon="💰", url_path="settlement"))
-    pages.append(st.Page("views/3_⚠️_기간_후_매출분석.py",       title="기간 후 매출분석",      icon="⚠️", url_path="expired"))
-pages.append(st.Page("views/4_📋_주간리포트.py",            title="주간리포트",          icon="📋", url_path="weekly"))
+pages = []
+for _key, _file, _title, _icon, _url, _default_on in pages_registry.PAGES:
+    if _key in _allowed:
+        pages.append(st.Page(_file, title=_title, icon=_icon, url_path=_url,
+                             default=(_key == "kpi")))
 
-# SM 촬영현황·접속 로그도 소유자 전용
-if _is_owner:
-    pages.append(st.Page("views/6_🎬_SM촬영현황.py", title="SM 촬영현황", icon="🎬", url_path="sm-shooting"))
-    pages.append(st.Page("views/5_🔐_접속관리.py", title="접속·계정 관리", icon="🔐", url_path="admin"))
+if not pages:      # 팀 설정이 꼬여 한 장도 안 남는 경우 대비 — 빈 네비게이션은 예외를 던진다
+    _k, _f, _t, _i, _u, _d = pages_registry.PAGES[0]
+    pages.append(st.Page(_f, title=_t, icon=_i, url_path=_u, default=True))
+
+if _is_owner:      # 관리 화면은 언제나 소유자 전용 — 팀 권한으로 열 수 없다
+    _k, _f, _t, _i, _u = pages_registry.ADMIN_PAGE
+    pages.append(st.Page(_f, title=_t, icon=_i, url_path=_u))
 
 pg = st.navigation(pages)
+
+# 활동로그 — 어떤 페이지를 열었는지. 페이지가 바뀔 때만 남긴다(매 rerun 마다 쌓이면 못 읽는다).
+auth.log_page_view(_email or "", pages_registry.URL_TO_KEY.get(pg.url_path, pg.url_path))
 
 # 사이드바 좌하단 고정: 계정 표시 + 로그아웃
 auth.render_sidebar_account()

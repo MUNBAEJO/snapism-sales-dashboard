@@ -16,6 +16,8 @@ import time
 import datetime
 from pathlib import Path
 
+import pages_registry
+
 import streamlit as st
 
 BASE_DIR           = Path(__file__).parent
@@ -49,14 +51,32 @@ def _normalize_users(v: dict) -> dict:
     else:
         ap = {}
     pend = [str(e).strip().lower() for e in v.get("pending", []) if str(e).strip()]
-    return {"approved": ap, "pending": pend}
+
+    # 팀: {"팀이름": {"pages": ["kpi", ...]}} — 없는 페이지 키는 버린다
+    # (registry 에서 페이지를 지웠는데 팀에 남아 있으면 유령 권한이 된다)
+    teams = {}
+    for name, cfg in (v.get("teams") or {}).items():
+        n = str(name).strip()
+        if not n:
+            continue
+        pages = [str(k) for k in (cfg or {}).get("pages", []) if str(k) in pages_registry.PAGE_KEYS]
+        teams[n] = {"pages": pages}
+
+    # 배정: {"email": "팀이름"} — 승인 계정이 아니거나 없는 팀이면 버린다
+    memb = {}
+    for e, t in (v.get("member_team") or {}).items():
+        e2, t2 = str(e).strip().lower(), str(t).strip()
+        if e2 in ap and t2 in teams:
+            memb[e2] = t2
+
+    return {"approved": ap, "pending": pend, "teams": teams, "member_team": memb}
 
 
 def _load_users() -> dict:
     try:
         return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
     except FileNotFoundError:
-        return {"approved": {}, "pending": []}
+        return {"approved": {}, "pending": [], "teams": {}, "member_team": {}}
     except Exception:
         # 파싱 실패(쓰기 도중 등). 원자적 저장으로 거의 없지만, 만약 발생하면 짧게 재시도해
         # 반쯤 쓰인 파일 때문에 승인된 사용자가 '승인 대기'로 튕기는 사고를 막는다.
@@ -138,6 +158,77 @@ def can_edit(email: str | None) -> bool:
     return get_role(email) in ("owner", "editor")
 
 
+def list_teams() -> dict:
+    """{"팀이름": {"pages": [...]}} — 화면·권한 판정 공용."""
+    return _load_users()["teams"]
+
+
+def get_team(email: str | None) -> str | None:
+    if not email:
+        return None
+    return _load_users()["member_team"].get(email.strip().lower())
+
+
+def allowed_pages(email: str | None) -> list[str]:
+    """이 계정이 볼 수 있는 페이지 key 목록.
+
+    소유자는 전부. 팀이 배정돼 있으면 그 팀의 목록, 없으면 DEFAULT_PAGES.
+    ★팀에 아무 페이지도 안 붙어 있으면 '전부 차단'이 아니라 기본값으로 되돌린다 —
+      팀을 갓 만들고 체크를 안 한 상태에서 팀원들이 통째로 잠기는 사고를 막는다.
+    """
+    if is_owner(email):
+        return list(pages_registry.PAGE_KEYS)
+    if not can_access(email):
+        return []
+    t = get_team(email)
+    if t:
+        pages = _load_users()["teams"].get(t, {}).get("pages", [])
+        if pages:
+            return [k for k in pages_registry.PAGE_KEYS if k in pages]
+    return list(pages_registry.DEFAULT_PAGES)
+
+
+def can_view_page(email: str | None, page_key: str) -> bool:
+    if page_key == pages_registry.ADMIN_PAGE[0]:
+        return is_owner(email)          # 관리 화면은 팀 권한으로 못 연다
+    return page_key in allowed_pages(email)
+
+
+def set_team_pages(team: str, pages: list[str]) -> None:
+    t = str(team).strip()
+    keep = [k for k in pages if k in pages_registry.PAGE_KEYS]
+
+    def _fn(u):
+        u.setdefault("teams", {})[t] = {"pages": keep}
+
+    _mutate_users(_fn)
+
+
+def delete_team(team: str) -> None:
+    t = str(team).strip()
+
+    def _fn(u):
+        u.get("teams", {}).pop(t, None)
+        # 그 팀 소속이던 계정은 배정 해제 → 기본 페이지로 돌아간다(잠기지 않는다)
+        u["member_team"] = {e: v for e, v in u.get("member_team", {}).items() if v != t}
+
+    _mutate_users(_fn)
+
+
+def assign_team(email: str, team: str | None) -> None:
+    e = str(email).strip().lower()
+    t = (team or "").strip()
+
+    def _fn(u):
+        m = u.setdefault("member_team", {})
+        if t:
+            m[e] = t
+        else:
+            m.pop(e, None)
+
+    _mutate_users(_fn)
+
+
 def can_access(email: str | None) -> bool:
     if not email:
         return False
@@ -198,6 +289,19 @@ def _log_access(email: str, event: str) -> None:
         ts = datetime.datetime.now().isoformat(timespec="seconds")
         with ACCESS_LOG_PATH.open("a", encoding="utf-8") as f:
             f.write(f"{ts}\t{event}\t{email}\n")
+    except Exception:
+        pass
+
+
+def log_page_view(email: str, page_key: str) -> None:
+    """페이지 열람 기록. ★Streamlit 은 위젯을 건드릴 때마다 스크립트를 통째로 다시
+    돌리므로, 그대로 적으면 체크박스 한 번에 수십 줄이 쌓인다. 세션에 마지막 페이지를
+    들고 있다가 '바뀌었을 때만' 남긴다."""
+    try:
+        if st.session_state.get("_last_page_logged") == page_key:
+            return
+        st.session_state["_last_page_logged"] = page_key
+        _log_access(email, f"view:{page_key}")
     except Exception:
         pass
 
@@ -437,6 +541,15 @@ def _pretty_event(ev: str) -> str:
         return "⛔ 해제 → " + ev.split(":", 1)[1]
     if ev.startswith("role:"):
         return "🔧 역할변경 → " + ev.split(":", 1)[1]
+    if ev.startswith("team:"):
+        return "👥 팀배정 → " + ev.split(":", 1)[1]
+    if ev.startswith("teamset:"):
+        return "🗂 팀권한 변경 → " + ev.split(":", 1)[1]
+    if ev.startswith("teamdel:"):
+        return "🗑 팀삭제 → " + ev.split(":", 1)[1]
+    if ev.startswith("view:"):
+        k = ev.split(":", 1)[1]
+        return "👁 열람 → " + pages_registry.PAGE_TITLE.get(k, k)
     return ev
 
 
@@ -468,7 +581,7 @@ def render_admin_console() -> None:
     st.markdown('<div class="section-title">🔐 접속·계정 관리</div>', unsafe_allow_html=True)
     st.caption("접속 로그 열람과 계정 승인은 소유자(나)만 가능합니다.")
 
-    tab_users, tab_logs = st.tabs(["👥 계정 승인", "📜 접속 로그"])
+    tab_users, tab_teams, tab_logs = st.tabs(["👥 계정 승인", "🗂 팀·권한", "📜 활동 로그"])
 
     # ── 계정 승인 ──
     _ROLE_LABEL = {"editor": "✏️ 에디터(편집)", "viewer": "👁 뷰어(열람)"}
@@ -494,34 +607,95 @@ def render_admin_console() -> None:
         with st.container(border=True):
             st.markdown(f"**승인된 계정**  ({len(u['approved'])}명)")
             if u["approved"]:
+                _tnames = ["(팀 없음)"] + sorted(u["teams"])
                 for e, r in u["approved"].items():
-                    c1, c2, c3, c4 = st.columns([3.4, 1.7, 1, 1])
+                    c1, c2, c3, c4 = st.columns([3.2, 2.0, 1.0, 0.9])
                     c1.write(e)
-                    _idx = list(ROLES).index(r) if r in ROLES else list(ROLES).index("viewer")
-                    _nr = c2.selectbox("역할", list(ROLES), index=_idx, key=f"role_{e}",
-                                       format_func=lambda x: _ROLE_LABEL.get(x, x),
-                                       label_visibility="collapsed")
-                    if c3.button("역할 변경", key=f"chg_{e}", disabled=(_nr == r)):
-                        set_role(e, _nr); _log_access(email, f"role:{e}={_nr}"); st.rerun()
+                    _cur = u["member_team"].get(e) or "(팀 없음)"
+                    _nt = c2.selectbox("팀", _tnames,
+                                       index=_tnames.index(_cur) if _cur in _tnames else 0,
+                                       key=f"team_{e}", label_visibility="collapsed")
+                    if c3.button("팀 배정", key=f"tset_{e}", disabled=(_nt == _cur)):
+                        assign_team(e, None if _nt == "(팀 없음)" else _nt)
+                        _log_access(email, f"team:{e}={_nt}"); st.rerun()
                     if c4.button("해제", key=f"rv_{e}"):
                         _revoke(e); _log_access(email, f"revoke:{e}"); st.rerun()
+                    _pg = allowed_pages(e)
+                    c1.caption("볼 수 있는 페이지: "
+                               + " · ".join(pages_registry.PAGE_TITLE[k] for k in _pg))
             else:
                 st.caption("승인된 계정이 없어요.")
             st.caption("· 소유자 계정은 항상 최고 권한이며 목록에 표시되지 않습니다.  "
-                       "· **에디터** = 열람 + 일부 편집(목표·RS율 등), **뷰어** = 열람 전용.")
+                       "· 팀을 배정하면 그 팀에 체크된 페이지만 보여요. "
+                       "팀이 없으면 기본 페이지(KPI·스내피즘·포토이즘·주간리포트)를 봐요.")
 
-    # ── 접속 로그 ──
+    # ── 팀·권한 ──
+    with tab_teams:
+        u = _load_users()
+        with st.container(border=True):
+            st.markdown("**새 팀 만들기**")
+            c1, c2 = st.columns([3, 1])
+            _new = c1.text_input("팀 이름", key="newteam", label_visibility="collapsed",
+                                 placeholder="예: 마케팅팀, 해외영업팀, 정산팀")
+            if c2.button("만들기", type="primary", disabled=not _new.strip()):
+                if _new.strip() in u["teams"]:
+                    st.warning("같은 이름의 팀이 이미 있어요.")
+                else:
+                    # 새 팀은 기본 페이지로 시작 — 빈 채로 두면 배정하는 순간 아무것도 못 본다
+                    set_team_pages(_new.strip(), list(pages_registry.DEFAULT_PAGES))
+                    _log_access(email, f"teamset:{_new.strip()}"); st.rerun()
+
+        if not u["teams"]:
+            st.caption("아직 만든 팀이 없어요. 팀을 만들고 볼 페이지를 체크한 뒤, "
+                       "'계정 승인' 탭에서 팀을 배정하면 돼요.")
+        for tname, cfg in sorted(u["teams"].items()):
+            with st.container(border=True):
+                _mem = [e for e, t in u["member_team"].items() if t == tname]
+                h1, h2 = st.columns([4, 1])
+                h1.markdown(f"**{tname}**  ·  {len(_mem)}명")
+                _sel = []
+                cols = st.columns(4)
+                for i, k in enumerate(pages_registry.PAGE_KEYS):
+                    lbl = f"{pages_registry.PAGE_ICON[k]} {pages_registry.PAGE_TITLE[k]}"
+                    if cols[i % 4].checkbox(lbl, value=(k in cfg["pages"]), key=f"tp_{tname}_{k}"):
+                        _sel.append(k)
+                b1, b2, _ = st.columns([1, 1, 3])
+                if b1.button("저장", key=f"tsave_{tname}", type="primary",
+                             disabled=(_sel == cfg["pages"])):
+                    set_team_pages(tname, _sel)
+                    _log_access(email, f"teamset:{tname}={','.join(_sel)}"); st.rerun()
+                if b2.button("팀 삭제", key=f"tdel_{tname}"):
+                    delete_team(tname)
+                    _log_access(email, f"teamdel:{tname}"); st.rerun()
+                if _mem:
+                    st.caption("소속: " + " · ".join(sorted(_mem)))
+                if not _sel:
+                    st.caption("⚠️ 한 장도 체크하지 않으면 팀원이 기본 페이지를 보게 돼요 "
+                               "(전부 차단이 아니에요 — 실수로 잠기는 걸 막으려고요).")
+        st.caption("· 관리 화면(접속·계정 관리)은 팀 권한으로 열 수 없어요. 항상 소유자 전용이에요.")
+
+    # ── 활동 로그 ──
     with tab_logs:
         with st.container(border=True):
-            rows = read_access_log(1000)
-            c1, c2, c3 = st.columns(3)
+            rows = read_access_log(3000)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("총 기록", f"{len(rows):,}")
-            c2.metric("로그인 성공", f"{sum(1 for r in rows if '로그인' in r['이벤트']):,}")
-            c3.metric("승인 요청", f"{sum(1 for r in rows if '승인 요청' in r['이벤트']):,}")
+            c2.metric("로그인", f"{sum(1 for r in rows if '로그인' in r['이벤트']):,}")
+            c3.metric("페이지 열람", f"{sum(1 for r in rows if '열람' in r['이벤트']):,}")
+            c4.metric("관리 활동", f"{sum(1 for r in rows if any(x in r['이벤트'] for x in ('승인', '거절', '해제', '역할', '팀')) ):,}")
+            _kinds = ["전체", "페이지 열람", "로그인", "관리 활동"]
+            _k = st.radio("종류", _kinds, horizontal=True, key="logkind",
+                          label_visibility="collapsed")
+            if _k == "페이지 열람":
+                rows = [r for r in rows if "열람" in r["이벤트"]]
+            elif _k == "로그인":
+                rows = [r for r in rows if "로그인" in r["이벤트"] or "승인 요청" in r["이벤트"]]
+            elif _k == "관리 활동":
+                rows = [r for r in rows if any(x in r["이벤트"] for x in ("승인", "거절", "해제", "역할", "팀"))]
             if rows:
                 st.dataframe(rows, use_container_width=True, hide_index=True, height=460)
             else:
-                st.caption("아직 접속 기록이 없어요.")
+                st.caption("해당하는 기록이 없어요.")
 
 
 def _approve(email: str, role: str = "viewer") -> None:
