@@ -355,6 +355,7 @@ HOURLY_FILE  = BASE_DIR / "data" / "master_photoism_hourly.parquet"
 PARQUET_FILE = BASE_DIR / "data" / "master_photoism.parquet"
 MASTER_FILE  = BASE_DIR / "data" / "master_photoism.csv"
 CONFIG_FILE  = BASE_DIR / "config.json"
+DEVICE_FILE  = BASE_DIR / "data" / "devices.parquet"   # 장비관리 CMS(device_ingest.py)
 
 # 국가별 매출액 가산 규칙 (쿠폰/서비스코인 포함 국가)
 _COUPON_CC = {"la", "gb", "de", "th", "lv", "mx"}
@@ -561,6 +562,45 @@ def _load_hourly(_mtime):
 
 def load_hourly():
     return _load_hourly(_file_mtime(HOURLY_FILE))
+
+
+# ── 장비(키오스크) ─────────────────────────────────────────────
+# 대당 매출의 분모. 장비관리 CMS 에는 설치일 컬럼이 없어 기기 S/N 앞 6자리(YYMMDD)를
+# 설치일로 쓴다(device_ingest.py). 철거일은 아예 없고 '중지' 여부만 있다 — 그래서
+# 언제 멈췄는지 모르는 중지 장비는 분모에서 뺀다(아래 device_days 주석 참고).
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
+def _load_devices(_mtime):
+    if not DEVICE_FILE.exists():
+        return pd.DataFrame()
+    try:
+        d = pd.read_parquet(DEVICE_FILE, columns=["국가코드", "가동중", "테스트장비", "렌탈", "설치일"])
+        d = d[d["가동중"] & ~d["테스트장비"] & ~d["렌탈"]].copy()
+        d["국가코드"] = d["국가코드"].astype(str).str.lower().str.strip()
+        d["설치일"] = pd.to_datetime(d["설치일"], errors="coerce")
+        return d.reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_devices():
+    return _load_devices(_file_mtime(DEVICE_FILE))
+
+
+def device_days(dev, p0, p1):
+    """국가코드별 '대·일'(가동 키오스크 × 가동일수)과 대수를 구한다.
+
+    한 대가 기간 내내 있었으면 기간 전체 일수, 중간에 설치됐으면 설치일부터만 센다.
+    ★설치일을 무시하고 대수로만 나누면, 최근 증설한 국가가 실제보다 낮게 나온다.
+    설치일 미상(19대)은 기간 시작 전부터 있던 것으로 본다."""
+    if dev.empty or not p0 or not p1:
+        return pd.DataFrame(columns=["국가코드", "대수", "대일"])
+    s0, s1 = pd.Timestamp(p0), pd.Timestamp(p1)
+    inst = dev["설치일"].fillna(s0).clip(lower=s0)
+    days = (s1 - inst).dt.days + 1
+    t = pd.DataFrame({"국가코드": dev["국가코드"], "대일": days.clip(lower=0)})
+    t = t[t["대일"] > 0]
+    return (t.groupby("국가코드").agg(대수=("대일", "size"), 대일=("대일", "sum"))
+            .reset_index())
 
 
 # 세부 항목 분류 기준 화이트리스트 (UI 라벨 → 실제 컬럼/파생키)
@@ -1543,6 +1583,54 @@ with tab_nat:
 **국가별 매출 표**
 - `국가`·`결제 단위`(통화)로 묶어: **건수**, **현지 매출**(`최종 결제 금액` 합, 현지통화), **KRW 매출**(매출액 합), **쿠폰·코인**(=(쿠폰기여+코인기여)/매출액 비율), **비중**(전체 KRW 대비).
 - '쿠폰·코인'이 높은 국가(예: 라오스)는 매출 대부분이 쿠폰·코인 정산분이에요.
+""")
+
+        # ── 키오스크 1대당 매출 ────────────────────────────────
+        # 분자·분모 모두 렌탈·팝업을 뺀다. 렌탈은 행사 기간만 도는 장비라 남겨두면
+        # 분모가 계속 살아 있는 것으로 잡혀 대당 매출이 실제보다 낮게 나온다.
+        _dev = load_devices()
+        if not _dev.empty and len(date_range) == 2 and "국가코드" in sales.columns:
+            _dd = device_days(_dev, date_range[0], date_range[1])
+            _box = sales[sales["브랜드"].astype(str) != "Rentals and pop-ups"]
+            _rev = (_box.groupby("국가코드", observed=True)
+                    .agg(매출=("매출액", "sum"), 건수=("건수", "sum"), 국가=("국가", "first"))
+                    .reset_index())
+            _rev["국가코드"] = _rev["국가코드"].astype(str).str.lower().str.strip()
+            per = _rev.merge(_dd, on="국가코드", how="inner")
+            per = per[(per["대일"] > 0) & (per["매출"] > 0)].copy()
+            per["대당월"] = (per["매출"] / per["대일"] * 30).round(0).astype("int64")
+            per["대당건"] = (per["건수"] / per["대일"] * 30).round(1)
+            per = per.sort_values("대당월", ascending=False)
+
+            if not per.empty:
+                with card("🎰 키오스크 1대당 매출 <span class='muted'>(렌탈·팝업 제외)</span>",
+                          key="scard-perkiosk"):
+                    _mx = per["대당월"].max()
+                    grid = "grid-template-columns:1.4fr .7fr .9fr 1.2fr .9fr 1.3fr"
+                    html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
+                            '<span>국가</span><span class="r">가동 대수</span>'
+                            '<span class="r">대·일</span><span class="r">1대당 월매출</span>'
+                            '<span class="r">1대당 월건수</span><span>상대 수준</span></div>')
+                    for _, r in per.iterrows():
+                        html += (f'<div class="ntr" style="{grid}">'
+                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
+                                 f'<span class="r num">{int(r["대수"]):,}대</span>'
+                                 f'<span class="r num">{int(r["대일"]):,}</span>'
+                                 f'<span class="r num">{fmt_krw(int(r["대당월"]))}</span>'
+                                 f'<span class="r num">{r["대당건"]:,.1f}건</span>'
+                                 f'{pct_bar(r["대당월"] / _mx if _mx else 0)}</div>')
+                    st.markdown(html + "</div>", unsafe_allow_html=True)
+                    st.caption("장비 1대가 30일 돌았을 때의 매출로 환산했어요. "
+                               "매장 수·규모가 달라도 국가끼리 바로 비교할 수 있어요.")
+                    helpbox("""
+**키오스크 1대당 매출**
+- **대·일** = 가동 키오스크 × 그 기간 실제 가동일수. 기간 중간에 설치된 장비는 설치일부터만 세요.
+- **1대당 월매출** = 기간 매출 ÷ 대·일 × 30. 매장 수가 많은 나라가 무조건 위로 가지 않게 맞춘 값이에요.
+- 분자·분모 모두 **렌탈·팝업을 뺐어요**. 행사용 장비는 잠깐만 도는데 분모에 계속 남아 왜곡돼요.
+- 설치일은 CMS에 컬럼이 없어 **기기 S/N 앞 6자리**(YYMMDD)로 봐요.
+- ⚠️ **'중지' 장비는 분모에서 빠져요.** CMS에 철거일이 없어 언제 멈췄는지 알 수 없어서예요.
+  그래서 **오래된 기간을 볼수록 분모가 실제보다 작아** 대당 매출이 높게 보일 수 있어요.
+  최근 1~3개월로 보면 가장 정확해요.
 """)
 
         with card("🍩 국가별 매출 비중"):
