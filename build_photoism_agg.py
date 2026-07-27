@@ -52,6 +52,12 @@ def build_agg(con, parq: str):
       - IP명  : 날짜 뗀 대표 IP명 (롤업·필터용). '제외' 행은 ''.
     """
     print("  [1/2] 메인 집계 (날짜/국가/매장 + IP구분/타이틀)...")
+    # 별칭맵(별칭→대표명)을 소형 테이블로 등록 → SQL JOIN 으로 한·영 통합.
+    # 자기참조(대표명→대표명) 포함이라 매핑 없는 이름도 COALESCE 로 원본 유지된다.
+    _amap = ip_classify.load_alias_map()
+    _keys = pa.array([str(k).strip() for k in _amap.keys()], type=pa.string())
+    _vals = pa.array([str(v).strip() for v in _amap.values()], type=pa.string())
+    con.register("alias_map", pa.table({"k": _keys, "v": _vals}))
     df = con.execute(f"""
         WITH base AS (
             SELECT
@@ -80,7 +86,8 @@ def build_agg(con, parq: str):
                 CASE WHEN "IP구분"='제외' THEN '' ELSE "IP명_raw" END  AS "IP명_c",
                 CASE WHEN "IP구분"='제외' THEN '' ELSE "날짜코드"  END  AS "날짜코드_c"
             FROM base
-        )
+        ),
+        grouped AS (
         SELECT
             "날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
             "결제 단위","구좌","IP구분","날짜코드_c" AS "날짜코드","IP명_c" AS "IP명_raw","취소 여부",
@@ -90,28 +97,40 @@ def build_agg(con, parq: str):
             CAST(COALESCE(SUM("_coin"),0)          AS BIGINT) AS "서비스코인"
         FROM tagged
         GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
+    )
+    -- ★한·영 통합(별칭)·타이틀 조립·최종 재집계를 전부 DuckDB 에서 끝낸다.
+    --   예전엔 여기서 9M 행을 pandas 로 넘겨 apply_alias+groupby 했는데, 데이터가
+    --   2년치(36M→9M)로 커지자 pandas→arrow 변환이 ArrowMemoryError 로 터졌다.
+    --   alias_map 은 아래 register 로 붙인 소형 테이블(별칭→대표명).
+    , aliased AS (
+        SELECT
+            "날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
+            "결제 단위","구좌","IP구분","취소 여부",
+            -- 별칭 있으면 대표명, 없으면 원본. 원본이 null·공백이면 ''(빈 IP).
+            -- ★안 그러면 이름 추출 실패한 아티스트/PICK 행이 'nan'·'None' 이라는
+            --   가짜 IP 로 화면에 뜬다(기존 pandas 방식의 잠복 버그).
+            COALESCE(m."v", NULLIF(TRIM(g."IP명_raw"), ''), '') AS "_ip",
+            g."날짜코드" AS "_date",
+            g."건수", g."최종 결제 금액", g."쿠폰 할인 금액", g."서비스코인"
+        FROM grouped g
+        LEFT JOIN alias_map m ON TRIM(g."IP명_raw") = m."k"
+    )
+    SELECT
+        "날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
+        "결제 단위","구좌","IP구분","취소 여부",
+        "_ip" AS "IP명",
+        CASE WHEN "_ip"='' THEN ''
+             WHEN "_date"='' THEN "_ip"
+             ELSE "_date" || ' ' || "_ip" END AS "타이틀",
+        CAST(SUM("건수")           AS BIGINT) AS "건수",
+        CAST(SUM("최종 결제 금액") AS BIGINT) AS "최종 결제 금액",
+        CAST(SUM("쿠폰 할인 금액") AS BIGINT) AS "쿠폰 할인 금액",
+        CAST(SUM("서비스코인")     AS BIGINT) AS "서비스코인"
+    FROM aliased
+    GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
+    ORDER BY "날짜" DESC, "국가" ASC, "매장 이름" ASC
     """).to_arrow_table()
-    # Arrow → pandas 변환 시 버퍼를 즉시 해제(self_destruct)해 피크 메모리 절감.
-    # 저메모리 환경(커밋 한계 근접)에서 .df() 가 OS Allocation failure 나는 것 방지.
-    df = df.to_pandas(split_blocks=True, self_destruct=True)
-
-    # 한·영 통합(별칭→대표명): IP명(롤업) + 타이틀(날짜 유지). '제외'는 빈 값.
-    df["IP명"] = ip_classify.apply_alias(df["IP명_raw"])
-    _date = df["날짜코드"].astype(str).str.strip()
-    _name = df["IP명"].astype(str).str.strip()
-    df["타이틀"] = (_date + " " + _name).str.strip()
-    df.loc[_name == "", ["IP명", "타이틀"]] = ""
-    df = df.drop(columns=["날짜코드", "IP명_raw"])
-
-    group_dims = ["날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
-                  "결제 단위","구좌","IP구분","타이틀","IP명","취소 여부"]
-    df = (df.groupby(group_dims, dropna=False, observed=True)[
-              ["건수","최종 결제 금액","쿠폰 할인 금액","서비스코인"]]
-            .sum().reset_index())
-    df = df.sort_values(["날짜","국가","매장 이름"], ascending=[False, True, True])
-
-    arrow = pa.Table.from_pandas(df, preserve_index=False)
-    arrow = dict_encode_strings(arrow)
+    arrow = dict_encode_strings(df)
     pq.write_table(arrow, PARQ_AGG, compression="snappy")
     mb = PARQ_AGG.stat().st_size / 1024 / 1024
     print(f"     저장: {PARQ_AGG.name}  ({mb:.1f} MB,  {arrow.num_rows:,}행)")
