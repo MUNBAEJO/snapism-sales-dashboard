@@ -39,7 +39,15 @@ def load_config():
 
 def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}")
+    line = f"[{ts}] {msg}"
+    # ★콘솔이 cp949 라 em대시(—) 같은 글자에서 print 가 죽는다(예약작업/백그라운드에서
+    #   완료 직전 크래시 → 후속 단계 미실행). 콘솔로 못 쓰는 글자는 치환해 흘린다.
+    import sys
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode(enc, errors="replace").decode(enc, errors="replace"))
 
 # 국가코드 → 국가명 역방향 매핑 (파일명에서 추출)
 def get_country_info(config, country_code):
