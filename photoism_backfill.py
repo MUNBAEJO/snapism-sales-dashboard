@@ -351,17 +351,24 @@ def crawl_chunk(chunk_start_str: str, chunk_end_str: str) -> dict:
 # ingest 실행
 # ─────────────────────────────────────────────
 
-def run_ingest():
-    log("ingest 시작 (raw_photoism -> master_photoism.csv)...")
+def run_ingest(since_date=None):
+    """since_date 를 주면 그날부터 재구성한다.
+    ★백필은 '과거' 데이터를 채우므로 인자 없이 부르면 증분 cutoff(최신일 이후)만 봐서
+      방금 받은 과거 데이터를 통째로 건너뛴다(2025 백필이 실제로 이렇게 누락됐다).
+      그래서 완료 시엔 반드시 백필 시작일을 넘긴다. 전체 재구성이라 타임아웃도 넉넉히."""
+    args = [sys.executable, str(BASE_DIR / "photoism_ingest.py")]
+    if since_date:
+        args.append(str(since_date))
+    log(f"ingest 시작 (raw_photoism -> master_photoism.csv){' since ' + str(since_date) if since_date else ''}...")
     try:
         result = subprocess.run(
-            [sys.executable, str(BASE_DIR / "photoism_ingest.py")],
+            args,
             cwd=str(BASE_DIR),
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=300,
+            timeout=2400,   # 1년치 전체 재구성 ~15분 → 40분 여유
         )
         if result.stdout:
             for line in result.stdout.strip().splitlines():
@@ -446,7 +453,7 @@ def main():
         state["completed"] = True
         state["next_date"] = chunk_end_str
         log(f"[완료] 백필 완료! {state['start_date']} ~ {state['end_date']} 전체 수집 완료")
-        run_ingest()
+        run_ingest(state["start_date"])
     else:
         state["next_date"] = next_after.isoformat()
         remaining = total - (done + 1)
