@@ -1120,26 +1120,28 @@ IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g in ip_classify.IP_GU
 default_start = max(last_date - timedelta(days=29), first_date)
 
 
-def cbfilter(col, label, options, key):
+def cbfilter(col, label, options, key, fmt=None):
     """검색 + 체크박스 다중선택 필터. col 안에 라벨 + 팝오버(검색창·체크리스트).
+    fmt=함수 를 주면 **보이는 이름만** 바꾼다(값·세션키는 원본 유지 — 예: 브랜드 한글 라벨).
     ★선택 상태의 단일 출처 = 각 체크박스 위젯(key=…__cb__옵션)★ — 별도 리스트를 두지 않아
     '선택 해제'·필터변경 시 상태 불일치가 없음. 선택 리스트 반환.
     목록을 항상 펼쳐 보여주고(상위 200개), 검색은 좁히는 용도."""
     options = list(options)
+    _lab = fmt or (lambda o: str(o))
     pfx = f"{key}__cb__"
 
     def _sel():
         return [o for o in options if st.session_state.get(pfx + str(o), False)]
 
     sel = _sel()
-    cap = "전체" if not sel else (str(sel[0]) if len(sel) == 1 else f"{len(sel)}개 선택")
+    cap = "전체" if not sel else (_lab(sel[0]) if len(sel) == 1 else f"{len(sel)}개 선택")
     col.markdown(f'<div class="fbl">{label}</div>', unsafe_allow_html=True)
     with col.popover(cap, use_container_width=True):
         q = ""
         if len(options) > 6:
             q = st.text_input("검색", key=f"{key}__q", placeholder=f"🔍 {label} 검색",
                               label_visibility="collapsed").strip().lower()
-        pool = [o for o in options if q in str(o).lower()] if q else list(options)
+        pool = [o for o in options if q in str(o).lower() or q in _lab(o).lower()] if q else list(options)
         merged = list(dict.fromkeys([*sel, *pool]))
         shown = merged[:200]
         over = len(merged) - len(shown)
@@ -1155,7 +1157,7 @@ def cbfilter(col, label, options, key):
         elif over:
             st.caption(f"상위 200개 표시 · 나머지 {over}개는 검색해서 찾아요.")
         for o in shown:
-            st.checkbox(str(o), key=pfx + str(o))
+            st.checkbox(_lab(o), key=pfx + str(o))
     return _sel()
 
 
@@ -1177,7 +1179,8 @@ def _filterbar():
         _sbc = _opts.get("stores_by_country", {})
         _std = (sorted(set().union(*[set(_sbc.get(c, [])) for c in _dc])) if _dc else _opts["stores"])
         cbfilter(_fb[2], "매장", _std, "ph_f_store")
-        cbfilter(_fb[3], "카테고리", _opts["brands"], "ph_f_brand")
+        # 포5: 스내피즘과 라벨 통일 — 브랜드(Box/Colored) = 상품 종류라 "상품" 으로 부른다.
+        cbfilter(_fb[3], "상품", _opts["brands"], "ph_f_brand", fmt=brand_ko)
         cbfilter(_fb[4], "IP구분", IP_GUBUN_VIEW, "ph_f_gubun")
         # IP명 후보: (초안) 선택된 IP구분들의 IP명 합집합
         _dg = [g for g in IP_GUBUN_VIEW if st.session_state.get(f"ph_f_gubun__cb__{g}", False)]
@@ -1315,7 +1318,7 @@ if sel_countries:
 if sel_stores:
     _scope_bits.append("매장: " + " · ".join(sel_stores[:3]) + (" 외" if len(sel_stores) > 3 else ""))
 if sel_brands:
-    _scope_bits.append("카테고리: " + " · ".join(sel_brands))
+    _scope_bits.append("상품: " + " · ".join(brand_ko(b) for b in sel_brands))
 if sel_gubuns:
     _scope_bits.append("IP구분: " + " · ".join(sel_gubuns))
 if selected_ips:
@@ -1330,7 +1333,7 @@ helpbox("""
 **공통 기준 (이하 모든 카드 동일)**
 - **원본**: 30개국 포토이즘 매장 거래(매일 자동 수집)를 **DuckDB로 집계**한 값 · 환율은 `config.json` 실시간 환율표.
 - **매출액 = 실결제 + 쿠폰기여 + 코인기여** — `KRW환산금액`(= 최종 결제 금액 × 환율)에, **지정 국가에서만** 쿠폰(`쿠폰기여`)·서비스코인(`코인기여`)을 더함(나라마다 정산 규칙이 달라서).
-- **필터 반영**: 필터바(기간·국가·매장·카테고리·IP구분·IP)로 거른 뒤 계산. 미선택 = 전체.
+- **필터 반영**: 필터바(기간·국가·매장·상품·IP구분·IP)로 거른 뒤 계산. 미선택 = 전체.
 - **취소 없음**: 집계 데이터에 취소행이 없어 취소 KPI는 없어요(스내피즘과 다른 점).
 
 **각 카드 계산**
@@ -1913,7 +1916,7 @@ def _store_tab(sales, date_range, sel_countries):
         statrow([("매출", fmt_krw(int(_sc["매출액"].sum()))),
                  ("건수", f"{tx_count(_sc):,}건"),
                  ("매장 수", f"{_sc['매장 이름'].nunique():,}개")])
-        st.caption("상단 필터바(기간·국가·매장·카테고리·IP)로 거른 데이터에 **한 번 더** 걸러요. 미선택 = 전체.")
+        st.caption("상단 필터바(기간·국가·매장·상품·IP)로 거른 데이터에 **한 번 더** 걸러요. 미선택 = 전체.")
         helpbox("""
 **매장별 전용 필터**
 - 상단 필터바 결과(`sales`)에 **이 탭에서만** 국가·상품(브랜드)을 추가로 걸러요. 다른 탭에는 영향이 없어요.
@@ -2002,12 +2005,12 @@ if SHOW_TAB_DETAIL:
                        sel_stores, sel_brands, sel_gubuns):
         with card("🔎 세부 판매 항목 검색 <span class='muted'>(프레임 / 구좌 등)</span>"):
             st.caption("전체 거래에서 프레임·구좌 등 세부 항목을 분류별로 모아 봐요. "
-                       "위 필터바(날짜·국가·매장·카테고리·IP)가 그대로 적용돼요.  "
+                       "위 필터바(날짜·국가·매장·상품·IP)가 그대로 적용돼요.  "
                        "※ 같은 타이틀명이 단가만 다르게 등록된 경우(예: 마카오)는 "
                        "**「타이틀 (이름+단가별)」** 을 고르면 단가별로 나눠서 볼 수 있어요.")
             helpbox("""
 **세부 판매 항목 검색**
-- 선택한 `분류 기준`(프레임·구좌·타이틀 등)으로 **DuckDB에서 원거래를 직접 집계**(필터바 날짜·국가·매장·카테고리·IP 반영). 매출액 = 실결제 + 지정국가 쿠폰·코인.
+- 선택한 `분류 기준`(프레임·구좌·타이틀 등)으로 **DuckDB에서 원거래를 직접 집계**(필터바 날짜·국가·매장·상품·IP 반영). 매출액 = 실결제 + 지정국가 쿠폰·코인.
 - 검색어는 항목명 부분일치. 같은 타이틀명이 단가만 다른 경우 '타이틀(이름+단가별)'로 분리해 단가별로 봐요.
 - 결과 표는 CSV로 내려받기 가능.
 """)

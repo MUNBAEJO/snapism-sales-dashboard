@@ -76,6 +76,8 @@ h2, h3{ letter-spacing:-0.02em !important; }
 
 /* KPI 카드 */
 .kpis{ display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin:14px 0 8px; }
+/* k4 = 합계+실결제+쿠폰+취소 4칸 (포토이즘은 취소가 없어 3칸) */
+.kpis.k4{ grid-template-columns:1.8fr 1fr 1fr 1fr; }
 .kpi{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:15px 17px;
       box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06); }
 .kpi.hero{ background:linear-gradient(180deg,#fbfbff,#fff); border-color:#dcdcfb; }
@@ -83,6 +85,7 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .kpi .v{ font-size:24px; font-weight:800; letter-spacing:-0.02em; margin-top:6px; line-height:1.05; color:var(--text); }
 .kpi.hero .v{ font-size:33px; color:var(--brand); }
 .kpi .d{ font-size:12px; font-weight:700; margin-top:7px; color:var(--text-3); }
+@media(max-width:1100px){ .kpis.k4{ grid-template-columns:1fr 1fr; } }
 @media(max-width:720px){ .kpis{ grid-template-columns:1fr; } }
 
 /* 범위 배너 */
@@ -1026,12 +1029,16 @@ cpn_cnt = int(len(cpn_all))
 cancel_krw = int(df[df["취소 여부"]]["KRW환산금액"].sum())
 rev_total = rev_real + cpn_krw                       # 스내피즘-1: 조회기간 매출 = 실결제 + 쿠폰 합산
 
+# 포5: 포토이즘과 카드 구성을 맞춘다 — 합계 / 실결제 / 쿠폰 (+ 취소는 스내피즘만).
+#      포토이즘엔 취소 데이터가 아예 없어서(리포트 미포함) 4번째 카드는 여기에만 있다.
 st.markdown(
-    '<div class="kpis">'
-    f'<div class="kpi hero"><div class="l">조회기간 매출 (실결제+쿠폰)</div>'
+    '<div class="kpis k4">'
+    f'<div class="kpi hero"><div class="l">조회기간 매출 (합계)</div>'
     f'<div class="v num">{fmt_krw(rev_total)}</div>'
-    f'<div class="d">{_dr} · {_period_days}일 · 실결제 {fmt_krw(rev_real)} + 쿠폰 {fmt_krw(cpn_krw)}</div></div>'
-    f'<div class="kpi"><div class="l">쿠폰 매출 (할인)</div>'
+    f'<div class="d">{_dr} · {_period_days}일 · {len(rev):,}건</div></div>'
+    f'<div class="kpi"><div class="l">실결제 매출 (카드·현금)</div>'
+    f'<div class="v num">{fmt_krw(rev_real)}</div><div class="d">쿠폰 제외분</div></div>'
+    f'<div class="kpi"><div class="l">쿠폰 매출 (정산분)</div>'
     f'<div class="v num">{fmt_krw(cpn_krw)}</div><div class="d">{cpn_cnt:,}건 · 위 합계에 포함</div></div>'
     f'<div class="kpi"><div class="l">취소 매출</div>'
     f'<div class="v num">{fmt_krw(cancel_krw)}</div><div class="d">환불·취소분 (합계 제외)</div></div>'
