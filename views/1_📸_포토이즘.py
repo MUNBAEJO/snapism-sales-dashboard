@@ -1322,7 +1322,7 @@ SHOW_TAB_ETC = False
 SHOW_TAB_DETAIL = False
 # 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. st.tabs 는 안 열어도 매 rerun 마다
 #      모든 탭을 실행(런 빌드가 무겁다)하므로, 탭엔 무거운 연산 대신 전용 페이지 링크만 둔다.
-_tab_labels = ["📊 매출 한눈에", "🎬 IP · 타이틀 분석", "🌏 국가별 분석", "🏬 매장별 분석", "🆚 런 비교"]
+_tab_labels = ["📊 매출 한눈에", "🎫 구좌타입 분석", "🌏 국가별 분석", "🏬 매장별 분석", "🆚 런 비교"]
 if SHOW_TAB_DETAIL:
     _tab_labels.append("🔎 세부 항목")
 if SHOW_TAB_ETC:
@@ -1474,9 +1474,9 @@ with tab_home:
 """)
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '국가별 분석'·'매장별 분석' 탭에서 봐요.")
 
-# ════════════ 탭 2: IP · 타이틀 분석 ════════════
+# ════════════ 탭 2: 구좌타입 분석 (IP구분 = 구좌 세분) ════════════
 with tab_ip:
-    with card("🎭 IP 구분 (비중 · 매출)"):
+    with card("🎭 IP 구분 (비중 · 매출) <span class='muted'>(아티스트·캐릭터·PICK·오리지널)</span>"):
         if not gub.empty:
             _g1, _g2 = st.columns([5, 5])
             gg = gub.sort_values("매출", ascending=False)
@@ -1492,12 +1492,16 @@ with tab_ip:
 - `IP구분`별 매출액 합. 왼쪽 도넛=비중, 오른쪽 막대=구분별 매출액.
 """)
 
-    if present:
-        with card("🎬 IP 구분별 타이틀 상세 <span class='muted'>(구분 선택 → 타이틀별 매출)</span>"):
-            _gtabs = st.tabs([f"{_GUB_EMOJI.get(g, '🎬')} {g}" for g in present])
-            for _i, _g in enumerate(present):
+    # 포3.3: 타이틀 단위로 세분되는 건 아티스트·캐릭터·PICK 뿐(오리지널은 프레임 단위라
+    #        타이틀 집계를 안 함) → 하위탭 = 전체 + 아티스트/캐릭터/PICK. 판매기간(지라)도 표기.
+    _detail_gubuns = [g for g in present if g in ("아티스트", "캐릭터", "PICK")]
+    if _detail_gubuns:
+        with card("🎬 구분별 타이틀 상세 <span class='muted'>(전체·구분별 → 타이틀별 매출·판매기간)</span>"):
+            _gall = ["전체"] + _detail_gubuns
+            _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])
+            for _i, _g in enumerate(_gall):
                 with _gtabs[_i]:
-                    _sub = sales[sales["IP구분"] == _g]
+                    _sub = sales if _g == "전체" else sales[sales["IP구분"] == _g]
                     _t = (_sub[(_sub["타이틀"] != "") & _sub["타이틀"].notna()]
                           .groupby("타이틀", observed=True)
                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
@@ -1508,60 +1512,16 @@ with tab_ip:
                     if _t.empty:
                         st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
                     else:
-                        rank_table(_t, "타이틀", collapse_after=10)
+                        rank_table(_t, "타이틀", collapse_after=10, status_map=_tstat or None)
         helpbox("""
-**IP 구분별 타이틀 상세**
-- 구분 하위탭 선택 → 그 구분(`IP구분`)의 `타이틀`별 매출액·건수 순위(TOP10 + 나머지 접기). 상단 요약 = 구분 총매출·건수·타이틀 수.
+**구분별 타이틀 상세**
+- `전체` 또는 구분(아티스트·캐릭터·PICK) 하위탭 → 그 범위의 `타이틀`별 매출액·건수 순위(TOP10 + 나머지 접기). 상단 요약 = 총매출·건수·타이틀 수.
+- **판매기간** = 지라 티켓의 **오픈~종료일**(계획 시작일~종료일). 지라 미연결 타이틀은 `—`.
+- 오리지널(자체·기본 프레임)은 프레임 단위라 타이틀로 세분하지 않아요 — 총매출은 위 'IP 구분 (비중·매출)' 카드에서 봐요.
 """)
 
-    @st.fragment
-    def _title_rank():
-        with card("🎞 타이틀 전체 순위", key="scard-titlesel"):
-            _gopts = ["전체"] + present
-            pick = st.selectbox("구분", _gopts, key="ph_title_gubun", label_visibility="collapsed")
-            _src = sales if pick == "전체" else sales[sales["IP구분"] == pick]
-            _src = _src[(_src["타이틀"] != "") & _src["타이틀"].notna()]
-            tt = (_src.groupby("타이틀", observed=True)
-                  .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
-            tt = tt[tt["매출"] > 0]
-
-            # 상태 필터 — 실제로 존재하는 상태만 칩으로 노출(빈 필터 클릭 방지)
-            _sc = tt["타이틀"].map(lambda t: (_tstat.get(t) or {}).get("상태", "")) if _tstat else None
-            if _tstat and _sc is not None:
-                _have = [s for s in ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
-                         if (_sc == s).any()]
-                _cnt = " · ".join(f"{s} {int((_sc == s).sum())}" for s in _have)
-                _spick = st.segmented_control("상태", ["전체"] + _have, default="전체",
-                                              key="ph_title_stat", label_visibility="collapsed") or "전체"
-                if _spick != "전체":
-                    tt = tt[(_sc == _spick).reindex(tt.index, fill_value=False)]
-                st.caption(f"타이틀 {len(tt):,}개 · {_cnt}"
-                           + ("" if pick == "전체" else f" · {pick}"))
-            else:
-                st.caption(f"타이틀 {len(tt):,}개 · TOP 10 + 나머지 접기"
-                           + ("" if pick == "전체" else f" · {pick}"))
-
-            if tt.empty:
-                st.info("데이터가 없어요.")
-            else:
-                rank_table(tt, "타이틀", collapse_after=10, status_map=_tstat or None)
-            helpbox("""
-**타이틀 전체 순위**
-- '전체' 또는 선택 구분의 `타이틀`별 매출액·건수 → 순위(TOP10 + 나머지 접기).
-
-**판매기간 · 상태** — 매출이 빠졌을 때 *끝나서* 빠진 건지, *안 끝났는데* 빠진 건지 가르려고 붙였어요.
-- **판매기간** = 그 타이틀의 **실제 첫·마지막 거래일**(조회 기간이 아니라 전체 이력 기준, 결측 0%).
-- **상태**는 실측 거래일 + **Jira 종료일**(`duedate`)로 판정해요. 마지막 거래일만으론 '종료'인지 '그냥 안 팔리는 중'인지 구분이 안 되거든요.
-  - **🔚 종료** — Jira 종료일이 지났고 거래도 멈춤 → **급감이 예정된 것**
-  - **⚠️ 기간후판매** — 종료일이 지났는데 **아직 팔리는 중** → 계약·정산에서 확인이 필요해요
-  - **🆕 신규** — 첫 거래일이 조회 기간 안 → 올라간 게 정상
-  - **⏳ 종료예정** — 30일 안에 종료 예정
-  - **🔴 확인필요** — 판매기간이 남았는데 **7일 이상 거래 없음** → 점검 대상
-  - **🟢 판매중** / **⚪ 미확인**(Jira 미연결이라 종료 여부 단정 불가)
-- 타이틀명(`260601 김혜빈 작가`)에서 날짜 접두를 떼고 Jira 타이틀과 맞춰요. **매출의 약 90%** 가 연결돼요. 생일·계절 프레임처럼 IP가 아닌 자체 제작 타이틀은 Jira 티켓이 없어 `⚪ 미확인`으로 남고, **추측하지 않아요.**
-""")
-
-    _title_rank()
+    # 포3.3: '🎞 타이틀 전체 순위' 카드 제거 — 위 '구분별 타이틀 상세'의 '전체' 탭이 대체.
+    #        (상태 배지·필터도 함께 제거, 판매기간은 지라 오픈~종료로 상세 탭에 표기.)
 
     # 선택 IP명 상세 (사이드바/필터에서 IP명 고른 경우)
     if selected_ips:
