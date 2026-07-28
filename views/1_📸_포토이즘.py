@@ -1007,7 +1007,8 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None):
         st.markdown(_rows(d), unsafe_allow_html=True)
 
 
-_STAT_CLS = {"🔚": "end", "🔴": "warn", "⚠️": "post", "🆕": "new",
+# (상태 배지 제거로 _STAT_CLS 는 더 쓰지 않는다 — 판매기간만 표기.)
+_STAT_CLS_UNUSED = {"🔚": "end", "🔴": "warn", "⚠️": "post", "🆕": "new",
              "⏳": "soon", "🟢": "live", "⚪": "unk"}
 
 
@@ -1015,9 +1016,25 @@ def _md(dt):
     return f"{dt.month:02d}-{dt.day:02d}" if dt else ""
 
 
+def _period_str(o, e):
+    """판매기간 '오픈 ~ 종료' 문자열. 두 날짜의 연도가 다르면 연도(YY)를 붙인다 —
+    안 붙이면 해를 넘긴 티켓이 '05-05 ~ 03-31' 처럼 거꾸로 읽힌다."""
+    if not o and not e:
+        return ""
+    _cross = bool(o and e and o.year != e.year)
+
+    def _f(d):
+        if not d:
+            return ""
+        return f"{d.year % 100:02d}.{d.month:02d}.{d.day:02d}" if _cross else _md(d)
+
+    return f'{_f(o) or "?"} ~ {_f(e) or "진행중"}'
+
+
 def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None):
     """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개 + 나머지 접기.
-    status_map={이름:{상태,첫거래일,마지막거래일,...}} 를 주면 상태 배지 + 판매기간 칸이 붙는다."""
+    status_map={이름:{오픈일,종료일,...}} 를 주면 **판매기간(지라 오픈~종료)** 칸이 붙는다.
+    (상태 배지 신규/확인필요/판매중/종료 는 2026-07-28 제거 — 스내피즘과 동일 기준.)"""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
@@ -1051,16 +1068,11 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
             per = ""
             if has_st:
                 s = status_map.get(r[name_col]) or {}
-                stat = s.get("상태", "")
-                if stat:
-                    ic, _, tx = stat.partition(" ")
-                    nm = (f'<span><span class="nname">{r[name_col]}</span>'
-                          f'<span class="tstat {_STAT_CLS.get(ic, "unk")}">{ic} {tx}</span></span>')
-                # 종료된 건 끝 날짜를 굵게 — '언제 끝났나'가 급감 해석의 핵심
-                _e = _md(s.get("마지막거래일"))
-                _e = f"<b>{_e}</b>" if stat.startswith("🔚") else _e
-                per = (f'<span class="tper num">{_md(s.get("첫거래일"))} ~ {_e}</span>'
-                       if s else '<span class="tper num">—</span>')
+                # 상태 배지(신규/확인필요/판매중/종료 등) 제거 — 스내피즘과 동일 기준.
+                # 판매기간은 **지라 티켓의 계획 오픈일~종료일**만 쓴다(실측 첫·마지막 거래일 아님).
+                _ps = _period_str(s.get("오픈일"), s.get("종료일")) if s else ""
+                per = (f'<span class="tper num">{_ps}</span>' if _ps
+                       else '<span class="tper num">—</span>')
             h += (f'<div class="ntr" style="{grid}">{rk}{nm}'
                   f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{per}{pct_bar(frac, mx)}</div>')
         return h
@@ -1218,7 +1230,7 @@ if len(date_range) == 2:
 sales = paid_sales(df)
 
 
-# ── 타이틀 판매기간·상태 (타이틀 순위표에 표시) ────────────────
+# ── 타이틀 판매기간 (타이틀 순위표에 표시) ────────────────
 # 매출이 빠졌을 때 '끝나서'인지 '안 끝났는데'인지 가르려고 Jira 종료일을 함께 본다.
 # ★ 날짜로 자르지 않은 scope 를 넘긴다 — 기간으로 자른 df 를 주면 첫 거래일이
 #   전부 기간 시작일이 돼서 죄다 '신규'로 나온다.
@@ -1558,7 +1570,7 @@ with tab_ip:
     _detail_gubuns = [g for g in present if g in ("아티스트", "캐릭터", "PICK")]
     _orig_gubuns = [g for g in present if g in ("오리지널(포토이즘)", "오리지널(기본)")]
     if _detail_gubuns or _orig_gubuns:
-        with card("🎬 구분별 상세 <span class='muted'>(전체·구분별 → 타이틀/프레임별 매출)</span>"):
+        with card("🎬 구좌별 상세 <span class='muted'>(전체·구좌별 → 타이틀/프레임별 매출)</span>"):
             _gall = ["전체"] + _detail_gubuns + _orig_gubuns
             _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])
             # 오리지널 탭이 있으면 경량 집계를 날짜·국가로 걸러 한 번만 로드(매장 필터는 미적용)
@@ -1600,11 +1612,17 @@ with tab_ip:
                         else:
                             rank_table(_t, "타이틀", collapse_after=10, status_map=_tstat or None)
         helpbox("""
-**구분별 상세**
-- **전체 / 아티스트 / 캐릭터 / PICK** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**(지라 오픈~종료일, 미연결은 `—`).
+**구좌별 상세**
+- **전체 / 아티스트 / 캐릭터 / PICK** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**.
 - **오리지널(포토이즘) / 오리지널(기본)** = `프레임`별 매출액·건수 순위(경량 집계). 오리지널은 타이틀이 아니라 프레임 단위라 따로 봐요.
   - ⚠️ 오리지널 탭은 **매장 필터가 적용되지 않아요**(날짜·국가만). 다른 탭은 필터바 전체 반영.
 - '전체' 탭은 타이틀이 있는 구분(아티스트·캐릭터·PICK)만 합쳐요(오리지널은 프레임이라 제외).
+
+**판매기간(오픈~종료)** — 지라 티켓의 **계획 오픈일(`startdate`) ~ 종료일(`duedate`)** 기준이에요.
+- 실제 거래일이 아니라 **지라에 등록된 오픈·종료일**을 그대로 보여줘요. (예: `07-01 ~ 07-30`)
+- 종료일이 비어 있으면 `진행중`, 지라가 연결 안 된 타이틀은 `—` 로 두고 **추측하지 않아요**
+  (매칭은 타이틀명 정규화 + `ip_aliases.json` 별칭, 같은 IP가 양 브랜드에 있으면 포토이즘 티켓 우선).
+- (이전의 신규/확인필요/판매중/종료 등 **상태 배지는 뺐어요.**)
 """)
 
     # 포3.3: '🎞 타이틀 전체 순위' 카드 제거 — 위 '구분별 타이틀 상세'의 '전체' 탭이 대체.
