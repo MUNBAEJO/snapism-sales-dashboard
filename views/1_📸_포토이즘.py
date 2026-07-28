@@ -1315,13 +1315,33 @@ def _plabel(p, g):
 # [보류] '시간대 · 데이터' 탭 — 숨김 처리(코드·데이터는 그대로 보존).
 #         다시 살리려면 SHOW_TAB_ETC = True 로만 바꾸면 됨.
 SHOW_TAB_ETC = False
-_tab_labels = ["📊 매출 한눈에", "🎬 IP · 타이틀 분석", "🌏 국가별 분석",
-               "🏬 매장별 분석", "🔎 세부 항목"]
+# [제거] '세부 항목' 탭 — 의미 낮아 UI에서 뺌(포8). 코드·데이터는 그대로 보존.
+#         되살리려면 SHOW_TAB_DETAIL = True (아래 세부항목 블록도 함께 켜짐).
+SHOW_TAB_DETAIL = False
+# 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. st.tabs 는 안 열어도 매 rerun 마다
+#      모든 탭을 실행(런 빌드가 무겁다)하므로, 탭엔 무거운 연산 대신 전용 페이지 링크만 둔다.
+_tab_labels = ["📊 매출 한눈에", "🎬 IP · 타이틀 분석", "🌏 국가별 분석", "🏬 매장별 분석", "🆚 런 비교"]
+if SHOW_TAB_DETAIL:
+    _tab_labels.append("🔎 세부 항목")
 if SHOW_TAB_ETC:
     _tab_labels.append("⏰ 시간대 · 데이터")
 _tabs = st.tabs(_tab_labels)
-tab_home, tab_ip, tab_nat, tab_store, tab_detail = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
-tab_etc = _tabs[5] if SHOW_TAB_ETC else None
+tab_home, tab_ip, tab_nat, tab_store, tab_runs = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
+_ti = 5
+tab_detail = _tabs[_ti] if SHOW_TAB_DETAIL else None
+_ti += 1 if SHOW_TAB_DETAIL else 0
+tab_etc = _tabs[_ti] if SHOW_TAB_ETC else None
+
+# ════════════ 탭: 런 비교 (별도 페이지 링크 — 성능 위해 탭엔 링크만) ════════════
+with tab_runs:
+    with card("🆚 타이틀 런 비교"):
+        st.markdown(
+            '<div style="padding:4px 2px 14px;color:var(--text-2);font-size:13.5px;line-height:1.75">'
+            '같은 IP의 <b style="color:var(--text)">회차(런)별 성과</b>를 나란히 비교해요 — '
+            '런마다 기간이 달라 <b>일평균</b> 기준으로 봐요.<br>'
+            '연산이 무거워 대시보드가 느려지지 않도록 <b>전용 페이지</b>로 열려요.</div>',
+            unsafe_allow_html=True)
+        st.page_link("views/7_🆚_타이틀_런_비교.py", label="런 비교 페이지 열기", icon="🆚")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
 with tab_home:
@@ -1588,6 +1608,20 @@ with tab_nat:
         tot = nat["매출"].sum()
         mx = (nat["매출"] / tot).max() if tot else 1.0
 
+        # 포3.2: 그래프(비중 도넛)를 국가별 탭 최상단으로 — 표보다 먼저 시각으로 보여준다.
+        with card("🍩 국가별 매출 비중"):
+            _pie = nat[["국가", "매출"]].copy()
+            if len(_pie) > 7:
+                _pie = pd.concat([_pie.head(7), pd.DataFrame(
+                    [{"국가": f"기타 {len(nat) - 7}개국", "매출": int(nat.iloc[7:]["매출"].sum())}])],
+                    ignore_index=True)
+            _pie = _pie.sort_values("매출", ascending=False).reset_index(drop=True)
+            css_donut(list(zip(_pie["국가"].astype(str), _pie["매출"])), PAL, size=190, hole=62, legend_fs=14)
+            helpbox("""
+**국가별 매출 비중 (도넛)**
+- 국가별 매출액 기준 비중. 상위 7개국 + '기타 N개국' 묶음.
+""")
+
         with card("🌏 국가별 매출"):
             grid = "grid-template-columns:1.4fr .6fr .7fr 1.2fr 1.2fr .8fr 1.4fr"
             html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
@@ -1748,19 +1782,6 @@ with tab_nat:
   최근 1~3개월로 보면 가장 정확해요.
 """)
 
-        with card("🍩 국가별 매출 비중"):
-            _pie = nat[["국가", "매출"]].copy()
-            if len(_pie) > 7:
-                _pie = pd.concat([_pie.head(7), pd.DataFrame(
-                    [{"국가": f"기타 {len(nat) - 7}개국", "매출": int(nat.iloc[7:]["매출"].sum())}])],
-                    ignore_index=True)
-            _pie = _pie.sort_values("매출", ascending=False).reset_index(drop=True)
-            css_donut(list(zip(_pie["국가"].astype(str), _pie["매출"])), PAL, size=190, hole=62, legend_fs=14)
-            helpbox("""
-**국가별 매출 비중 (도넛)**
-- 위 표의 국가별 매출액으로 비중. 상위 7개국 + '기타 N개국' 묶음.
-""")
-
         with card("🏆 국가별 타이틀 TOP 10 <span class='muted'>(날짜+IP)</span>", key="scard-nattitle"):
             ip_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()]
             if ip_src.empty:
@@ -1816,8 +1837,9 @@ with tab_store:
 - '전체' 또는 선택 국가의 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).
 """)
 
-# ════════════ 탭 5: 세부 항목 검색 ════════════
-with tab_detail:
+# ════════════ [제거] 세부 항목 검색 — SHOW_TAB_DETAIL=True 로 부활 ════════════
+#   (부활 시 탭에 그리려면 아래 블록을 `with tab_detail:` 로 감싸 주세요.)
+if SHOW_TAB_DETAIL:
     @st.fragment
     def _detail_search(date_range, selected_ips, sel_countries,
                        sel_stores, sel_brands, sel_gubuns):

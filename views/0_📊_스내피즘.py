@@ -345,6 +345,14 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-scard-prodsel [data-testid="stSelectbox"] div[data-baseweb="select"],
 .st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"]{
   width:fit-content !important; min-width:96px !important; }
+/* ★겹침 수정: 우상단 드롭다운이 1위 값과 겹치던 문제.
+   원인 = 드롭다운 절대위치의 기준(offsetParent)이 카드가 아니라 @st.fragment 가 만든
+   내부 stVerticalBlock(제목 아래 지점) 이었다 → top:16px 가 제목 밑에서 시작해 첫 줄과 겹침.
+   내부 블록(카드 바로 밑 한 겹)을 static 으로 두면 기준이 카드가 돼 드롭다운이 제목 줄로 올라간다.
+   (expander 등 더 깊은 블록은 건드리지 않게 직계 자식만 겨냥.) */
+.st-key-scard-hstore > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
+.st-key-scard-prodsel > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
+.st-key-scard-storesel > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"]{ position:static !important; }
 /* 칩 글자 한 줄 유지(줄바꿈 방지) */
 [data-testid="stPopover"] button p, [data-testid="stPopoverButton"] p{
   white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; }
@@ -700,16 +708,14 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
             per = ""
             if has_st:
                 s = status_map.get(r[name_col]) or {}
-                stat = s.get("상태", "")
-                if stat:
-                    ic, _, tx = stat.partition(" ")
-                    nm = (f'<span><span class="nname">{r[name_col]}</span>'
-                          f'<span class="tstat {_STAT_CLS.get(ic, "unk")}">{ic} {tx}</span></span>')
-                # 종료된 건 끝 날짜를 굵게 — '언제 끝났나'가 급감 해석의 핵심
-                _e = _md(s.get("마지막거래일"))
-                _e = f"<b>{_e}</b>" if stat.startswith("🔚") else _e
-                per = (f'<span class="tper num">{_md(s.get("첫거래일"))} ~ {_e}</span>'
-                       if s else '<span class="tper num">—</span>')
+                # 스2: 상태 배지(신규/확인필요/종료 등) 제거. 이름은 그대로 두고,
+                #      판매기간은 지라 티켓의 '오픈~종료'(계획 시작~종료일) 기준으로 표기한다.
+                _o = _md(s.get("오픈일"))
+                _e = _md(s.get("종료일"))
+                if s and (_o or _e):
+                    per = f'<span class="tper num">{_o or "?"} ~ {_e or "진행중"}</span>'
+                else:
+                    per = '<span class="tper num">—</span>'
             h += (f'<div class="ntr" style="{grid}">{rk}{nm}'
                   f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{per}{pct_bar(frac, mx)}</div>')
         return h
@@ -1063,12 +1069,25 @@ if _is_owner:
 # [보류] '시간대 · 데이터' 탭 — 숨김 처리(코드·데이터는 그대로 보존).
 #         다시 살리려면 SHOW_TAB_ETC = True 로만 바꾸면 됨.
 SHOW_TAB_ETC = False
-_tab_labels = ["📊 매출 한눈에", "🧩 상품 카테고리 분석", "🌏 국가별 분석", "🏬 매장별 분석"]
+# 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. 단, st.tabs 는 안 열어도 매 rerun
+#      마다 모든 탭을 실행해 무거워지므로(런 빌드), 탭엔 무거운 연산 대신 별도 페이지 링크만 둔다.
+_tab_labels = ["📊 매출 한눈에", "🧩 상품 카테고리 분석", "🌏 국가별 분석", "🏬 매장별 분석", "🆚 런 비교"]
 if SHOW_TAB_ETC:
     _tab_labels.append("⏰ 시간대 · 데이터")
 _tabs = st.tabs(_tab_labels)
-tab_home, tab_cat, tab_nat, tab_store = _tabs[0], _tabs[1], _tabs[2], _tabs[3]
-tab_etc = _tabs[4] if SHOW_TAB_ETC else None
+tab_home, tab_cat, tab_nat, tab_store, tab_runs = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
+tab_etc = _tabs[5] if SHOW_TAB_ETC else None
+
+# ════════════ 탭 5: 런 비교 (별도 페이지 링크 — 성능 위해 탭엔 링크만) ════════════
+with tab_runs:
+    with card("🆚 타이틀 런 비교"):
+        st.markdown(
+            '<div style="padding:4px 2px 14px;color:var(--text-2);font-size:13.5px;line-height:1.75">'
+            '같은 타이틀의 <b style="color:var(--text)">회차(런)별 성과</b>를 나란히 비교해요 — '
+            '예: <b>25년 QWER vs 26년 QWER</b>. 런마다 기간이 달라 <b>일평균</b> 기준으로 봐요.<br>'
+            '연산이 무거워 대시보드가 느려지지 않도록 <b>전용 페이지</b>로 열려요.</div>',
+            unsafe_allow_html=True)
+        st.page_link("views/7_🆚_타이틀_런_비교.py", label="런 비교 페이지 열기", icon="🆚")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
 with tab_home:
@@ -1269,19 +1288,8 @@ with tab_cat:
                       .groupby("프레임 이름").agg(매출=("KRW환산금액", "sum"), 건수=("KRW환산금액", "count")).reset_index())
             fr_all = fr_all[fr_all["매출"] > 0]
 
-            # 상태 필터 — 실제로 존재하는 상태만 칩으로 노출(빈 필터 클릭 방지)
-            _sc = fr_all["프레임 이름"].map(lambda t: (_tstat.get(t) or {}).get("상태", "")) if _tstat else None
-            if _tstat and _sc is not None:
-                _have = [s for s in ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "⏳ 종료예정", "🆕 신규", "🟢 판매중", "⚪ 미확인"]
-                         if (_sc == s).any()]
-                _cnt = " · ".join(f"{s} {int((_sc == s).sum())}" for s in _have)
-                _pick = st.segmented_control("상태", ["전체"] + _have, default="전체",
-                                             key="cat_frame_stat", label_visibility="collapsed") or "전체"
-                if _pick != "전체":
-                    fr_all = fr_all[(_sc == _pick).reindex(fr_all.index, fill_value=False)]
-                st.caption(f"프레임(IP) {len(fr_all):,}개 · {_cnt}")
-            else:
-                st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
+            # 스2: 상태값(신규/확인필요/종료 등) 필터·배지 제거. 판매기간은 지라 오픈~종료로만 표기.
+            st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
 
             if not fr_all.empty:
                 rank_table(fr_all, "프레임 이름", collapse_after=10, status_map=_tstat or None)
@@ -1292,16 +1300,10 @@ with tab_cat:
     - 상단 도넛 = 탭1과 동일(아티스트·캐릭터 2조각, `cat3()` 분류).
     - 하단 표 = `전체 / 아티스트 / 캐릭터` 토글로 거른 뒤 `프레임 이름`별 `KRW환산금액` 합·건수. TOP 10 + 나머지 접기.
 
-    **판매기간 · 상태** — 매출이 빠졌을 때 *끝나서* 빠진 건지, *안 끝났는데* 빠진 건지 가르려고 붙였어요.
-    - **판매기간** = 그 타이틀의 **실제 첫·마지막 거래일**(조회 기간이 아니라 전체 이력 기준, 결측 0%).
-    - **상태**는 실측 거래일 + **Jira 종료일**(`duedate`)로 판정해요. 마지막 거래일만으론 '종료'인지 '그냥 안 팔리는 중'인지 구분이 안 되거든요.
-      - **🔚 종료** — Jira 종료일이 지났고 거래도 멈춤 → **급감이 예정된 것**
-      - **⚠️ 기간후판매** — 종료일이 지났는데 **아직 팔리는 중** → 계약·정산에서 확인이 필요해요
-      - **🆕 신규** — 첫 거래일이 조회 기간 안 → 올라간 게 정상
-      - **⏳ 종료예정** — 30일 안에 종료 예정
-      - **🔴 확인필요** — 판매기간이 남았는데 **7일 이상 거래 없음** → 점검 대상
-      - **🟢 판매중** / **⚪ 미확인**(Jira 미연결이라 종료 여부 단정 불가)
-    - Jira 매칭은 타이틀명 정규화 + `ip_aliases.json` 별칭 기준이라 **매출의 약 84%** 가 연결돼요. 나머지는 `⚪ 미확인`으로 두고 **추측하지 않아요.**
+    **판매기간(오픈~종료)** — 지라 티켓의 **계획 오픈일(`startdate`) ~ 종료일(`duedate`)** 기준이에요.
+    - 실제 거래일이 아니라 **지라에 등록된 실제 오픈·종료일**을 그대로 보여줘요.
+    - 지라가 연결 안 된 타이틀은 `—` 로 두고 **추측하지 않아요**(매칭은 타이틀명 정규화 + `ip_aliases.json` 별칭 기준, 매출의 약 84% 연결).
+    - (이전의 신규/확인필요/종료 등 **상태 배지·필터는 뺐어요.**)
     """)
 
         _frame_rank()

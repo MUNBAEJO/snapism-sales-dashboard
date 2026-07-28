@@ -360,6 +360,8 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
         ticket, _ = _pick_ticket(entries, first, last, prefer_brand)
         due = pd.to_datetime((ticket or {}).get("duedate"), errors="coerce")
         due = due.date() if not pd.isna(due) else None
+        opn = pd.to_datetime((ticket or {}).get("startdate"), errors="coerce")
+        opn = opn.date() if not pd.isna(opn) else None
 
         # 조회 기간 뒤로도 팔리고 있으면(last > ref) 유휴 아님 → 0
         idle = max(0, (ref - last).days)
@@ -387,7 +389,8 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
             "상태":       status,
             "첫거래일":   first,
             "마지막거래일": last,
-            "종료일":     due,
+            "오픈일":     opn,      # 지라 계획 시작일(오픈)
+            "종료일":     due,      # 지라 계획 종료일
             "유휴일":     idle,
         }
     return out
