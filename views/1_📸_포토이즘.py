@@ -1381,19 +1381,26 @@ with tab_home:
 - ※ 공통 기준(원본·환율·매출액 정의)은 상단 'KPI 카드' 설명 참고.
 """)
 
-    sec("2", "무엇이 매출을 만드나", "비중 — 어떤 IP구분·카테고리가 매출을 끄나")
+    sec("2", "무엇이 매출을 만드나", "비중 — 어떤 구좌 타입·브랜드가 매출을 끄나")
     _c1, _c2 = st.columns(2)
     with _c1:
-        with card("🎬 IP 구분 비중"):
-            if not gub.empty:
-                gg = gub.sort_values("매출", ascending=False)
-                colors = [_GUB_COLORS.get(str(g), "#c7ccd6") for g in gg["IP구분"]]
-                css_donut(list(zip(gg["IP구분"].astype(str), gg["매출"])), colors)
+        with card("🎫 구좌 타입별 비중"):
+            # 포1.1: IP구분 비중 → 구좌(BASIC/WITH/EVENT) 타입별 비중으로 변경.
+            _GZ_LAB = {"BASIC": "오리지널 (BASIC)", "WITH": "아티스트·캐릭터 (WITH)", "EVENT": "PICK (EVENT)"}
+            _GZ_COL = {"BASIC": "#7c77ee", "WITH": BRAND2, "EVENT": PINK}
+            gz = (sales.groupby("구좌", observed=True)["매출액"].sum().rename("매출").reset_index())
+            gz = gz[(gz["매출"] > 0) & gz["구좌"].astype(str).str.strip().ne("")]
+            if not gz.empty:
+                gz = gz.sort_values("매출", ascending=False)
+                colors = [_GZ_COL.get(str(g), "#c7ccd6") for g in gz["구좌"]]
+                labs = [_GZ_LAB.get(str(g), str(g)) for g in gz["구좌"]]
+                css_donut(list(zip(labs, gz["매출"])), colors)
             else:
                 st.info("데이터가 없어요.")
             helpbox("""
-**IP 구분 비중**
-- `IP구분`별 매출액 합의 비중(도넛). 색은 아티스트·캐릭터·렌탈·PICK·기획P 고정색.
+**구좌 타입별 비중**
+- 결제 `구좌` 타입별 매출액 비중(도넛). **BASIC** = 오리지널(자체·기본 프레임) · **WITH** = 아티스트·캐릭터(위드/라이선스) · **EVENT** = PICK.
+- IP구분(아티스트·캐릭터·오리지널…)은 이 구좌를 더 잘게 나눈 거예요. 자세한 건 'IP · 타이틀 분석' 탭에서 봐요.
 """)
     with _c2:
         with card("🏷 브랜드 비중"):
