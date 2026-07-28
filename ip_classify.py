@@ -42,9 +42,10 @@ CASE
   WHEN "구좌"='WITH' AND CAST("타이틀명" AS VARCHAR) LIKE 'L %'      THEN '캐릭터'
   WHEN "구좌"='WITH'                                                THEN '아티스트'
   WHEN "브랜드"='Rentals and pop-ups'                              THEN '렌탈'
-  WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'L %'  THEN '캐릭터'
-  WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'P %'  THEN '오리지널(포토이즘)'
-  WHEN "구좌"='BASIC'                                              THEN '오리지널(기본)'
+  WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'L %'      THEN '캐릭터'
+  WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE '라이선스%' THEN '캐릭터'
+  WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'P %'      THEN '오리지널(포토이즘)'
+  WHEN "구좌"='BASIC'                                                  THEN '오리지널(기본)'
   ELSE '제외'
 END
 """
