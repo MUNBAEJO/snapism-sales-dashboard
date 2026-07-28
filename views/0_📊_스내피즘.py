@@ -179,6 +179,24 @@ h2, h3{ letter-spacing:-0.02em !important; }
         border-radius:10px; padding:9px 14px; margin-top:12px; }
 .strip b{ color:var(--text); font-weight:700; }
 
+/* 미니 지표 3~4칸 (포토이즘과 동일) */
+.mstrow{ display:flex; gap:12px; margin:2px 0 12px; flex-wrap:wrap; }
+.mst{ flex:1; min-width:110px; background:var(--surface-2); border:1px solid var(--border);
+      border-radius:10px; padding:10px 14px; }
+.mst-l{ font-size:11.5px; color:var(--text-2); font-weight:600; }
+.mst-v{ font-size:18px; font-weight:800; color:var(--text); margin-top:3px; }
+
+/* ── 매장별 탭 전용 필터 카드(포5) ── */
+.st-key-scard-storefilter{ background:#fbfbff !important; }
+.st-key-scard-storefilter [data-testid="stMultiSelect"] label{
+  font-size:11.5px !important; font-weight:800 !important; color:var(--text-2) !important; }
+/* ── 카테고리별 프레임 TOP5 — 칸 머리 미니카드 (포토이즘 .gzc 와 동일) ── */
+.gzc{ border:1px solid var(--border); border-left-width:3px; border-radius:10px;
+  padding:9px 11px 8px; margin:0 0 9px; background:var(--surface); }
+.gzc-l{ font-size:12px; font-weight:800; color:#39406b; display:flex; align-items:center; gap:6px; }
+.gzc-v{ font-size:17px; font-weight:800; color:var(--text); margin-top:3px; letter-spacing:-.02em; }
+.gzc-d{ font-size:11px; color:var(--text-3); margin-top:1px; }
+
 /* ── 즉시(hover) 매출 툴팁 — 딜레이 없이 커서 올리면 바로 박스 ── */
 /* 행 형태(가로막대·도넛 범례): 요소 위쪽에 즉시 박스 */
 .tip{ position:relative; }
@@ -335,21 +353,17 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
   display:flex !important; justify-content:flex-end !important; }
 /* 카드 헤더 드롭다운 = 카드 제목 옆(우상단)에 절대배치.
    제목은 모든 카드 표준(card 타이틀)이라 카드끼리 높이 일치, 드롭다운만 겹쳐 올림. */
-.st-key-scard-hstore, .st-key-scard-prodsel, .st-key-scard-storesel,
-.st-key-scard-natframe{ position:relative; }
+.st-key-scard-hstore, .st-key-scard-prodsel, .st-key-scard-natframe{ position:relative; }
 .st-key-scard-hstore [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
 .st-key-scard-prodsel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
-.st-key-scard-storesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
 .st-key-scard-natframe [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
   position:absolute !important; top:16px !important; right:18px !important; width:auto !important;
   margin:0 !important; z-index:5 !important; }
 /* 드롭다운 박스를 내용 크기로 축소(글자+화살표 딱 붙게) — 시안 컴팩트 톤 */
 .st-key-scard-hstore [data-testid="stSelectbox"], .st-key-scard-prodsel [data-testid="stSelectbox"],
-.st-key-scard-storesel [data-testid="stSelectbox"],
 .st-key-scard-natframe [data-testid="stSelectbox"]{ width:auto !important; min-width:0 !important; }
 .st-key-scard-hstore [data-testid="stSelectbox"] div[data-baseweb="select"],
 .st-key-scard-prodsel [data-testid="stSelectbox"] div[data-baseweb="select"],
-.st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"],
 .st-key-scard-natframe [data-testid="stSelectbox"] div[data-baseweb="select"]{
   width:fit-content !important; min-width:96px !important; }
 /* ★겹침 수정: 우상단 드롭다운이 1위 값과 겹치던 문제.
@@ -359,7 +373,6 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
    (expander 등 더 깊은 블록은 건드리지 않게 직계 자식만 겨냥.) */
 .st-key-scard-hstore > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
 .st-key-scard-prodsel > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
-.st-key-scard-storesel > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
 .st-key-scard-natframe > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"]{ position:static !important; }
 /* 칩 글자 한 줄 유지(줄바꿈 방지) */
 [data-testid="stPopover"] button p, [data-testid="stPopoverButton"] p{
@@ -608,6 +621,14 @@ def card(title=None, key=None):
         c.markdown(f'<div class="ct">{title}</div>', unsafe_allow_html=True)
     with c:
         yield
+
+
+def statrow(items):
+    """미니 지표 3~4칸. items=[(label, value)]. (포토이즘과 동일)"""
+    cells = "".join(
+        f'<div class="mst"><div class="mst-l">{l}</div><div class="mst-v num">{v}</div></div>'
+        for l, v in items)
+    st.markdown(f'<div class="mstrow">{cells}</div>', unsafe_allow_html=True)
 
 
 def style_fig(fig, height, legend=False):
@@ -1637,38 +1658,101 @@ with tab_nat:
         #    거기서 예고했던 '총매출 1위 ≠ 대당 효율 1위' 인사이트는 그 카드 안 스트립으로 옮겼다.
 
 # ════════════ 탭 4: 매장별 분석 (상세, 전체) ════════════
-with tab_store:
-    with card("🏬 국가별 매장 전체 순위", key="scard-storesel"):
-        # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
-        # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
-        @st.fragment
-        def _store_rank():  # 국가 선택 → 매장 순위
-            # 정산금액(실결제+쿠폰) 하나로 순위 — 전액 쿠폰 매장도 같은 막대에 들어온다.
-            #   예전엔 실결제 순위 + '🎟 쿠폰만 매장' 스트립으로 나눠 그렸는데 이제 불필요.
-            _opts = ([str(c) for c in rev.groupby("국가")["정산금액"].sum()
-                      .sort_values(ascending=False).index.tolist()]
-                     if "국가" in rev.columns else [])
-            if not _opts:
-                st.info("데이터가 없어요.")
-            else:
-                pick = st.selectbox("국가", ["전체"] + _opts, key="store_country", label_visibility="collapsed")
-                _src = rev if pick == "전체" else rev[rev["국가"] == pick]
-                ss = (_src.groupby("매장 이름")
-                      .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
-                      .reset_index())
-                ss = ss[ss["매출"] > 0].sort_values("매출", ascending=False)
-                st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기" + ("" if pick == "전체" else f" · {pick}"))
-                if ss.empty:
-                    st.info("이 국가의 매장 데이터가 없어요.")
-                else:
-                    hbar_list(ss, "매장 이름", collapse_after=10)   # 시안: 가로 막대
-            helpbox("""
-    **국가별 매장 전체 순위**
-    - 매출 거래를 `매장 이름`으로 묶어 `정산금액`(실결제+쿠폰) 합·건수 → 순위(TOP10 + 나머지 접기).
-    - 전액 쿠폰 결제 매장(대만 등)도 **같은 막대 순위**에 들어와요. 국가 드롭다운도 같은 기준이에요.
-    """)
+# 포5: 포토이즘 매장별 탭과 동일 구성 — 전용 필터(국가·상품) → 매장 전체순위 → 카테고리별 TOP5.
+#      전용 필터는 상단 필터바와 별개로 **이 탭에서만** 걸린다.
+#      @st.fragment 로 격리 → 전용 필터를 만져도 다른 탭·차트는 재실행되지 않는다.
+@st.fragment
+def _store_tab():
+    def _opts_of(col):
+        """매출 큰 순서의 선택지(매출 0인 값은 뺀다)."""
+        if col not in rev.columns:
+            return []
+        s = rev.groupby(col)["정산금액"].sum().sort_values(ascending=False)
+        return [str(x) for x in s[s > 0].index.tolist()]
 
-        _store_rank()
+    with card("🔎 매장별 전용 필터 <span class='muted'>(이 탭에서만 적용돼요)</span>",
+              key="scard-storefilter"):
+        _f1, _f2 = st.columns(2)
+        f_nat = _f1.multiselect("국가", _opts_of("국가"), key="sn_st_nat", placeholder="전체 국가")
+        f_prd = _f2.multiselect("상품", _opts_of("상품 카테고리"), key="sn_st_prd",
+                                placeholder="전체 상품")
+
+        _sc = rev
+        if f_nat:
+            _sc = _sc[_sc["국가"].astype(str).isin(f_nat)]
+        if f_prd:
+            _sc = _sc[_sc["상품 카테고리"].astype(str).isin(f_prd)]
+
+        statrow([("매출", fmt_krw(int(_sc["정산금액"].sum()))),
+                 ("건수", f"{len(_sc):,}건"),
+                 ("매장 수", f"{_sc['매장 이름'].nunique():,}개")])
+        st.caption("상단 필터바(기간·국가·매장·상품·IP)로 거른 데이터에 **한 번 더** 걸러요. 미선택 = 전체.")
+        helpbox("""
+**매장별 전용 필터**
+- 상단 필터바 결과에 **이 탭에서만** 국가·상품 카테고리를 추가로 걸러요. 다른 탭에는 영향이 없어요.
+- 선택지는 현재 필터 범위에서 **매출이 있는 값만**, 매출 큰 순서로 나와요.
+- 아래 지표 3칸 = 이 조건의 `정산금액` 합 · 거래 건수 · `매장 이름` 고유 개수.
+""")
+
+    with card("🏬 매장 전체 순위"):
+        # 정산금액(실결제+쿠폰) 하나로 순위 — 전액 쿠폰 매장도 같은 막대에 들어온다.
+        #   예전엔 실결제 순위 + '🎟 쿠폰만 매장' 스트립으로 나눠 그렸는데 이제 불필요.
+        ss = (_sc.groupby("매장 이름")
+              .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
+              .reset_index())
+        ss = ss[ss["매출"] > 0].sort_values("매출", ascending=False)
+        st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기")
+        if ss.empty:
+            st.info("해당 조건에 맞는 매장이 없어요. 위 전용 필터를 넓혀 보세요.")
+        else:
+            hbar_list(ss, "매장 이름", collapse_after=10)   # 시안: 가로 막대
+        helpbox("""
+**매장 전체 순위**
+- 전용 필터를 적용한 뒤 `매장 이름`별 `정산금액`(실결제+쿠폰) 합·건수 → 순위(TOP10 + 나머지 접기).
+- 전액 쿠폰 결제 매장(대만 등)도 **같은 막대 순위**에 들어와요.
+""")
+
+    # 포5: 포토이즘 '구좌별 타이틀 TOP 5' 와 같은 자리.
+    #   스내피즘엔 구좌(BASIC/WITH/EVENT)가 없어 **상품 카테고리**로 나눈다.
+    with card("🧩 카테고리별 프레임(IP) TOP 5"):
+        _cats = (_sc.groupby("상품 카테고리")["정산금액"].sum()
+                 .sort_values(ascending=False)) if "상품 카테고리" in _sc.columns else pd.Series(dtype="int64")
+        _cats = [str(c) for c in _cats[_cats > 0].index.tolist()][:3]
+        if not _cats:
+            st.info("해당 조건에 맞는 데이터가 없어요.")
+        else:
+            _cols = st.columns(len(_cats))
+            _clr = ["var(--brand-2)", "var(--amber)", "#7c77ee"]
+            for _i, (_cat, _c) in enumerate(zip(_cats, _cols)):
+                with _c:
+                    _g = _sc[_sc["상품 카테고리"].astype(str) == _cat]
+                    _f = (_g[_g["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
+                          .groupby("프레임 이름")
+                          .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count")).reset_index())
+                    _f = _f[_f["매출"] > 0]
+                    st.markdown(
+                        f'<div class="gzc" style="border-color:{_clr[_i % len(_clr)]}">'
+                        f'<div class="gzc-l">🧩 {_cat}</div>'
+                        f'<div class="gzc-v num">{fmt_krw(int(_g["정산금액"].sum()))}</div>'
+                        f'<div class="gzc-d">{len(_g):,}건 · 프레임 {len(_f):,}개</div></div>',
+                        unsafe_allow_html=True)
+                    if _f.empty:
+                        st.caption("해당 조건에 데이터가 없어요.")
+                    else:
+                        hbar_list(_f, "프레임 이름", top=5)
+            st.caption("매출 상위 **상품 카테고리 3종**만 보여줘요. 전체는 '상품 카테고리 분석' 탭에서 봐요.")
+        helpbox("""
+**카테고리별 프레임(IP) TOP 5**
+- `상품 카테고리`(와이드 스티커·미니 스티커·포토카드 등) 상위 3종을 칸으로 나눠, 각 칸에서
+  **`프레임 이름`(=IP) 매출 상위 5개**를 가로막대로 보여줘요.
+- 큰 숫자 = 그 카테고리의 **전체 매출액 합**(TOP5 합이 아니라 카테고리 전체). 건수·프레임 수도 같은 기준.
+- 포토이즘의 '구좌별 타이틀 TOP 5' 와 같은 자리예요. 스내피즘엔 구좌(BASIC/WITH/EVENT)가 없어
+  **상품 카테고리**로 나눠요.
+""")
+
+
+with tab_store:
+    _store_tab()
 
 # ════════════ 탭 5: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
 if SHOW_TAB_ETC:
