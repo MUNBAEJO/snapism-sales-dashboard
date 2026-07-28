@@ -35,13 +35,20 @@ IP_GUBUN_SHOWN = ["아티스트", "캐릭터", "PICK", "오리지널(포토이�
 
 # ── DuckDB SQL 표현식 ────────────────────────────────────────────
 # IP구분: 구좌 + 타이틀명(WITH/EVENT) / 프레임명(BASIC) 접두어 기준
+#
+# ★2026-07-28: '브랜드=Rentals and pop-ups' 를 **맨 위로** 올렸다(사용자 지정).
+#   예전엔 구좌(WITH/EVENT)를 먼저 봐서, 팝업·렌탈 매장에서 판 정규 IP 가 '아티스트/PICK/
+#   캐릭터'로 잡혀 대시보드에 남아 있었다(전 기간 ₩2.7B). 렌탈·팝업은 통째로 빼는 게
+#   원칙이라 브랜드를 최우선으로 본다. (원본 parquet 은 그대로라 나중에 필요하면
+#   이 순서만 되돌리고 재집계하면 다시 볼 수 있다. 1대당 매출도 이미 렌탈 장비를
+#   분자·분모에서 빼고 있어서 이제 기준이 일치한다.)
 IP_GUBUN_SQL = """
 CASE
+  WHEN "브랜드"='Rentals and pop-ups'                              THEN '렌탈'
   WHEN "구좌"='EVENT' THEN 'PICK'
   WHEN "구좌"='WITH' AND CAST("타이틀명" AS VARCHAR) LIKE '렌탈%'   THEN '렌탈'
   WHEN "구좌"='WITH' AND CAST("타이틀명" AS VARCHAR) LIKE 'L %'      THEN '캐릭터'
   WHEN "구좌"='WITH'                                                THEN '아티스트'
-  WHEN "브랜드"='Rentals and pop-ups'                              THEN '렌탈'
   WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'L %'      THEN '캐릭터'
   WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE '라이선스%' THEN '캐릭터'
   WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'P %'      THEN '오리지널(포토이즘)'
