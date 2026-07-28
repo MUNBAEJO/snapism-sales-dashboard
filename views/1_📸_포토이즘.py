@@ -384,8 +384,10 @@ COUNTRY_ISO = {
 # 팔레트 (스내피즘과 동일 인디고 시스템)
 PAL = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#7c77ee", "#c98a2e", "#5f6b7a"]
 BRAND, BRAND2, SKY, TEAL, AMBER, PINK = "#4f46e5", "#6366f1", "#38a3e8", "#0f9d77", "#b45309", "#d24d8b"
-_GUB_COLORS = {"아티스트": BRAND2, "캐릭터": TEAL, "렌탈": SKY, "PICK": PINK, "기획(P)": AMBER}
-_GUB_EMOJI  = {"아티스트": "🎤", "캐릭터": "🧸", "렌탈": "🏪", "PICK": "⭐", "기획(P)": "🎨"}
+_GUB_COLORS = {"아티스트": BRAND2, "캐릭터": TEAL, "PICK": PINK,
+               "오리지널(포토이즘)": AMBER, "오리지널(기본)": "#7c77ee", "렌탈": SKY}
+_GUB_EMOJI  = {"아티스트": "🎤", "캐릭터": "🧸", "PICK": "⭐",
+               "오리지널(포토이즘)": "🎨", "오리지널(기본)": "🖼", "렌탈": "🏪"}
 
 
 def flag_url(name):

@@ -83,8 +83,12 @@ def build_agg(con, parq: str):
         ),
         tagged AS (
             SELECT *,
-                CASE WHEN "IP구분"='제외' THEN '' ELSE "IP명_raw" END  AS "IP명_c",
-                CASE WHEN "IP구분"='제외' THEN '' ELSE "날짜코드"  END  AS "날짜코드_c"
+                -- 오리지널·제외는 IP명 단위로 쪼개지 않는다(구분별 매출만 쓰고, 타이틀 순위엔
+                -- 안 넣는다). 안 그러면 기본_색상·자체 프레임 이름이 살아나 그룹이 폭증 → 재집계 OOM.
+                CASE WHEN "IP구분" IN ('제외','오리지널(기본)','오리지널(포토이즘)')
+                     THEN '' ELSE "IP명_raw" END  AS "IP명_c",
+                CASE WHEN "IP구분" IN ('제외','오리지널(기본)','오리지널(포토이즘)')
+                     THEN '' ELSE "날짜코드"  END  AS "날짜코드_c"
             FROM base
         ),
         grouped AS (
@@ -175,7 +179,7 @@ def main():
     # (photoism_ingest 와 동일한 안전장치).
     tdir = BASE_DIR / "data" / "_duckdb_tmp"
     tdir.mkdir(parents=True, exist_ok=True)
-    con.execute("PRAGMA memory_limit='512MB'")
+    con.execute("PRAGMA memory_limit='1GB'")
     con.execute("PRAGMA threads=1")
     con.execute("PRAGMA preserve_insertion_order=false")
     con.execute(f"PRAGMA temp_directory='{str(tdir).replace(chr(92), '/')}'")

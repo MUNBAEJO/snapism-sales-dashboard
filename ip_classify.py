@@ -21,15 +21,17 @@ BASE_DIR    = Path(__file__).parent
 ALIAS_FILE  = BASE_DIR / "ip_aliases.json"
 
 # IP 매출에 포함되는 구분(제외 제외)
-IP_GUBUN_ORDER = ["아티스트", "캐릭터", "렌탈", "PICK", "기획(P)"]
+# 2026-07-28: '오리지널 살리기' — 숨겨두던 BASIC 프레임 매출(전체의 절반 이상)을 부활.
+#   BASIC+'P '(포토이즘 기획 프레임) → 오리지널(포토이즘), 그 외 BASIC → 오리지널(기본).
+IP_GUBUN_ORDER = ["아티스트", "캐릭터", "PICK", "오리지널(포토이즘)", "오리지널(기본)", "렌탈"]
 
-# 대시보드에 '노출'하는 구분 (2026-07-21 사용자 결정).
-# 기획(P)·렌탈·제외(기본/자체 프레임)는 수집·저장은 그대로 하되 화면에서만 뺀다.
-# 되살리려면 이 목록에 다시 넣고 대시보드를 재시작하면 된다(재집계·재수집 불필요).
+# 대시보드에 '노출'하는 구분.
+# 렌탈만 화면에서 뺀다(팝업·행사용). 오리지널은 2026-07-28 부터 노출(살리기).
+# 되살리거나 숨기려면 이 목록만 고치고 대시보드를 재시작하면 된다(재집계·재수집 불필요).
 #
 # ※ 적용 대상은 '포토이즘 매출 대시보드'(views/1_📸_포토이즘.py) 뿐이다.
 #   KPI목표 페이지는 이 값을 **일부러 참조하지 않는다** — 아래 TEAM_GUBUN 설명 참고.
-IP_GUBUN_SHOWN = ["아티스트", "캐릭터", "PICK"]
+IP_GUBUN_SHOWN = ["아티스트", "캐릭터", "PICK", "오리지널(포토이즘)", "오리지널(기본)"]
 
 # ── DuckDB SQL 표현식 ────────────────────────────────────────────
 # IP구분: 구좌 + 타이틀명(WITH/EVENT) / 프레임명(BASIC) 접두어 기준
@@ -39,8 +41,10 @@ CASE
   WHEN "구좌"='WITH' AND CAST("타이틀명" AS VARCHAR) LIKE '렌탈%'   THEN '렌탈'
   WHEN "구좌"='WITH' AND CAST("타이틀명" AS VARCHAR) LIKE 'L %'      THEN '캐릭터'
   WHEN "구좌"='WITH'                                                THEN '아티스트'
+  WHEN "브랜드"='Rentals and pop-ups'                              THEN '렌탈'
   WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'L %'  THEN '캐릭터'
-  WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'P %'  THEN '기획(P)'
+  WHEN "구좌"='BASIC' AND CAST("프레임 이름" AS VARCHAR) LIKE 'P %'  THEN '오리지널(포토이즘)'
+  WHEN "구좌"='BASIC'                                              THEN '오리지널(기본)'
   ELSE '제외'
 END
 """
