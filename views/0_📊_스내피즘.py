@@ -489,7 +489,7 @@ def coupon_txns(df):
 # 포토이즘과 어드민이 아예 달라 별도 파일이다. 대신 이쪽은 **계약 기간(시작~종료)**이
 # 있어서 가동 구간을 어림하지 않고 정확히 자를 수 있다. (device_ingest_snapism.py)
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
-def _load_devices(_mtime):
+def _load_devices(mtime):
     if not DEVICE_FILE.exists():
         return pd.DataFrame()
     try:

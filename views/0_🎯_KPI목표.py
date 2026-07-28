@@ -368,7 +368,7 @@ def _cc_lower(df):
 
 
 @st.cache_data(show_spinner=False, max_entries=1)
-def _photoism_ip_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
+def _photoism_ip_daily(agg_m, cfg_m) -> pd.DataFrame:
     """포토이즘 agg → 날짜·IP구분·국내여부별 KRW 매출액 (취소 제외, 일 단위 집계)."""
     cols = ["날짜", "IP구분", "_kr", "매출액"]
     if not AGG_FILE.exists():
@@ -405,7 +405,7 @@ def photoism_ip_daily() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, max_entries=1)
-def _photoism_ipname_daily(_agg_mtime, _cfg_mtime) -> pd.DataFrame:
+def _photoism_ipname_daily(agg_m, cfg_m) -> pd.DataFrame:
     """포토이즘 agg → 날짜·IP구분·IP명·국내여부별 KRW 매출액 (취소 제외).
     개별 IP 증감(무버) 산출용. 매출 산식은 _photoism_ip_daily 와 100% 동일."""
     cols = ["날짜", "IP구분", "IP명", "_kr", "매출액"]
@@ -444,7 +444,7 @@ def photoism_ipname_daily() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, max_entries=1)
-def _jira_due_map(_cache_mtime) -> dict:
+def _jira_due_map(cache_m) -> dict:
     """타이틀명 → 종료일(YYYY-MM-DD). 로컬 Jira 캐시에서만 읽음(네트워크 X).
     2099년 이후(무기한)·미설정은 제외."""
     if not JIRA_CACHE.exists():
@@ -464,11 +464,11 @@ def _jira_due_map(_cache_mtime) -> dict:
 
 
 @st.cache_data(show_spinner=False, max_entries=6)
-def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
+def _ip_end_status(agg_m, cache_m, ym: str) -> dict:
     """IP명 → 종료상태. 포토이즘 A·C·픽 한정.
     그 IP의 (종료일이 등록된) 모든 타이틀이 이번 달 전에 끝났으면 '🔚 종료',
     하나라도 이번 달 이후까지 살아있으면 '🔴 판매중'. 종료일 정보가 없으면 키 없음(→'—')."""
-    due = _jira_due_map(_cache_mtime)
+    due = _jira_due_map(cache_m)
     if not due or not AGG_FILE.exists():
         return {}
     try:
@@ -477,7 +477,7 @@ def _ip_end_status(_agg_mtime, _cache_mtime, _ym: str) -> dict:
         return {}
     df = df[df["IP구분"].isin(TEAM_ALL_GUBUN)]
     df = df[["IP명", "타이틀명"]].astype(str).drop_duplicates()
-    first_this = f"{_ym}-01"
+    first_this = f"{ym}-01"
     by_ip: dict = {}
     for ipn, ttl in zip(df["IP명"], df["타이틀명"]):
         d = due.get(ttl)
@@ -506,7 +506,7 @@ def _region_daily() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, max_entries=6)
-def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame:
+def _photoism_country_since(agg_m, cfg_m, since: str) -> pd.DataFrame:
     """포토이즘(A·C·픽) 국가별 매출액 — _since(YYYY-MM-DD) 이후. 매출 산식은 벤토와 동일."""
     cols = ["국가", "매출액"]
     if not AGG_FILE.exists():
@@ -519,7 +519,7 @@ def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame
         return pd.DataFrame(columns=cols)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
     df = df[df["날짜"].notna() & ~df["취소 여부"].astype(bool)]
-    df = df[df["날짜"] >= pd.Timestamp(_since)]
+    df = df[df["날짜"] >= pd.Timestamp(since)]
     df = df[df["IP구분"].isin(TEAM_ALL_GUBUN)]
     if df.empty:
         return pd.DataFrame(columns=cols)
@@ -537,7 +537,7 @@ def _photoism_country_since(_agg_mtime, _cfg_mtime, _since: str) -> pd.DataFrame
 
 
 @st.cache_data(show_spinner=False, max_entries=1)
-def _snapism_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
+def _snapism_daily(m_csv, m_parq, cfg_m) -> pd.DataFrame:
     """스내피즘 master → 날짜·국내여부별 정산금액(KRW환산+쿠폰, 취소 제외, 일 단위)."""
     import data_io
     cols = ["날짜", "_kr", "매출액"]
@@ -569,7 +569,7 @@ def snapism_daily() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, max_entries=1)
-def _snapism_team_daily(_m_csv, _m_parq, _cfg_mtime) -> pd.DataFrame:
+def _snapism_team_daily(m_csv, m_parq, cfg_m) -> pd.DataFrame:
     """스내피즘 master → 날짜·국내여부·팀별 정산금액. 카테고리로 팀 배정:
     아티스트·기타 → A팀, 캐릭터 → C팀. (산식은 _snapism_daily 와 동일)"""
     import data_io

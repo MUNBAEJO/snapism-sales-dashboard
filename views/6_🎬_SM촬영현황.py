@@ -50,7 +50,7 @@ if not DAILY_PARQUET.exists():
 
 
 @st.cache_data(show_spinner="CMS 촬영 데이터를 불러오는 중…")
-def _load(_mtime: float) -> pd.DataFrame:
+def _load(mtime: float) -> pd.DataFrame:
     return sm_report.load_daily()
 
 
