@@ -169,8 +169,9 @@ def build_orig(con, parq: str):
     """오리지널(BASIC) 프레임별 매출 — '구좌타입 분석' 타이틀 상세의 오리지널 탭 전용.
 
     본 집계(build_agg)는 오리지널을 IP명='' 로 접어 프레임 단위가 없다(그룹 폭증/OOM 방지).
-    여기서 **매장 차원을 뺀 경량 집계**(날짜·국가·IP구분·프레임 ≈ 31만행)를 따로 만들어
-    오리지널 프레임 순위만 보여준다. (매장 필터는 이 탭에 적용 안 됨 — 날짜·국가만.)
+    여기서 **매장 차원을 뺀 경량 집계**(날짜·국가·브랜드·IP구분·프레임)를 따로 만들어
+    오리지널 프레임 순위만 보여준다. (매장 필터는 이 탭에 적용 안 됨 — 날짜·국가·브랜드만.)
+    ※ 브랜드(Box/Colored…)는 매장별 탭의 '상품' 전용 필터가 오리지널에도 걸리도록 2026-07-28 추가.
     """
     print("  [3/3] 오리지널 프레임 집계(경량)...")
     arrow = con.execute(f"""
@@ -178,6 +179,7 @@ def build_orig(con, parq: str):
             TRY_CAST("날짜" AS DATE)                              AS "날짜",
             COALESCE("국가", '')                                  AS "국가",
             COALESCE("국가코드", '')                              AS "국가코드",
+            COALESCE("브랜드", '')                                AS "브랜드",
             COALESCE("결제 단위", 'KRW')                          AS "결제 단위",
             ({ip_classify.IP_GUBUN_SQL})                          AS "IP구분",
             COALESCE(TRIM(CAST("프레임 이름" AS VARCHAR)), '')    AS "프레임",
@@ -188,7 +190,7 @@ def build_orig(con, parq: str):
         FROM read_parquet('{parq}')
         WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
           AND ({ip_classify.IP_GUBUN_SQL}) IN ('오리지널(포토이즘)','오리지널(기본)')
-        GROUP BY 1,2,3,4,5,6
+        GROUP BY 1,2,3,4,5,6,7
     """).to_arrow_table()
     arrow = dict_encode_strings(arrow)
     pq.write_table(arrow, PARQ_ORIG, compression="snappy")

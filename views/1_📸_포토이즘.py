@@ -302,21 +302,32 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
   display:flex !important; justify-content:flex-end !important; }
 /* 카드 헤더 드롭다운 = 카드 제목 옆(우상단) 절대배치 */
-.st-key-scard-natsel, .st-key-scard-titlesel, .st-key-scard-nattitle, .st-key-scard-storesel{ position:relative; }
+.st-key-scard-natsel, .st-key-scard-titlesel, .st-key-scard-nattitle{ position:relative; }
 .st-key-scard-natsel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
 .st-key-scard-titlesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
-.st-key-scard-nattitle [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
-.st-key-scard-storesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+.st-key-scard-nattitle [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
   position:absolute !important; top:16px !important; right:18px !important; width:auto !important;
   margin:0 !important; z-index:5 !important; }
 .st-key-scard-natsel [data-testid="stSelectbox"], .st-key-scard-titlesel [data-testid="stSelectbox"],
-.st-key-scard-nattitle [data-testid="stSelectbox"], .st-key-scard-storesel [data-testid="stSelectbox"]{
+.st-key-scard-nattitle [data-testid="stSelectbox"]{
   width:auto !important; min-width:0 !important; }
 .st-key-scard-natsel [data-testid="stSelectbox"] div[data-baseweb="select"],
 .st-key-scard-titlesel [data-testid="stSelectbox"] div[data-baseweb="select"],
-.st-key-scard-nattitle [data-testid="stSelectbox"] div[data-baseweb="select"],
-.st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"]{
+.st-key-scard-nattitle [data-testid="stSelectbox"] div[data-baseweb="select"]{
   width:fit-content !important; min-width:110px !important; }
+
+/* ── 매장별 탭 전용 필터 카드(포6) ── */
+.st-key-scard-storefilter{ background:#fbfbff !important; }
+.st-key-scard-storefilter [data-testid="stMultiSelect"] label{
+  font-size:11.5px !important; font-weight:800 !important; color:var(--text-2) !important; }
+/* ── 구좌별 타이틀 TOP5 — 칸 머리 미니카드 ── */
+.gzc{ border:1px solid var(--border); border-left-width:3px; border-radius:10px;
+  padding:9px 11px 8px; margin:0 0 9px; background:var(--surface); }
+.gzc-l{ font-size:12px; font-weight:800; color:#39406b; display:flex; align-items:center; gap:6px; }
+.gzc-b{ font-size:9.5px; font-weight:800; letter-spacing:.05em; color:var(--text-3);
+  background:var(--surface-3); border-radius:5px; padding:1px 5px; }
+.gzc-v{ font-size:17px; font-weight:800; color:var(--text); margin-top:3px; letter-spacing:-.02em; }
+.gzc-d{ font-size:11px; color:var(--text-3); margin-top:1px; }
 
 /* ── 사이드바 '관리자 전용' 카드 ── */
 [data-testid="stSidebar"] .st-key-sb-admin{
@@ -432,6 +443,16 @@ def fmt_krw(n):
     return f"₩{int(n):,}"
 
 
+# 브랜드(=상품 카테고리) 한글 라벨. 값 자체는 영문 원본을 그대로 쓰고 '보이는 이름'만 바꾼다
+# (필터·집계 키가 바뀌면 안 되니까). 모르는 값은 원본 그대로.
+_BRAND_KO = {"Box": "박스", "Colored": "컬러드",
+             "Rentals and pop-ups": "렌탈·팝업", "Sticker Machine": "스티커머신"}
+
+
+def brand_ko(b):
+    return _BRAND_KO.get(str(b).strip(), str(b))
+
+
 def load_config():
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -453,8 +474,12 @@ def _file_mtime(p):
 
 # max_entries=1 — 반환 DataFrame 이 370만행·314MB 다. 캐시 키가 파일 mtime 이라
 # 파일이 바뀌면 옛 항목은 쓸모없는데, 상한이 없으면 그대로 메모리에 남아 쌓인다.
+#
+# ★ 인자 이름에 밑줄(_)을 붙이면 안 된다 — st.cache_data 는 **밑줄로 시작하는 인자를
+#   해시에서 제외**한다. 예전엔 `_agg_mtime` 이라 mtime 이 캐시 키에 아예 안 들어갔고,
+#   그래서 재집계해도 화면이 안 바뀌어 매번 서버를 재시작해야 했다(2026-07-28 수정).
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
-def _load_data(_agg_mtime, _cfg_mtime):
+def _load_data(agg_mtime, cfg_mtime):
     """집계 parquet 로드 (category 인코딩). 캐시 키 = 집계·환율 파일 mtime →
     파일이 바뀔 때만 재계산(매일 ingest/환율 갱신 시). 평소엔 즉시 캐시 히트."""
     if AGG_FILE.exists():
@@ -530,7 +555,7 @@ def load_data():
 
 
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # mtime 키 → 최신 1개만 유효
-def _sidebar_options(_agg_mtime):
+def _sidebar_options(agg_mtime):
     """필터 드롭다운 옵션을 데이터 버전당 한 번만 계산(캐시)."""
     d = _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
     if d.empty:
@@ -569,7 +594,7 @@ def _sidebar_options(_agg_mtime):
 
 
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # mtime 키 → 최신 1개만 유효
-def _load_hourly(_mtime):
+def _load_hourly(mtime):
     """시간대 집계 parquet 로드 (시간대 차트 전용). 캐시 키 = 파일 mtime."""
     if not HOURLY_FILE.exists():
         return pd.DataFrame()
@@ -589,7 +614,7 @@ def load_hourly():
 
 
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # mtime 키 → 최신 1개만 유효
-def _load_orig(_mtime, _cfg_mtime):
+def _load_orig(mtime, cfg_mtime):
     """오리지널 프레임별 경량 집계 로드 — 구좌타입 분석의 오리지널 탭 전용.
     매출액 = 실결제 + 지정국가 쿠폰·코인(본 집계와 동일 규칙). 매장 차원은 없음(날짜·국가만)."""
     if not ORIG_FILE.exists():
@@ -628,7 +653,7 @@ def load_orig():
 # 설치일로 쓴다(device_ingest.py). 철거일은 아예 없고 '중지' 여부만 있다 — 그래서
 # 언제 멈췄는지 모르는 중지 장비는 분모에서 뺀다(아래 device_days 주석 참고).
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
-def _load_devices(_mtime):
+def _load_devices(mtime):
     if not DEVICE_FILE.exists():
         return pd.DataFrame()
     try:
@@ -1198,7 +1223,7 @@ sales = paid_sales(df)
 # ★ 날짜로 자르지 않은 scope 를 넘긴다 — 기간으로 자른 df 를 주면 첫 거래일이
 #   전부 기간 시작일이 돼서 죄다 '신규'로 나온다.
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=8)
-def _title_status_ph(_agg_mtime, _p0, _p1, _countries, _brands, _stores, _gubuns, _ips):
+def _title_status_ph(agg_mtime, p0, p1, countries, brands, stores, gubuns, ips):
     from title_runs import title_status
     from jira_ip_dates import fetch_ip_dates
     base = scope[~scope["취소 여부"].astype(bool)]
@@ -1209,7 +1234,7 @@ def _title_status_ph(_agg_mtime, _p0, _p1, _countries, _brands, _stores, _gubuns
         jira = {}        # Jira 가 죽어도 판매기간(실측)은 그대로 나온다
     # prefer_brand="photoism" — 같은 IP가 양 브랜드에 있으면 포토이즘 티켓을 써야 한다
     # (안 그러면 AG-ENT·AND2BLE 처럼 Snapism 티켓의 종료일이 붙는다).
-    return title_status(base, jira, _p0, _p1, title_col="타이틀", prefer_brand="photoism")
+    return title_status(base, jira, p0, p1, title_col="타이틀", prefer_brand="photoism")
 
 
 try:
@@ -1448,7 +1473,7 @@ with tab_home:
                     "브랜드": f"기타 {len(pc) - 3}종",
                     "매출": int(pc.iloc[3:]["매출"].sum())}])], ignore_index=True)
             if not pc.empty and pc["매출"].sum() > 0:
-                css_donut(list(zip(pc["브랜드"].astype(str), pc["매출"])),
+                css_donut(list(zip(pc["브랜드"].map(brand_ko), pc["매출"])),
                           ["var(--brand-2)", "var(--amber)", "#7c77ee", "#c7ccd6"])
             else:
                 st.info("데이터가 없어요.")
@@ -1840,28 +1865,116 @@ with tab_nat:
 """)
 
 # ════════════ 탭 4: 매장별 분석 ════════════
-with tab_store:
-    with card("🏬 국가별 매장 전체 순위", key="scard-storesel"):
-        _cs = (sales.groupby("국가", observed=True)["매출액"].sum().sort_values(ascending=False).index.tolist()
-               if "국가" in sales.columns else [])
-        _cs = [str(c) for c in _cs]
-        if not _cs:
-            st.info("데이터가 없어요.")
-        else:
-            pick = st.selectbox("국가", ["전체"] + _cs, key="ph_store_country", label_visibility="collapsed")
-            _src = sales if pick == "전체" else sales[sales["국가"] == pick]
-            ss = (_src.groupby("매장 이름", observed=True)
-                  .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
-            ss = ss[ss["매출"] > 0]
-            st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기" + ("" if pick == "전체" else f" · {pick}"))
-            if ss.empty:
-                st.info("이 국가의 매장 데이터가 없어요.")
-            else:
-                hbar_list(ss, "매장 이름", collapse_after=10)
+# ════════════ 탭 4: 매장별 분석 ════════════
+# 포6: 이 탭 **전용 필터**(국가·상품 다중선택). 상단 필터바와 별개로 여기서만 적용된다
+#      — 매장 순위를 국가·상품 조합으로 빠르게 훑어보라는 상급자 요청.
+#      @st.fragment 로 격리 → 전용 필터를 만져도 다른 탭·차트는 재실행되지 않는다.
+@st.fragment
+def _store_tab(sales, date_range, sel_countries):
+    def _opts_of(col):
+        """매출 큰 순서의 선택지(매출 0인 값은 뺀다)."""
+        if col not in sales.columns:
+            return []
+        s = sales.groupby(col, observed=True)["매출액"].sum().sort_values(ascending=False)
+        return [str(x) for x in s[s > 0].index.tolist()]
+
+    with card("🔎 매장별 전용 필터 <span class='muted'>(이 탭에서만 적용돼요)</span>",
+              key="scard-storefilter"):
+        _f1, _f2 = st.columns(2)
+        f_nat = _f1.multiselect("국가", _opts_of("국가"), key="ph_st_nat",
+                                placeholder="전체 국가")
+        f_prd = _f2.multiselect("상품", _opts_of("브랜드"), key="ph_st_prd",
+                                placeholder="전체 상품", format_func=brand_ko)
+
+        _sc = sales
+        if f_nat:
+            _sc = _sc[_sc["국가"].isin(f_nat)]
+        if f_prd:
+            _sc = _sc[_sc["브랜드"].isin(f_prd)]
+
+        statrow([("매출", fmt_krw(int(_sc["매출액"].sum()))),
+                 ("건수", f"{tx_count(_sc):,}건"),
+                 ("매장 수", f"{_sc['매장 이름'].nunique():,}개")])
+        st.caption("상단 필터바(기간·국가·매장·카테고리·IP)로 거른 데이터에 **한 번 더** 걸러요. 미선택 = 전체.")
         helpbox("""
-**국가별 매장 전체 순위**
-- '전체' 또는 선택 국가의 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).
+**매장별 전용 필터**
+- 상단 필터바 결과(`sales`)에 **이 탭에서만** 국가·상품(브랜드)을 추가로 걸러요. 다른 탭에는 영향이 없어요.
+- 선택지는 현재 필터 범위에서 **매출이 있는 값만**, 매출 큰 순서로 나와요.
+- 아래 지표 3칸 = 이 조건의 `매출액` 합 · `건수` 합 · `매장 이름` 고유 개수.
 """)
+
+    with card("🏬 매장 전체 순위"):
+        ss = (_sc.groupby("매장 이름", observed=True)
+              .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+        ss = ss[ss["매출"] > 0]
+        st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기")
+        if ss.empty:
+            st.info("해당 조건에 맞는 매장이 없어요. 위 전용 필터를 넓혀 보세요.")
+        else:
+            hbar_list(ss, "매장 이름", collapse_after=10)
+        helpbox("""
+**매장 전체 순위**
+- 전용 필터를 적용한 뒤 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).
+""")
+
+    # 포6-②: 구좌(BASIC/WITH/EVENT)별 타이틀 TOP 5
+    #   BASIC 은 본 집계에 타이틀이 접혀 있어(그룹 폭증 방지) 경량 오리지널 집계의 '프레임'을
+    #   함께 붙인다. 합계(매출)는 sales 의 BASIC 행이 이미 오리지널을 포함하므로 중복 없음.
+    with card("🎫 구좌별 타이틀 TOP 5 <span class='muted'>(BASIC · WITH · EVENT)</span>"):
+        _od = load_orig()
+        if not _od.empty and len(date_range) == 2:
+            _od = _od[(_od["날짜"] >= date_range[0]) & (_od["날짜"] <= date_range[1])]
+        # 국가는 상단 필터바 + 전용 필터를 둘 다, 상품(브랜드)은 전용 필터만 건다.
+        # ※ `_col in columns` 가드 — 예전 경량 집계(브랜드 열 없음)가 캐시에 남아 있어도 죽지 않게.
+        for _col, _pick in (("국가", list(sel_countries)), ("국가", f_nat), ("브랜드", f_prd)):
+            if _pick and not _od.empty and _col in _od.columns:
+                _od = _od[_od[_col].isin(_pick)]
+
+        _GZ_CARDS = [("BASIC", "🖼 오리지널 · 라이선스", "#7c77ee"),
+                     ("WITH", "🎤 아티스트 · 캐릭터", BRAND2),
+                     ("EVENT", "💗 PICK", PINK)]
+        _gcols = st.columns(3)
+        for (_gz, _lab, _clr), _c in zip(_GZ_CARDS, _gcols):
+            with _c:
+                _g = _sc[_sc["구좌"] == _gz] if "구좌" in _sc.columns else _sc.iloc[0:0]
+                _t = (_g[_g["타이틀"].notna() & (_g["타이틀"] != "")]
+                      .groupby("타이틀", observed=True)
+                      .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index()
+                      .rename(columns={"타이틀": "항목"}))
+                _t["항목"] = _t["항목"].astype(str)
+                if _gz == "BASIC" and not _od.empty:
+                    _fr = (_od.groupby("프레임", observed=True)
+                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index()
+                           .rename(columns={"프레임": "항목"}))
+                    _fr["항목"] = _fr["항목"].astype(str)
+                    _t = pd.concat([_t, _fr], ignore_index=True)
+                _t = _t[(_t["매출"] > 0) & _t["항목"].str.strip().ne("")]
+                st.markdown(
+                    f'<div class="gzc" style="border-color:{_clr}">'
+                    f'<div class="gzc-l">{_lab}<span class="gzc-b">{_gz}</span></div>'
+                    f'<div class="gzc-v num">{fmt_krw(int(_g["매출액"].sum()))}</div>'
+                    f'<div class="gzc-d">{tx_count(_g):,}건 · 항목 {len(_t):,}개</div></div>',
+                    unsafe_allow_html=True)
+                if _t.empty:
+                    st.caption("해당 조건에 데이터가 없어요.")
+                else:
+                    hbar_list(_t, "항목", top=5)
+        st.caption("**BASIC** 은 오리지널(프레임)과 라이선스 캐릭터(타이틀)를 함께 봐요.  "
+                   "※ 오리지널 프레임은 경량 집계라 **매장 필터는 적용되지 않아요**(기간·국가·상품만).")
+        helpbox("""
+**구좌별 타이틀 TOP 5**
+- `구좌`(BASIC/WITH/EVENT)로 나눠 각 칸에서 **매출 상위 5개 항목**만 가로막대로 보여줘요.
+- 큰 숫자 = 그 구좌의 **전체 매출액 합**(TOP5 합이 아니라 구좌 전체). 건수·항목 수도 같은 기준.
+- **WITH / EVENT** 항목 = `타이틀`(날짜+IP명).
+- **BASIC** 항목 = `타이틀`이 있는 라이선스 캐릭터 + 경량 집계(`master_photoism_orig.parquet`)의 `프레임`.
+  - 본 집계는 오리지널을 프레임 단위로 두면 그룹이 폭증해 OOM 이 나서 타이틀을 `''` 로 접어 뒀어요.
+    그래서 프레임 순위는 매장 차원이 없는 경량 집계에서 따로 가져와요 → **매장 필터 미적용**.
+  - 큰 숫자(BASIC 전체 매출)에는 오리지널이 이미 포함돼 있어 **중복 합산되지 않아요**.
+""")
+
+
+with tab_store:
+    _store_tab(sales, date_range, sel_countries)
 
 # ════════════ [제거] 세부 항목 검색 — SHOW_TAB_DETAIL=True 로 부활 ════════════
 #   (부활 시 탭에 그리려면 아래 블록을 `with tab_detail:` 로 감싸 주세요.)
