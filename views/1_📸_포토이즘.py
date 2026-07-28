@@ -359,6 +359,7 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 BASE_DIR     = Path(__file__).parent.parent
 AGG_FILE     = BASE_DIR / "data" / "master_photoism_agg.parquet"
 HOURLY_FILE  = BASE_DIR / "data" / "master_photoism_hourly.parquet"
+ORIG_FILE    = BASE_DIR / "data" / "master_photoism_orig.parquet"   # 오리지널 프레임별(경량)
 PARQUET_FILE = BASE_DIR / "data" / "master_photoism.parquet"
 MASTER_FILE  = BASE_DIR / "data" / "master_photoism.csv"
 CONFIG_FILE  = BASE_DIR / "config.json"
@@ -585,6 +586,41 @@ def _load_hourly(_mtime):
 
 def load_hourly():
     return _load_hourly(_file_mtime(HOURLY_FILE))
+
+
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # mtime 키 → 최신 1개만 유효
+def _load_orig(_mtime, _cfg_mtime):
+    """오리지널 프레임별 경량 집계 로드 — 구좌타입 분석의 오리지널 탭 전용.
+    매출액 = 실결제 + 지정국가 쿠폰·코인(본 집계와 동일 규칙). 매장 차원은 없음(날짜·국가만)."""
+    if not ORIG_FILE.exists():
+        return pd.DataFrame()
+    try:
+        df = pq.read_table(str(ORIG_FILE)).to_pandas(strings_to_categorical=True)
+    except Exception:
+        return pd.DataFrame()
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
+    df = df[df["날짜"].notna()]
+    for col in ["건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
+    ex = load_exchange_rates()
+    _unit = df["결제 단위"]
+    if hasattr(_unit, "cat"):
+        _rate_map = {c: ex.get(str(c).strip(), 1) for c in _unit.cat.categories}
+        df["환율"] = _unit.map(_rate_map).astype(float).fillna(1.0)
+    else:
+        df["환율"] = _unit.astype(str).str.strip().map(ex).fillna(1.0)
+    _krw = (df["최종 결제 금액"] * df["환율"]).round(0)
+    _cpn = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
+    _coin = (df["서비스코인"] * df["환율"]).round(0)
+    _cc = df["국가코드"].astype(str).str.lower().str.strip()
+    _is_coup = _cc.isin(_COUPON_CC).to_numpy()
+    _is_coin = _cc.isin(_COIN_CC).to_numpy()
+    df["매출액"] = (_krw + _cpn * _is_coup + _coin * _is_coin).astype("int64")
+    return df
+
+
+def load_orig():
+    return _load_orig(_file_mtime(ORIG_FILE), _file_mtime(CONFIG_FILE))
 
 
 # ── 장비(키오스크) ─────────────────────────────────────────────
@@ -1492,32 +1528,58 @@ with tab_ip:
 - `IP구분`별 매출액 합. 왼쪽 도넛=비중, 오른쪽 막대=구분별 매출액.
 """)
 
-    # 포3.3: 타이틀 단위로 세분되는 건 아티스트·캐릭터·PICK 뿐(오리지널은 프레임 단위라
-    #        타이틀 집계를 안 함) → 하위탭 = 전체 + 아티스트/캐릭터/PICK. 판매기간(지라)도 표기.
+    # 포3.3/포4: 하위탭 = 전체 + 아티스트/캐릭터/PICK(타이틀 단위, 판매기간 지라) + 오리지널 2종(프레임 단위).
+    #   오리지널은 본 집계에 타이틀이 없어(그룹 폭증 방지) 경량 오리지널 집계(load_orig)에서 프레임별로 뽑는다.
     _detail_gubuns = [g for g in present if g in ("아티스트", "캐릭터", "PICK")]
-    if _detail_gubuns:
-        with card("🎬 구분별 타이틀 상세 <span class='muted'>(전체·구분별 → 타이틀별 매출·판매기간)</span>"):
-            _gall = ["전체"] + _detail_gubuns
+    _orig_gubuns = [g for g in present if g in ("오리지널(포토이즘)", "오리지널(기본)")]
+    if _detail_gubuns or _orig_gubuns:
+        with card("🎬 구분별 상세 <span class='muted'>(전체·구분별 → 타이틀/프레임별 매출)</span>"):
+            _gall = ["전체"] + _detail_gubuns + _orig_gubuns
             _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])
+            # 오리지널 탭이 있으면 경량 집계를 날짜·국가로 걸러 한 번만 로드(매장 필터는 미적용)
+            _od = pd.DataFrame()
+            if _orig_gubuns:
+                _od = load_orig()
+                if not _od.empty and len(date_range) == 2:
+                    _od = _od[(_od["날짜"] >= date_range[0]) & (_od["날짜"] <= date_range[1])]
+                if not _od.empty and sel_countries:
+                    _od = _od[_od["국가"].isin(list(sel_countries))]
             for _i, _g in enumerate(_gall):
                 with _gtabs[_i]:
-                    _sub = sales if _g == "전체" else sales[sales["IP구분"] == _g]
-                    _t = (_sub[(_sub["타이틀"] != "") & _sub["타이틀"].notna()]
-                          .groupby("타이틀", observed=True)
-                          .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
-                    _t = _t[_t["매출"] > 0]
-                    statrow([("매출", fmt_krw(int(_sub["매출액"].sum()))),
-                             ("건수", f"{tx_count(_sub):,}건"),
-                             ("타이틀 수", f"{len(_t):,}개")])
-                    if _t.empty:
-                        st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+                    if _g in _orig_gubuns:
+                        _os = _od[_od["IP구분"] == _g] if not _od.empty else _od
+                        _f = pd.DataFrame()
+                        if not _os.empty:
+                            _f = (_os.groupby("프레임", observed=True)
+                                  .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+                            _f = _f[(_f["매출"] > 0) & _f["프레임"].astype(str).str.strip().ne("")]
+                        statrow([("매출", fmt_krw(int(_os["매출액"].sum()) if not _os.empty else 0)),
+                                 ("건수", f"{int(_os['건수'].sum()) if not _os.empty else 0:,}건"),
+                                 ("프레임 수", f"{len(_f):,}개")])
+                        st.caption("오리지널은 **프레임별** 매출 순위예요 · 매장 필터는 이 탭엔 적용 안 돼요(날짜·국가만).")
+                        if _f.empty:
+                            st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가 필터를 넓혀 보세요.")
+                        else:
+                            rank_table(_f.rename(columns={"프레임": "_n"}), "_n", collapse_after=10)
                     else:
-                        rank_table(_t, "타이틀", collapse_after=10, status_map=_tstat or None)
+                        _sub = sales if _g == "전체" else sales[sales["IP구분"] == _g]
+                        _t = (_sub[(_sub["타이틀"] != "") & _sub["타이틀"].notna()]
+                              .groupby("타이틀", observed=True)
+                              .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+                        _t = _t[_t["매출"] > 0]
+                        statrow([("매출", fmt_krw(int(_sub["매출액"].sum()))),
+                                 ("건수", f"{tx_count(_sub):,}건"),
+                                 ("타이틀 수", f"{len(_t):,}개")])
+                        if _t.empty:
+                            st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+                        else:
+                            rank_table(_t, "타이틀", collapse_after=10, status_map=_tstat or None)
         helpbox("""
-**구분별 타이틀 상세**
-- `전체` 또는 구분(아티스트·캐릭터·PICK) 하위탭 → 그 범위의 `타이틀`별 매출액·건수 순위(TOP10 + 나머지 접기). 상단 요약 = 총매출·건수·타이틀 수.
-- **판매기간** = 지라 티켓의 **오픈~종료일**(계획 시작일~종료일). 지라 미연결 타이틀은 `—`.
-- 오리지널(자체·기본 프레임)은 프레임 단위라 타이틀로 세분하지 않아요 — 총매출은 위 'IP 구분 (비중·매출)' 카드에서 봐요.
+**구분별 상세**
+- **전체 / 아티스트 / 캐릭터 / PICK** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**(지라 오픈~종료일, 미연결은 `—`).
+- **오리지널(포토이즘) / 오리지널(기본)** = `프레임`별 매출액·건수 순위(경량 집계). 오리지널은 타이틀이 아니라 프레임 단위라 따로 봐요.
+  - ⚠️ 오리지널 탭은 **매장 필터가 적용되지 않아요**(날짜·국가만). 다른 탭은 필터바 전체 반영.
+- '전체' 탭은 타이틀이 있는 구분(아티스트·캐릭터·PICK)만 합쳐요(오리지널은 프레임이라 제외).
 """)
 
     # 포3.3: '🎞 타이틀 전체 순위' 카드 제거 — 위 '구분별 타이틀 상세'의 '전체' 탭이 대체.

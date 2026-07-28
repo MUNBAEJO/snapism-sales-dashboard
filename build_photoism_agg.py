@@ -20,6 +20,7 @@ BASE_DIR      = Path(__file__).parent
 PARQ_IN       = BASE_DIR / "data" / "master_photoism.parquet"
 PARQ_AGG      = BASE_DIR / "data" / "master_photoism_agg.parquet"
 PARQ_HOURLY   = BASE_DIR / "data" / "master_photoism_hourly.parquet"
+PARQ_ORIG     = BASE_DIR / "data" / "master_photoism_orig.parquet"   # 오리지널 프레임별(경량)
 
 # ── 서비스코인 보정 ──────────────────────────────────────────────
 # 입력 오류로 서비스코인이 상품총액을 비정상 초과하는 행(예: 페루 Feria
@@ -164,6 +165,37 @@ def build_hourly(con, parq: str):
     print(f"     저장: {PARQ_HOURLY.name}  ({mb:.1f} MB,  {arrow.num_rows:,}행)")
 
 
+def build_orig(con, parq: str):
+    """오리지널(BASIC) 프레임별 매출 — '구좌타입 분석' 타이틀 상세의 오리지널 탭 전용.
+
+    본 집계(build_agg)는 오리지널을 IP명='' 로 접어 프레임 단위가 없다(그룹 폭증/OOM 방지).
+    여기서 **매장 차원을 뺀 경량 집계**(날짜·국가·IP구분·프레임 ≈ 31만행)를 따로 만들어
+    오리지널 프레임 순위만 보여준다. (매장 필터는 이 탭에 적용 안 됨 — 날짜·국가만.)
+    """
+    print("  [3/3] 오리지널 프레임 집계(경량)...")
+    arrow = con.execute(f"""
+        SELECT
+            TRY_CAST("날짜" AS DATE)                              AS "날짜",
+            COALESCE("국가", '')                                  AS "국가",
+            COALESCE("국가코드", '')                              AS "국가코드",
+            COALESCE("결제 단위", 'KRW')                          AS "결제 단위",
+            ({ip_classify.IP_GUBUN_SQL})                          AS "IP구분",
+            COALESCE(TRIM(CAST("프레임 이름" AS VARCHAR)), '')    AS "프레임",
+            CAST(COUNT(*)                                            AS BIGINT) AS "건수",
+            CAST(COALESCE(SUM(TRY_CAST("최종 결제 금액" AS BIGINT)),0) AS BIGINT) AS "최종 결제 금액",
+            CAST(COALESCE(SUM(TRY_CAST("쿠폰 할인 금액" AS BIGINT)),0) AS BIGINT) AS "쿠폰 할인 금액",
+            CAST(COALESCE(SUM({COIN_FIX}),0)                       AS BIGINT) AS "서비스코인"
+        FROM read_parquet('{parq}')
+        WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
+          AND ({ip_classify.IP_GUBUN_SQL}) IN ('오리지널(포토이즘)','오리지널(기본)')
+        GROUP BY 1,2,3,4,5,6
+    """).to_arrow_table()
+    arrow = dict_encode_strings(arrow)
+    pq.write_table(arrow, PARQ_ORIG, compression="snappy")
+    mb = PARQ_ORIG.stat().st_size / 1024 / 1024
+    print(f"     저장: {PARQ_ORIG.name}  ({mb:.1f} MB,  {arrow.num_rows:,}행)")
+
+
 def main():
     if not PARQ_IN.exists():
         print(f"[오류] 파일 없음: {PARQ_IN}")
@@ -187,6 +219,7 @@ def main():
     try:
         build_agg(con, parq)
         build_hourly(con, parq)
+        build_orig(con, parq)
     finally:
         con.close()
 
