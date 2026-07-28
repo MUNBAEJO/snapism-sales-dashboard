@@ -335,18 +335,22 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
   display:flex !important; justify-content:flex-end !important; }
 /* 카드 헤더 드롭다운 = 카드 제목 옆(우상단)에 절대배치.
    제목은 모든 카드 표준(card 타이틀)이라 카드끼리 높이 일치, 드롭다운만 겹쳐 올림. */
-.st-key-scard-hstore, .st-key-scard-prodsel, .st-key-scard-storesel{ position:relative; }
+.st-key-scard-hstore, .st-key-scard-prodsel, .st-key-scard-storesel,
+.st-key-scard-natframe{ position:relative; }
 .st-key-scard-hstore [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
 .st-key-scard-prodsel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
-.st-key-scard-storesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+.st-key-scard-storesel [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]),
+.st-key-scard-natframe [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
   position:absolute !important; top:16px !important; right:18px !important; width:auto !important;
   margin:0 !important; z-index:5 !important; }
 /* 드롭다운 박스를 내용 크기로 축소(글자+화살표 딱 붙게) — 시안 컴팩트 톤 */
 .st-key-scard-hstore [data-testid="stSelectbox"], .st-key-scard-prodsel [data-testid="stSelectbox"],
-.st-key-scard-storesel [data-testid="stSelectbox"]{ width:auto !important; min-width:0 !important; }
+.st-key-scard-storesel [data-testid="stSelectbox"],
+.st-key-scard-natframe [data-testid="stSelectbox"]{ width:auto !important; min-width:0 !important; }
 .st-key-scard-hstore [data-testid="stSelectbox"] div[data-baseweb="select"],
 .st-key-scard-prodsel [data-testid="stSelectbox"] div[data-baseweb="select"],
-.st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"]{
+.st-key-scard-storesel [data-testid="stSelectbox"] div[data-baseweb="select"],
+.st-key-scard-natframe [data-testid="stSelectbox"] div[data-baseweb="select"]{
   width:fit-content !important; min-width:96px !important; }
 /* ★겹침 수정: 우상단 드롭다운이 1위 값과 겹치던 문제.
    원인 = 드롭다운 절대위치의 기준(offsetParent)이 카드가 아니라 @st.fragment 가 만든
@@ -355,7 +359,8 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
    (expander 등 더 깊은 블록은 건드리지 않게 직계 자식만 겨냥.) */
 .st-key-scard-hstore > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
 .st-key-scard-prodsel > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
-.st-key-scard-storesel > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"]{ position:static !important; }
+.st-key-scard-storesel > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"],
+.st-key-scard-natframe > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"]{ position:static !important; }
 /* 칩 글자 한 줄 유지(줄바꿈 방지) */
 [data-testid="stPopover"] button p, [data-testid="stPopoverButton"] p{
   white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; }
@@ -1400,6 +1405,31 @@ with tab_nat:
         tot = nat["매출"].sum()
         mx = (nat["매출"] / tot).max() if tot else 1.0
 
+        # 포5: 비중 도넛을 탭 맨 위로(포토이즘과 동일한 순서 — 전체 그림 먼저, 표는 그 다음).
+        with card("🍩 국가별 매출 비중"):
+            # 정산금액 비중 — 전액 쿠폰 국가(대만 등)도 포함. 예전엔 실결제 기준이라
+            # 그 나라들을 통째로 빼고 그렸는데, 이제 같은 잣대라 뺄 이유가 없다.
+            # ※ nat 은 국가+통화 단위라 한 나라가 여러 통화면 행이 나뉜다 → 국가로 다시 합친다.
+            _natp = (nat.groupby("국가", as_index=False)["매출"].sum()
+                     .sort_values("매출", ascending=False).reset_index(drop=True))
+            _pie = _natp[["국가", "매출"]].copy()
+            if len(_pie) > 7:
+                _pie = pd.concat([_pie.head(7), pd.DataFrame(
+                    [{"국가": f"기타 {len(_natp) - 7}개국", "매출": int(_natp.iloc[7:]["매출"].sum())}])],
+                    ignore_index=True)
+            _pie = _pie.sort_values("매출", ascending=False).reset_index(drop=True)
+            css_donut(list(zip(_pie["국가"], _pie["매출"])), PAL, size=190, hole=62, legend_fs=14)
+            if not cpn_all.empty:
+                st.markdown(f'<div class="strip">🎟 이 중 쿠폰 정산분 '
+                            f'<b>{fmt_krw(int(cpn_all["쿠폰KRW"].sum()))}</b> · {len(cpn_all):,}건</div>',
+                            unsafe_allow_html=True)
+            helpbox("""
+**국가별 매출 비중 (도넛)**
+- 아래 표의 국가별 `정산금액`(실결제+쿠폰)으로 비중 계산. 상위 7개국 + '기타 N개국' 묶음.
+- 한 나라에 통화가 여러 개면 국가로 다시 합쳐서 한 조각으로 그려요.
+- 하단 🎟 스트립 = 위 매출에 **포함된** 쿠폰 정산분(`쿠폰KRW`) 합·건수.
+""")
+
         with card("🌏 국가별 매출"):
             grid = "grid-template-columns:1.6fr .6fr .7fr 1.2fr 1.2fr 1.2fr 1.2fr"
             html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
@@ -1567,29 +1597,40 @@ with tab_nat:
   그래서 운영 상태가 **'가맹 해지'인 것만** 종료(가동 대수에서 제외)로 봐요.
 """)
 
-        with card("🍩 국가별 매출 비중"):
-            # 정산금액 비중 — 전액 쿠폰 국가(대만 등)도 포함. 예전엔 실결제 기준이라
-            # 그 나라들을 통째로 빼고 그렸는데, 이제 같은 잣대라 뺄 이유가 없다.
-            # ※ nat 은 국가+통화 단위라 한 나라가 여러 통화면 행이 나뉜다 → 국가로 다시 합친다.
-            _natp = (nat.groupby("국가", as_index=False)["매출"].sum()
-                     .sort_values("매출", ascending=False).reset_index(drop=True))
-            _pie = _natp[["국가", "매출"]].copy()
-            if len(_pie) > 7:
-                _pie = pd.concat([_pie.head(7), pd.DataFrame(
-                    [{"국가": f"기타 {len(_natp) - 7}개국", "매출": int(_natp.iloc[7:]["매출"].sum())}])],
-                    ignore_index=True)
-            _pie = _pie.sort_values("매출", ascending=False).reset_index(drop=True)
-            css_donut(list(zip(_pie["국가"], _pie["매출"])), PAL, size=190, hole=62, legend_fs=14)
-            if not cpn_all.empty:
-                st.markdown(f'<div class="strip">🎟 이 중 쿠폰 정산분 '
-                            f'<b>{fmt_krw(int(cpn_all["쿠폰KRW"].sum()))}</b> · {len(cpn_all):,}건</div>',
-                            unsafe_allow_html=True)
-            helpbox("""
-**국가별 매출 비중 (도넛)**
-- 위 표의 국가별 `정산금액`(실결제+쿠폰)으로 비중 계산. 상위 7개국 + '기타 N개국' 묶음.
-- 한 나라에 통화가 여러 개면 국가로 다시 합쳐서 한 조각으로 그려요.
-- 하단 🎟 스트립 = 위 매출에 **포함된** 쿠폰 정산분(`쿠폰KRW`) 합·건수.
+        # 포5: 포토이즘의 '🏆 국가별 타이틀 TOP 10' 과 짝을 맞춘 카드.
+        #      스내피즘엔 '타이틀(날짜+IP)' 개념이 없어 같은 자리를 **프레임(IP)** 로 채운다.
+        @st.fragment
+        def _nat_frame():
+            with card("🏆 국가별 TOP 프레임(IP)", key="scard-natframe"):
+                _fsrc = rev[rev["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
+                if _fsrc.empty:
+                    st.info("해당 조건에 맞는 프레임 데이터가 없어요.")
+                    return
+                _nc = [str(c) for c in _fsrc.groupby("국가")["정산금액"].sum()
+                       .sort_values(ascending=False).index.tolist()]
+                _sel = st.selectbox("국가", _nc, key="nat_frame_sel", label_visibility="collapsed")
+                _cdf = (_fsrc[_fsrc["국가"] == _sel].groupby("프레임 이름")
+                        .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count")).reset_index())
+                _cdf = _cdf[_cdf["매출"] > 0]
+                st.markdown(
+                    '<div style="font-size:13px;color:var(--text-2);margin:8px 0 16px;'
+                    'display:flex;align-items:center;gap:2px">'
+                    f'{flag_img(_sel, h=14)}<b style="color:var(--text)">{_sel}</b>'
+                    '<span style="color:var(--text-3);margin:0 8px">·</span>'
+                    f'총 매출 <b style="color:var(--text);margin-left:4px">{fmt_krw(int(_cdf["매출"].sum()))}</b>'
+                    '<span style="color:var(--text-3);margin:0 8px">·</span>'
+                    f'프레임 {len(_cdf):,}개</div>', unsafe_allow_html=True)
+                if _cdf.empty:
+                    st.info("이 국가의 프레임 데이터가 없어요.")
+                else:
+                    rank_table(_cdf, "프레임 이름", collapse_after=10)
+                helpbox("""
+**국가별 TOP 프레임(IP)**
+- 선택 국가의 `프레임 이름`(=IP)별 `정산금액`(실결제+쿠폰) 합·건수 → 순위(TOP10 + 나머지 접기).
+- 포토이즘의 '국가별 타이틀 TOP 10' 과 같은 자리예요. 스내피즘은 타이틀(날짜+IP) 개념이 없어 **프레임 단위**로 봐요.
 """)
+
+        _nat_frame()
 
         # ※ 예전 '키오스크당 매출(준비중)' 카드는 위 '키오스크 1대당 매출'로 대체됐다.
         #    대수 데이터(devices_snapism.parquet)가 붙어 실제 계산이 되므로 자리표시자는 제거.
