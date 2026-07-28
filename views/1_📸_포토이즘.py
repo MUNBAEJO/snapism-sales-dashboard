@@ -1355,7 +1355,6 @@ if _is_owner:
 # ── IP 구분 요약(탭에서 사용) ──
 gub = pd.DataFrame()
 present = []
-present_all = []
 if "IP구분" in sales.columns:
     gub = (
         sales[sales["IP구분"] != "제외"]
@@ -1368,10 +1367,11 @@ if "IP구분" in sales.columns:
         gub["_o"] = gub["IP구분"].astype(str).map(
             {g: i for i, g in enumerate(ip_classify.IP_GUBUN_ORDER)}).fillna(99)
         gub = gub.sort_values("_o")
-        # present = 단독 필터/상세탭용(기획P 제외). present_all = 집계 뷰(추이·합계)용(기획P 포함).
+        # 데이터는 _load_data 에서 이미 IP_GUBUN_SHOWN 으로 걸러져 있다(렌탈·제외는 안 들어옴).
+        # 예전엔 추이용 present_all(기획P 포함)을 따로 뒀는데, 기획P가 오리지널(포토이즘)로
+        # 바뀌고 렌탈이 빠지면서 present 와 완전히 같아져서 하나로 합쳤다.
         _gset = set(gub["IP구분"].astype(str))
         present = [g for g in IP_GUBUN_VIEW if g in _gset]
-        present_all = [g for g in ip_classify.IP_GUBUN_ORDER if g in _gset]
 
 
 def _pkey(dates, g):
@@ -1432,7 +1432,7 @@ with tab_home:
         with _tg:
             gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
                                         key="ph_trend_gran", label_visibility="collapsed") or "월"
-        _tsrc = sales[sales["IP구분"].astype(str).isin(present_all)].copy() if present_all else pd.DataFrame()
+        _tsrc = sales[sales["IP구분"].astype(str).isin(present)].copy() if present else pd.DataFrame()
         if _tsrc.empty:
             css_stack([], {}, [], gran)
         else:
@@ -1442,18 +1442,20 @@ with tab_home:
             periods = sorted(g2["_p"].unique())
             labels = [_plabel(p, gran) for p in periods]
             pidx = {p: i for i, p in enumerate(periods)}
-            data = {g: [0] * len(periods) for g in present_all}
+            data = {g: [0] * len(periods) for g in present}
             for _, r in g2.iterrows():
                 _g = str(r["IP구분"])
                 if _g in data:
                     data[_g][pidx[r["_p"]]] = int(r["매출"])
-            css_stack(labels, data, present_all, gran)
-            st.caption("막대는 IP구분(아티스트·캐릭터·렌탈·PICK)별로 쌓았어요. "
-                       "전체 순위는 'IP · 타이틀 분석' 탭에서 봐요.")
+            css_stack(labels, data, present, gran)
+            st.caption("막대는 IP구분(아티스트·캐릭터·PICK·오리지널)별로 쌓았어요. "
+                       "렌탈·팝업은 빠져 있어요. 전체 순위는 '구좌타입 분석' 탭에서 봐요.")
         helpbox("""
 **매출 추이 (IP구분별 스택)**
 - 매출액(실결제 + 쿠폰기여 + 코인기여)을 기간(월/주/일)·`IP구분`으로 묶어 쌓은 막대.
-- IP구분 = 아티스트·캐릭터·렌탈·PICK·기획P. **추이·합계 집계엔 기획P 포함**(`present_all`), 단독 필터/상세 탭은 기획P 제외(`present`).
+- IP구분 = **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본)** (`IP_GUBUN_SHOWN`).
+  - **렌탈·팝업은 제외**돼요 — 행사용이라 상시 매출 흐름을 왜곡해요. 되살리려면 `ip_classify.IP_GUBUN_SHOWN` 에 '렌탈'을 넣고 서버를 재시작하면 돼요(재집계 불필요).
+  - 이 화면의 모든 카드가 같은 목록을 써요(추이·비중·상세 전부 동일 기준).
 - ※ 공통 기준(원본·환율·매출액 정의)은 상단 'KPI 카드' 설명 참고.
 """)
 
