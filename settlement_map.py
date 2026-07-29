@@ -35,6 +35,23 @@ BRAND_LABEL = {"photoism": "포토이즘", "snapism": "스내피즘"}
 # 정산 대상 IP 구분. 오리지널·렌탈·스티커머신은 제외한다.
 SETTLE_GUBUN = ("아티스트", "캐릭터", "PICK")
 
+# ★대시보드와 같은 프로세스에서 돈다. 정산 조회가 메모리를 크게 물면 매출 대시보드
+#   동시접속자가 같이 죽는다(예전에 실제로 OOM 이 났다).
+#   한도를 낮게 잡고 넘치면 디스크로 흘린다 — 조금 느려도 같이 죽는 것보다 낫다.
+DUCK_MEM = "512MB"
+DUCK_THREADS = 2
+_TMP = BASE_DIR / "data" / "_duckdb_tmp"
+
+
+def duck():
+    """정산용 DuckDB 연결. 메모리 한도·스풀 경로를 한 곳에서 관리한다."""
+    _TMP.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    con.execute(f"PRAGMA memory_limit='{DUCK_MEM}'")
+    con.execute(f"PRAGMA threads={DUCK_THREADS}")
+    con.execute(f"PRAGMA temp_directory='{_TMP.as_posix()}'")
+    return con
+
 _store = JsonStore("settlement_mapping.json",
                    default={"version": 1, "mappings": {b: {} for b in BRANDS}})
 
@@ -77,10 +94,8 @@ def title_revenue(brand: str, start: str, end: str, rates: dict) -> pd.DataFrame
 
     rate = _rate_case(rates)
     gubun = ",".join(f"'{g}'" for g in SETTLE_GUBUN)
-    con = duckdb.connect()
+    con = duck()
     try:
-        con.execute("PRAGMA memory_limit='2GB'")
-        con.execute("PRAGMA threads=2")
         if brand == "photoism":
             cpn = ",".join(f"'{c}'" for c in sorted(COUPON_CC))
             coin = ",".join(f"'{c}'" for c in sorted(COIN_CC))

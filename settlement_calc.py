@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import duckdb
 import pandas as pd
 
 import settlement_map as smap
@@ -37,10 +36,8 @@ _alias_store = JsonStore("member_aliases.json", default={"aliases": {}})
 
 
 def _con():
-    c = duckdb.connect()
-    c.execute("PRAGMA memory_limit='2GB'")
-    c.execute("PRAGMA threads=2")
-    return c
+    # 메모리 한도·스풀 경로는 settlement_map.duck() 한 곳에서 관리한다.
+    return smap.duck()
 
 
 def _sqlist(vals) -> str:
