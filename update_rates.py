@@ -188,25 +188,52 @@ def log(msg: str):
         f.write(line + "\n")
 
 
-def fetch_yahoo_cross(usd_krw: float) -> dict:
-    """SMBS·fawazahmed0 미지원 통화(LAK/PEN)를 야후 파이낸스 USD 크로스레이트로 보강.
-    Yahoo '<CUR>=X' = 1 USD 당 해당 통화 수량 → 1 통화 = (1/price) USD → × USD_KRW.
-    (사용자 운영 시트와 동일한 계산식)"""
+def _yahoo_close(symbol: str, day: str | None) -> float | None:
+    """야후 파이낸스 종가. day 를 주면 **그 날짜 기준** 종가를 쓴다.
+
+    ★기준일 종가를 써야 한다 — 오늘 시세에 과거 USD/KRW 를 곱하면 서로 다른 날짜가
+      섞인다. 기존 정산 자동화(Code.gs fetchYahooClose)와 같은 방식으로,
+      기준일 -7일 ~ +2일 구간을 받아 **기준일 이하 중 가장 최근 종가**를 고른다
+      (주말·공휴일이면 직전 거래일 값이 잡힌다).
+    """
     import urllib.request
+    try:
+        if day:
+            t = int(datetime.strptime(day, "%Y-%m-%d").timestamp())
+            url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                   f"?period1={t - 86400 * 7}&period2={t + 86400 * 2}&interval=1d")
+        else:
+            url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+                   f"?interval=1d&range=1d")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        d = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        res = d["chart"]["result"][0]
+        if not day:
+            return res["meta"].get("regularMarketPrice")
+        ts = res.get("timestamp") or []
+        closes = res["indicators"]["quote"][0].get("close") or []
+        target = int(datetime.strptime(day, "%Y-%m-%d").timestamp()) + 86400
+        best, best_t = None, -1
+        for i, tv in enumerate(ts):
+            if tv <= target and i < len(closes) and closes[i] is not None and tv > best_t:
+                best, best_t = closes[i], tv
+        return best
+    except Exception as e:
+        log(f"[야후 {symbol}] 조회 실패: {e}")
+        return None
+
+
+def fetch_yahoo_cross(usd_krw: float, day: str | None = None) -> dict:
+    """SMBS 미고시 통화(LAK/PEN)를 야후 USD 크로스레이트로 보강.
+    Yahoo '<CUR>=X' = 1 USD 당 해당 통화 수량 → 1 통화 = (1/price) USD → × USD_KRW.
+    (정산 자동화 Code.gs 와 동일한 계산식·동일한 날짜 기준)"""
     out: dict = {}
-    targets = {"LAK": "LAK=X", "PEN": "PEN=X"}
     if not usd_krw or usd_krw <= 0:
         return out
-    for cur, sym in targets.items():
-        try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1d"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            d = json.loads(urllib.request.urlopen(req, timeout=10).read())
-            price = d["chart"]["result"][0]["meta"]["regularMarketPrice"]
-            if price and price > 0:
-                out[cur] = round((1.0 / price) * usd_krw, 4)
-        except Exception as e:
-            log(f"[야후 {cur}] 보강 실패: {e}")
+    for cur, sym in {"LAK": "LAK=X", "PEN": "PEN=X"}.items():
+        price = _yahoo_close(sym, day)
+        if price and price > 0:
+            out[cur] = round((1.0 / price) * usd_krw, 4)
     return out
 
 

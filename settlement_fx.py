@@ -137,9 +137,10 @@ def _backfill(rates: dict, asof: str) -> None:
     need = [c for c in UNLISTED if c not in rates]
     if not need:
         return
-    # ① 야후 USD 크로스 (기존 정산 자동화와 같은 계산식)
+    # ① 야후 USD 크로스 — **기준일 종가**로. 기존 정산 자동화(Code.gs)와 같은 방식.
+    #    오늘 시세에 과거 USD/KRW 를 곱하면 서로 다른 날짜가 섞인다.
     try:
-        for cur, v in ur.fetch_yahoo_cross(rates.get("USD")).items():
+        for cur, v in ur.fetch_yahoo_cross(rates.get("USD"), asof).items():
             if cur in need and v:
                 rates[cur] = v
     except Exception:
