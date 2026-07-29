@@ -58,6 +58,54 @@ def titles_for_ticket(brand: str, ticket: str) -> list[str]:
             if not v.get("excluded") and str(v.get("ticket") or "").upper() == tk]
 
 
+def find_tickets(brand: str, query: str, limit: int = 20) -> list[dict]:
+    """IP명 일부로 티켓 찾기. 티켓번호를 모를 때 쓰는 보조 경로."""
+    q = str(query or "").strip().lower()
+    if len(q) < 2:
+        return []
+    out = []
+    for tk, e in smap.ticket_index(brand).items():
+        hay = " ".join(e.get("titles") or []) + " " + str(e.get("parent") or "")
+        if q in hay.lower():
+            out.append({"ticket": tk, "titles": e.get("titles") or [],
+                        "start": e.get("startdate"), "due": e.get("duedate")})
+    out.sort(key=lambda x: (x["start"] or ""), reverse=True)
+    return out[:limit]
+
+
+def suggest_titles(brand: str, ticket: str, start: str, end: str,
+                   rates: dict) -> pd.DataFrame:
+    """티켓번호 → 그 티켓에 붙을 매출 타이틀 후보.
+
+    ★이게 화면의 주 동선이다 — 464개 대기열을 먼저 다 처리해야 정산서를 만들 수 있는
+      구조는 실무자가 납득하기 어렵다. 티켓 하나만 넣으면 관련 타이틀을 알아서 모아
+      보여주고, 체크한 것만 확정 저장한다.
+
+    반환 컬럼: 타이틀 · 매출액 · 건수 · 국가수 · 상태(확정/후보) · 충돌티켓
+    """
+    tk = str(ticket or "").strip().upper()
+    if not tk:
+        return pd.DataFrame()
+    df = smap.title_revenue(brand, start, end, rates)
+    mp = smap.load_mapping()["mappings"].get(brand, {})
+    rows = []
+    for _, r in df.iterrows():
+        t = r["타이틀"]
+        fixed = mp.get(t)
+        if fixed:
+            if fixed.get("excluded"):
+                continue
+            cur = str(fixed.get("ticket") or "").upper()
+            if cur == tk:
+                rows.append({**r.to_dict(), "상태": "확정", "충돌티켓": ""})
+            # 다른 티켓에 이미 확정된 타이틀은 조용히 뺀다 — 뺏어오면 사고다
+            continue
+        if any(c["ticket_key"] == tk for c in smap.candidates(brand, t)):
+            rows.append({**r.to_dict(), "상태": "후보", "충돌티켓": ""})
+    out = pd.DataFrame(rows)
+    return out.sort_values("매출액", ascending=False) if len(out) else out
+
+
 def confirmed_tickets(brand: str) -> dict[str, list[str]]:
     """{티켓: [타이틀…]} — 화면에서 정산 대상을 고르게 할 때 쓴다."""
     out: dict[str, list[str]] = {}
