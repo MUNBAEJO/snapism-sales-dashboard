@@ -2,7 +2,9 @@
 Jira CANDIP 프로젝트에서 IP별 R/S 율을 가져오는 클라이언트
 """
 import json
+import os
 import re
+import time
 import urllib.request
 import urllib.error
 import base64
@@ -39,8 +41,13 @@ def _search(cfg, jql, fields, max_results=100):
         return json.loads(r.read())
 
 
-def _search_all(cfg, jql, fields, page_size=100):
-    """nextPageToken 페이지네이션으로 전체 결과 수집"""
+def _search_all(cfg, jql, fields, page_size=100, timeout=45, retries=3):
+    """nextPageToken 페이지네이션으로 전체 결과 수집.
+
+    ★페이지 하나가 타임아웃 났다고 통째로 실패시키면 안 된다. 포토이즘은 결과가
+      수천 건이라 페이지가 수십 장인데, 그중 한 장만 늦어도 요율이 통째로 빈다
+      (= 정산액 0원). 페이지 단위로 재시도하고, 요청 사이에 짧게 쉰다.
+    """
     all_issues = []
     next_token = None
     url = f"{cfg['url']}/rest/api/3/search/jql"
@@ -51,14 +58,27 @@ def _search_all(cfg, jql, fields, page_size=100):
         if next_token:
             payload["nextPageToken"] = next_token
         body = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as r:
-            res = json.loads(r.read())
+
+        res, last_err = None, None
+        for attempt in range(retries):
+            try:
+                req = urllib.request.Request(url, data=body, headers=headers,
+                                             method="POST")
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    res = json.loads(r.read())
+                break
+            except Exception as e:      # 타임아웃·일시적 5xx
+                last_err = e
+                time.sleep(1.5 * (attempt + 1))
+        if res is None:
+            raise RuntimeError(f"Jira 페이지 조회 실패({retries}회 시도): {last_err}")
+
         batch = res.get("issues", [])
         all_issues.extend(batch)
         next_token = res.get("nextPageToken")
         if not next_token or not batch:
             break
+        time.sleep(0.15)                # 서버 부담을 줄인다
 
     return all_issues
 
@@ -155,30 +175,60 @@ _SNAPISM_STATUSES = [
 ]
 _STATUS_JQL = ", ".join(f'"{s}"' for s in _SNAPISM_STATUSES)
 
+# 브랜드별 JQL. jira_ip_dates 와 같은 목록을 쓴다 — 한쪽만 고치면 두 모듈이 어긋난다.
+_BRAND_JQL = {
+    "snapism":  '"브랜드[select list (multiple choices)]" IN (Snapism, "사용 X (구 \'Sticker\')")',
+    "photoism": '"브랜드[select list (multiple choices)]" IN (Photoism, "Photoism Colored")',
+    "all":      '"브랜드[select list (multiple choices)]" IN '
+                '(Snapism, "사용 X (구 \'Sticker\')", Photoism, "Photoism Colored")',
+}
 
-def fetch_rs_data(force_refresh: bool = False) -> dict:
+
+def _brand_text(v) -> str:
+    """브랜드 필드는 다중 선택이라 [{value: 'Photoism'}, …] 형태로 온다."""
+    if isinstance(v, list):
+        return ", ".join(b.get("value", "") for b in v if isinstance(b, dict))
+    return ""
+
+
+def fetch_rs_data(force_refresh: bool = False, brand: str = "snapism") -> dict:
     """
-    CANDIP 프로젝트에서 Snapism 브랜드 '프로그램 및 검수' Sub-task를 가져와
-    IP명 → {rs_agency, rs_mgmt, ticket_key, title, wbs, status} 매핑 반환.
+    CANDIP 프로젝트의 '프로그램 및 검수' Sub-task 에서
+    IP명 → {rs_agency, rs_mgmt, ticket_key, title, wbs, status, brand} 매핑 반환.
 
-    - 브랜드 필드(customfield_10390) = Snapism 또는 사용X(구Sticker)
+    - brand: "snapism"(기본) | "photoism" | "all"
+      ★기본값이 snapism 인 건 기존 호출부(views/2 IP정산현황)를 안 깨기 위해서다.
     - issuetype = Sub-task, summary ~ "프로그램 및 검수"
     - 날짜 제한 없음 (전체 기간)
-    - IP명은 부모 태스크 제목에서 추출
-    - 캐시(data/jira_rs_cache.json) 1시간 재사용
+    - IP명은 WBS 우선, 없으면 부모 태스크 제목에서 추출
+    - 캐시(data/jira_rs_cache.json) 1시간 재사용 — **브랜드별로 따로 담는다**
     """
-    # 캐시 확인
-    if not force_refresh and CACHE_FILE.exists():
+    brand = brand if brand in _BRAND_JQL else "snapism"
+    # v2: 브랜드별 분리 저장. 옛 캐시(브랜드 구분 없는 단일 data)는 키가 없어 자동 재조회된다.
+    cache_key = f"rs_v2_{brand}"
+
+    def _cached(max_age_h=None):
+        if not CACHE_FILE.exists():
+            return None
         try:
             with open(CACHE_FILE, encoding="utf-8") as f:
                 cache = json.load(f)
-            cached_at = cache.get("cached_at", "")
-            if cached_at:
-                age_hours = (datetime.now() - datetime.fromisoformat(cached_at)).total_seconds() / 3600
-                if age_hours < 1:
-                    return cache.get("data", {})
+            e = cache.get(cache_key)
+            if not e:
+                return None
+            if max_age_h is not None:
+                age_h = (datetime.now()
+                         - datetime.fromisoformat(e["cached_at"])).total_seconds() / 3600
+                if age_h >= max_age_h:
+                    return None
+            return e["data"]
         except Exception:
-            pass
+            return None
+
+    if not force_refresh:
+        fresh = _cached(1)
+        if fresh is not None:
+            return fresh
 
     cfg = _load_cfg()
     wbs_f  = cfg["wbs_field"]
@@ -186,11 +236,11 @@ def fetch_rs_data(force_refresh: bool = False) -> dict:
     rs_m_f = cfg["rs_mgmt_field"]
     proj   = cfg["project_key"]
 
-    # Snapism 브랜드 + 프로그램 및 검수 Sub-task + 전체 기간
+    # 브랜드 + 프로그램 및 검수 Sub-task + 전체 기간
     jql = (
         f'project = {proj} AND issuetype = Sub-task '
         f'AND summary ~ "프로그램 및 검수" '
-        f'AND "브랜드[select list (multiple choices)]" IN (Snapism, "사용 X (구 \'Sticker\')") '
+        f'AND {_BRAND_JQL[brand]} '
         f'AND status IN ({_STATUS_JQL}) '
         f'ORDER BY created DESC'
     )
@@ -200,6 +250,11 @@ def fetch_rs_data(force_refresh: bool = False) -> dict:
             fields=[wbs_f, rs_a_f, rs_m_f, "summary", "parent", BRAND_FIELD, "status", "duedate"],
         )
     except Exception as e:
+        # 조회 실패로 '요율 없음'이 되면 정산액이 0원으로 뒤바뀐다.
+        # 만료된 캐시라도 있으면 그걸 쓴다.
+        stale = _cached(None)
+        if stale is not None:
+            return stale
         raise RuntimeError(f"Jira 조회 실패: {e}")
 
     mapping = {}   # ip_name → entry
@@ -237,12 +292,22 @@ def fetch_rs_data(force_refresh: bool = False) -> dict:
                 "wbs":        wbs_raw,
                 "status":     status,
                 "duedate":    f.get("duedate"),   # YYYY-MM-DD or None
+                "brand":      _brand_text(f.get(BRAND_FIELD)),
             }
 
-    # 캐시 저장
+    # 캐시 저장 — 다른 브랜드 블록은 건드리지 않고 이 브랜드 키만 갱신한다.
     CACHE_FILE.parent.mkdir(exist_ok=True)
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"cached_at": datetime.now().isoformat(), "data": mapping}, f, ensure_ascii=False, indent=2)
+    try:
+        with open(CACHE_FILE, encoding="utf-8") as f:
+            cache = json.load(f)
+        if not isinstance(cache, dict):
+            cache = {}
+    except Exception:
+        cache = {}
+    cache[cache_key] = {"cached_at": datetime.now().isoformat(), "data": mapping}
+    tmp = CACHE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, CACHE_FILE)
 
     return mapping
 

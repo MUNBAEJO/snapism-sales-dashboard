@@ -20,6 +20,7 @@ from streamlit.errors import StreamlitAPIException
 # set_page_config 는 라우터(스내피즘.py)에서 처리
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auth
+import settlement_calc as sc
 import settlement_map as sm
 
 # 금액을 다루는 페이지다. 사이드바에서 이미 걸러지지만 url 직접 입력도 막는다.
@@ -253,7 +254,145 @@ def _title_row(brand: str, row):
                 _rerun()
 
 
-tabs = st.tabs(["📸 포토이즘", "📊 스내피즘"])
-for tab, b in zip(tabs, sm.BRANDS):
-    with tab:
-        brand_panel(b)
+# ── 정산 계산 ─────────────────────────────────────────────────────────────
+def _ticket_pick(brand: str):
+    """확정된 티켓 중에서 정산 대상을 고른다. 확정 안 된 건 애초에 후보에 없다."""
+    tks = sc.confirmed_tickets(brand)
+    if not tks:
+        return None, []
+    opts = ["(없음)"] + [f"{k} · {' / '.join(v[:2])}"
+                        + (f" 외 {len(v) - 2}" if len(v) > 2 else "")
+                        for k, v in tks.items()]
+    keys = [None] + list(tks.keys())
+    i = st.selectbox(f"{sm.BRAND_LABEL[brand]} 티켓", range(len(opts)),
+                     format_func=lambda x: opts[x], key=f"pk_{brand}")
+    return keys[i], tks.get(keys[i], [])
+
+
+def _rate_input(brand: str, ticket: str):
+    """요율 입력. 지라값을 채워두되 화면 저장값이 이긴다(지라 입력률이 낮다)."""
+    cur = sc.get_rs(brand, ticket)
+    src = {"화면 입력": "🖊 화면 입력값", "지라": "🔗 지라값",
+           "없음": "⚠️ 요율 없음 — 직접 넣어 주세요"}[cur["source"]]
+    st.caption(f"{sm.BRAND_LABEL[brand]} · {src}")
+    c1, c2, c3 = st.columns([1, 1, 1])
+    a = c1.number_input("소속사 %", 0.0, 100.0,
+                        float((cur["agency"] or 0) * 100), 0.5,
+                        key=f"ra_{brand}_{ticket}")
+    m = c2.number_input("대행사 %", 0.0, 100.0,
+                        float((cur["mgmt"] or 0) * 100), 0.5,
+                        key=f"rm_{brand}_{ticket}")
+    if c3.button("💾 요율 저장", key=f"rsv_{brand}_{ticket}",
+                 disabled=not CAN_EDIT, use_container_width=True):
+        sc.set_rs(brand, ticket, a / 100 or None, m / 100 or None, _email)
+        auth.log_event(_email, f"settlerate:{brand}:{ticket}")
+        _rerun()
+    return (a / 100 or None), (m / 100 or None)
+
+
+def _mg_input(brand: str, ticket: str):
+    """MG — v1은 있음/없음 + 수기 입력. 소진·이월 자동계산은 2차."""
+    cur = sc.get_mg(brand, ticket)
+    c1, c2, c3 = st.columns([0.8, 1.2, 1.6])
+    has = c1.checkbox("MG 있음", value=cur["has_mg"], key=f"mgh_{brand}_{ticket}")
+    amt = c2.number_input("MG 금액(원)", 0, step=1_000_000,
+                          value=int(cur["amount"] or 0),
+                          disabled=not has, key=f"mga_{brand}_{ticket}")
+    note = c3.text_input("메모", value=cur["note"], disabled=not has,
+                         key=f"mgn_{brand}_{ticket}")
+    if st.button("💾 MG 저장", key=f"mgs_{brand}_{ticket}", disabled=not CAN_EDIT):
+        sc.set_mg(brand, ticket, has, amt, note, _email)
+        _rerun()
+    return has, amt
+
+
+@st.fragment
+def calc_panel():
+    picks = {}
+    cols = st.columns(2)
+    for col, b in zip(cols, sm.BRANDS):
+        with col:
+            picks[b] = _ticket_pick(b)
+    if not any(t for t, _ in picks.values()):
+        st.info("먼저 **티켓 매핑** 탭에서 타이틀을 확정해 주세요. "
+                "확정된 티켓만 여기 나와요.")
+        return
+
+    rates, eff = sm.load_rates(E)
+    total_base = total_a = total_m = 0
+    details, pivots, warns = {}, {}, []
+
+    for b, (tk, titles) in picks.items():
+        if not tk:
+            continue
+        st.markdown(f"##### {sm.BRAND_LABEL[b]} · `{tk}`")
+        st.caption("타이틀: " + " / ".join(titles))
+        ra, rm = _rate_input(b, tk)
+        _mg_input(b, tk)
+
+        d = sc.country_detail(b, titles, S, E, rates)
+        d = sc.fill_open(d, sc.open_countries(b, S, E))
+        details[b] = d
+        pivots[b] = sc.member_pivot(b, titles, S, E, rates)
+        warns += sc.verify(d[d["매출액"] > 0], rates)
+
+        base = int(d["매출액"].sum())
+        total_base += base
+        total_a += round(base * ra) if ra else 0
+        total_m += round(base * rm) if rm else 0
+
+        qty = "프레임수" if b == "photoism" else "건수"
+        k = st.columns(4)
+        k[0].metric("매출(KRW)", f"{_fmt(base)}원")
+        k[1].metric(qty, _fmt(d["수량"].sum()))
+        k[2].metric("소속사", f"{_fmt(round(base * ra))}원" if ra else "요율 없음")
+        k[3].metric("대행사", f"{_fmt(round(base * rm))}원" if rm else "요율 없음")
+        with st.expander(f"국가별 내역 · 오픈 {len(d)}개국 중 "
+                         f"매출발생 {int((d['매출액'] > 0).sum())}개국"):
+            st.dataframe(d[["국가", "unit", "수량", "현지", "매출액"]],
+                         hide_index=True, use_container_width=True)
+        st.divider()
+
+    # ── 합산 ──────────────────────────────────────────────────────────
+    st.markdown("##### 🧾 합산")
+    k = st.columns(3)
+    k[0].metric("정산기준액", f"{_fmt(total_base)}원")
+    k[1].metric("소속사 정산액", f"{_fmt(total_a)}원")
+    k[2].metric("대행사 정산액", f"{_fmt(total_m)}원")
+    st.caption(f"환율 기준일 {eff or '—'} · 서울외국환중개 매매기준율")
+
+    # ── 검증 ──────────────────────────────────────────────────────────
+    if warns:
+        st.error("환율 검증 실패 — 현지 매출 × 환율이 매출(KRW)과 안 맞아요:\n\n"
+                 + "\n".join(f"- {w}" for w in warns[:5]))
+    else:
+        st.success("✅ 검증 통과 — 모든 국가에서 현지 매출 × 환율 = 매출(KRW)")
+
+    # ── 멤버명 정규화 ─────────────────────────────────────────────────
+    unmapped = sc.unmapped_members(*pivots.values())
+    if unmapped:
+        st.warning(f"한글 멤버명 {len(unmapped)}개가 영문과 따로 잡혀 있어요. "
+                   "매핑하면 두 브랜드 표가 한 줄로 합쳐져요.")
+        for ko in unmapped[:10]:
+            c1, c2 = st.columns([1, 2])
+            c1.text(ko)
+            en = c2.text_input("영문 표기", key=f"al_{ko}",
+                               label_visibility="collapsed",
+                               placeholder="예: ASAHI")
+            if en.strip() and CAN_EDIT:
+                sc.set_member_alias(ko, en)
+                _rerun()
+    for b, p in pivots.items():
+        if p is not None and not p.empty:
+            with st.expander(f"{sm.BRAND_LABEL[b]} 국가 × 멤버"):
+                st.dataframe(p, use_container_width=True)
+
+
+t1, t2 = st.tabs(["🔗 티켓 매핑", "🧮 정산 계산"])
+with t1:
+    tabs = st.tabs(["📸 포토이즘", "📊 스내피즘"])
+    for tab, b in zip(tabs, sm.BRANDS):
+        with tab:
+            brand_panel(b)
+with t2:
+    calc_panel()
