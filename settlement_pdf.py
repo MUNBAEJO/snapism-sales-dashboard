@@ -252,6 +252,7 @@ text-overflow:ellipsis}
 .kpis{flex:1 1 0;min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .kpi{border:1px solid var(--border);border-radius:10px;padding:9px 12px}
 .kpi .k{font-size:10.5px;font-weight:700;color:var(--text-2)}
+.kpi .k .vt{font-weight:600;color:var(--text-3);font-size:9.6px}
 .kpi .v{font-size:14px;font-weight:800;margin-top:3px;white-space:nowrap}
 .kpi.hl{background:var(--brand-soft);border-color:#dcdefc}
 .kpi.hl .v{color:var(--brand)}
@@ -372,6 +373,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     # 부가세 — 정산액이 포함인지 별도인지 문서에 못박는다.
     sup, vat_amt = ((round(total / 1.1), total - round(total / 1.1))
                     if use_vat else (total, 0))
+    vat_word = "포함" if use_vat else "별도"
     vat_note = (f"정산액은 부가세 포함 금액입니다 (공급가액 {_f(sup)}원 · "
                 f"부가세 {_f(vat_amt)}원)." if use_vat
                 else "정산액은 부가세 별도 금액입니다.")
@@ -494,14 +496,15 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     <div class="donutbox">{bars}</div>
     <div class="kpis num">
       <div class="kpi"><div class="k">매출(KRW)</div><div class="v">{_f(c['krw'])}원</div></div>
-      <div class="kpi hl"><div class="k">정산액</div><div class="v">{_f(c['set'])}원</div></div>
+      <div class="kpi hl"><div class="k">정산액 <span class="vt">· 부가세 {vat_word}</span></div><div class="v">{_f(c['set'])}원</div></div>
       <div class="kpi"><div class="k">{QTY_LABEL[b]}</div><div class="v">{_f(c['qty'])}</div></div>
       <div class="kpi"><div class="k">1위 국가</div><div class="v">{
         (top['국가'] + ' ' + f"{top['매출액'] / c['krw'] * 100:.1f}%") if top else '—'}</div></div>
     </div>
   </div>
   <div class="sec">
-    <h3>국가별 내역<small>단위: 원 · 정산액 = 매출(KRW) × {rate_pct} (원 미만 반올림)</small></h3>
+    <h3>국가별 내역<small>단위: 원 · 정산액 = 매출(KRW) × {rate_pct} (원 미만 반올림)
+     · 부가세 {vat_word}</small></h3>
     {c['tbl']}
   </div>
   {price_sec}
