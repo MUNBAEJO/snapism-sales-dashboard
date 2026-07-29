@@ -38,10 +38,28 @@ PIE = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#c98a2e",
 BRAND_LABEL = {"photoism": "포토이즘", "snapism": "스내피즘"}
 QTY_LABEL = {"photoism": "프레임수", "snapism": "건수"}
 QTY_UNIT = {"photoism": "프레임", "snapism": "건"}
+# 단가표 열 이름. 한 브랜드만 정산할 때는 브랜드명을 빼도 문서 전체가 그 브랜드다.
+PRICE_HEAD = {"photoism": "프레임 단가", "snapism": "상품 형태별 단가"}
 # 100단위로 고시하는 통화 — 표기만 100배로 하고 ' /100' 을 붙인다.
 FX_100 = {"JPY", "IDR", "VND", "LAK", "MNT"}
 # 표지 '적용 환율' 그리드에 올릴 통화(8칸)
 FX_SHOW = ["CNY", "JPY", "IDR", "TWD", "MYR", "THB", "HKD", "USD"]
+
+
+def used_brands(ctx: dict) -> list[str]:
+    """이 문서가 **실제로** 다루는 브랜드.
+
+    ★티켓을 골랐다고 그 브랜드가 문서에 들어가는 게 아니다. 그 기간에 매출 행이
+      하나도 없으면 장 자체가 안 만들어진다. 문구·장 번호·메일 본문은 전부
+      이 목록을 기준으로 써야 '포토이즘 + 스내피즘' 이 헛나오지 않는다.
+    """
+    return [b for b in ("photoism", "snapism")
+            if (ctx.get("details") or {}).get(b) is not None
+            and not ctx["details"][b].empty]
+
+
+def brands_label(ctx: dict, sep: str = " + ") -> str:
+    return sep.join(BRAND_LABEL[b] for b in used_brands(ctx))
 
 
 def _f(n) -> str:
@@ -54,6 +72,20 @@ def _f(n) -> str:
 def rhe(x) -> int:
     """원 미만 은행가 반올림. 파이썬 round() 가 half-to-even 이라 그대로 쓴다."""
     return int(round(float(x)))
+
+
+def vat3(amount: int, use_vat: bool) -> tuple[int, int]:
+    """정산액 → (공급가액, 부가세).
+
+    ★부가세 **포함**이면 정산액 안에 세금이 들어 있으므로 ÷1.1 로 갈라내고,
+      **별도**면 정산액이 곧 공급가액이고 세금은 그 10% 가 따로 붙는다.
+      두 경우의 부가세를 같은 식으로 구하면 별도 건에서 10% 를 깎아버린다.
+    """
+    a = int(amount or 0)
+    if use_vat:
+        sup = rhe(a / 1.1)
+        return sup, a - sup
+    return a, rhe(a * 0.1)
 
 
 def _fx_cell(unit: str, local, krw) -> str:
@@ -150,15 +182,77 @@ def _matrix(piv, members):
     return h
 
 
-def _price_table(items):
-    h = ('<table class="t4 num"><tr><th>국가</th><th>통화</th>'
-         '<th>포토이즘 프레임</th><th>스내피즘</th></tr>')
-    for nat, unit, ph, sn in items:
-        sn_c = (_f(list(sn.values())[0]) if sn
-                else '<span style="color:#c3c9d4">—</span>')
-        h += (f'<tr><td>{nat}</td><td class="cur">{unit}</td>'
-              f'<td>{_f(ph) if ph else "—"}</td><td>{sn_c}</td></tr>')
+def _fx_table(items, rates):
+    """정산에 적용한 **모든 국가**의 환율. 표지 그리드는 8개만 보여 준다.
+
+    100단위 고시 통화(엔·루피아 등)는 고시 그대로 100단위로 적는다 — 1엔당
+    9.4원 식으로 적으면 고시표와 대조가 안 된다. 원화는 환산 자체가 없다.
+    """
+    def cell(unit):
+        u = str(unit or "").strip().upper()
+        if u == "KRW":
+            return '<td class="base">기준통화</td>'
+        v = rates.get(u)
+        if not v:
+            return '<td class="base">—</td>'
+        per = 100 if u in FX_100 else 1
+        return (f"<td>{v * per:,.2f}"
+                + (' <small>/100</small>' if per == 100 else "") + "</td>")
+
+    def one(part):
+        h = ('<table class="t5 num"><tr><th>국가</th><th>통화</th>'
+             '<th>적용 환율</th></tr>')
+        for nat, unit, _ in part:
+            h += (f'<tr><td>{nat}</td><td class="cur">{unit}</td>{cell(unit)}</tr>')
+        return h + "</table>"
+
+    n = len(items)
+    if n <= 10:
+        return one(items)
+    k = -(-n // 3)
+    return ('<div class="fxtbl">' + "".join(one(items[i:i + k])
+            for i in range(0, n, k)) + "</div>")
+
+
+def _price_table(items, used):
+    """국가별 단가. **정산에 들어간 브랜드의 열만** 만든다.
+
+    ★스내피즘은 상품 형태(미니 스티커·와이드 스티커·포토카드…)마다 단가가 다르다.
+      형태명 없이 숫자만 적으면 어느 상품 가격인지 알 수 없고, 한 값만 뽑아 쓰면
+      나머지 형태를 숨기는 셈이 된다 → 형태별로 전부 적는다.
+    """
+    multi = len(used) > 1
+    head = "".join(f"<th>{(BRAND_LABEL[b] + ' ') if multi else ''}"
+                   f"{PRICE_HEAD[b]}</th>" for b in used)
+    # 국가가 많으면 세로로 길어져 페이지를 넘긴다 → 2단으로 접는다.
+    if len(items) > 14:
+        k = -(-len(items) // 2)
+        return ('<div class="pricegrid">' + _price_table(items[:k], used)
+                + _price_table(items[k:], used) + "</div>")
+    h = f'<table class="t4 num"><tr><th>국가</th><th>통화</th>{head}</tr>'
+    for nat, unit, pv in items:
+        tds = ""
+        for b in used:
+            d = pv.get(b) or {}
+            if not d:
+                tds += '<td class="z">—</td>'
+            elif b == "photoism":
+                tds += f"<td>{_f(list(d.values())[0])}</td>"
+            else:
+                tds += ('<td class="pl">' + "".join(
+                    f'<span class="pill">{c}<b>{_f(v)}</b></span>'
+                    for c, v in sorted(d.items(), key=lambda x: -x[1])) + "</td>")
+        h += f'<tr><td>{nat}</td><td class="cur">{unit}</td>{tds}</tr>'
     return h + "</table>"
+
+
+def _mk(label: str, on: bool) -> tuple[str, str]:
+    """변경 표시본용. 요소에 덧붙일 (클래스, 배지) 한 쌍을 준다.
+
+    검토 때 '뭐가 바뀌었는지' 눈으로 찾게 하지 않으려고 넣었다. 실제 발행본은
+    on=False 라 클래스도 배지도 붙지 않는다(문서에 흔적이 남으면 안 된다).
+    """
+    return (" mk", f'<span class="mkb">{label}</span>') if on else ("", "")
 
 
 def _page_head(chip, name, sub, right):
@@ -254,6 +348,9 @@ text-overflow:ellipsis}
 .kpi .k{font-size:10.5px;font-weight:700;color:var(--text-2)}
 .kpi .k .vt{font-weight:600;color:var(--text-3);font-size:9.6px}
 .kpi .v{font-size:14px;font-weight:800;margin-top:3px;white-space:nowrap}
+.kpi .sub{font-size:9.4px;font-weight:600;color:var(--text-2);margin-top:2px;
+white-space:nowrap}
+.zeroline{margin-top:7px;font-size:10.5px;color:var(--text-2)}
 .kpi.hl{background:var(--brand-soft);border-color:#dcdefc}
 .kpi.hl .v{color:var(--brand)}
 .t2 th{font-size:10px;font-weight:700;color:var(--text-2);background:var(--surface-2);
@@ -299,13 +396,36 @@ padding:6px 8px;text-align:right;white-space:nowrap}
 text-align:right;white-space:nowrap}
 .t4 td:first-child{text-align:left;font-weight:700}
 .t4 td.cur{color:var(--text-3);font-size:9.5px;text-align:center}
+.t1 td.dim{color:var(--text-2);font-weight:600}
+.t4 td.z{color:#c3c9d4}
+.fxtbl{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 20px}
+.t5 th{font-size:9.5px;font-weight:700;color:var(--text-2);background:var(--surface-2);
+border-top:1.5px solid var(--ink);border-bottom:1px solid var(--border-2);
+padding:5px 7px;text-align:right;white-space:nowrap}
+.t5 th:first-child{text-align:left}
+.t5 td{font-size:10.5px;padding:4px 7px;border-bottom:1px solid var(--border);
+text-align:right;white-space:nowrap}
+.t5 td:first-child{text-align:left;font-weight:700}
+.t5 td.cur{color:var(--text-3);font-size:9.5px;text-align:center}
+.t5 td.base{color:var(--text-3);font-weight:600}
+.t4 td.pl{white-space:normal;padding:3.5px 8px}
+.pill{display:inline-block;font-size:9px;font-weight:600;color:var(--text-2);
+background:var(--surface-2);border:1px solid var(--border);border-radius:99px;
+padding:1px 7px;margin:1px 0 1px 3px;white-space:nowrap}
+.pill b{color:var(--text);font-weight:800;margin-left:4px}
+.mk{position:relative;outline:1.6px dashed #16a34a;outline-offset:5px;border-radius:6px}
+.mkb{position:absolute;right:-4px;top:-19px;background:#16a34a;color:#fff;
+font-size:8.6px;font-weight:700;letter-spacing:-.01em;padding:2px 8px;
+border-radius:99px;white-space:nowrap;z-index:2}
+.badge.mkv{color:#16a34a;background:#e8f7ee}
 .method{margin-top:16px;background:var(--surface-2);border-radius:10px;
 padding:12px 16px;font-size:11px;color:var(--text-2);line-height:1.85}
 .method b{color:var(--text)}
 """
 
 
-def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
+def build_html(ctx: dict, kind: str, sample: bool = True,
+               marks: bool = False) -> str:
     """kind='agency'(소속사) | 'mgmt'(대행사). **자기 요율만** 문서에 넣는다."""
     # ★수취처 구분(소속사/대행사)은 **문서에 쓰지 않는다.** 요율이 다른 두 부를
     #   따로 만들지만 그건 내부 사정이고, 받는 쪽은 자기 정산서만 보면 된다.
@@ -323,9 +443,9 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     recv = (_p.get("agency_name") if kind == "agency" else _p.get("mgmt_name")) or ""
     use_vat = bool(_p.get("vat", True))
 
-    used = [b for b in ("photoism", "snapism")
-            if ctx["details"].get(b) is not None and not ctx["details"][b].empty]
+    used = used_brands(ctx)
     used_label = " + ".join(BRAND_LABEL[b] for b in used)
+    prose = "·".join(BRAND_LABEL[b] for b in used)      # 문장 안에서 쓸 표기
     multi = len(used) > 1
 
     # ── 브랜드별 계산 (행 단위 반올림 → 합) ──────────────────────────────
@@ -346,19 +466,24 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
                 + f'</span><span>{n} / {tot}</span></div>')
 
     # ── 1p ────────────────────────────────────────────────────────────
+    # ★'오픈 · 매출발생' 열은 뺐다(요청). 같은 정보가 상세 장 머리에 이미 있다.
+    #   대신 정산액 옆에 **공급가액·부가세를 항상 쪼개서** 적는다 — 세금계산서를
+    #   끊을 때 그대로 쓰는 숫자라 문서에서 바로 읽혀야 한다.
     brand_rows = ""
     for b in used:
-        d = ctx["details"][b]
-        opened, earned = len(d), int((d["매출액"] > 0).sum())
+        s1, v1 = vat3(calc[b]["set"], use_vat)
         brand_rows += (f'<tr><td>{BRAND_LABEL[b]}</td>'
-                       f'<td>{opened}개국 · {earned}개국</td>'
                        f'<td>{_f(calc[b]["qty"])} <small>{QTY_UNIT[b]}</small></td>'
                        f'<td>{_f(calc[b]["krw"])}</td>'
                        f'<td><small>{rate_pct}</small></td>'
-                       f'<td>{_f(calc[b]["set"])}</td></tr>')
+                       f'<td>{_f(calc[b]["set"])}</td>'
+                       f'<td class="dim">{_f(s1)}</td>'
+                       f'<td class="dim">{_f(v1)}</td></tr>')
     if multi:
-        brand_rows += (f'<tr class="sum"><td>합계</td><td></td><td></td>'
-                       f'<td>{_f(base)}</td><td></td><td>{_f(total)}</td></tr>')
+        st_, vt_ = vat3(total, use_vat)
+        brand_rows += (f'<tr class="sum"><td>합계</td><td></td>'
+                       f'<td>{_f(base)}</td><td></td><td>{_f(total)}</td>'
+                       f'<td>{_f(st_)}</td><td>{_f(vt_)}</td></tr>')
 
     fxr = ctx.get("rates") or {}
     fx_cells = ""
@@ -370,13 +495,13 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
         fx_cells += (f'<div><span>{cur}{" (100)" if cur in FX_100 else ""}</span>'
                      f'<b>{shown:,.2f}</b></div>')
 
-    # 부가세 — 정산액이 포함인지 별도인지 문서에 못박는다.
-    sup, vat_amt = ((round(total / 1.1), total - round(total / 1.1))
-                    if use_vat else (total, 0))
+    # 부가세 — 정산액이 포함인지 별도인지 문서에 못박고, 금액도 함께 적는다.
+    sup, vat_amt = vat3(total, use_vat)
     vat_word = "포함" if use_vat else "별도"
     vat_note = (f"정산액은 부가세 포함 금액입니다 (공급가액 {_f(sup)}원 · "
                 f"부가세 {_f(vat_amt)}원)." if use_vat
-                else "정산액은 부가세 별도 금액입니다.")
+                else f"정산액은 부가세 별도 금액입니다 (공급가액 {_f(sup)}원 · "
+                     f"부가세 {_f(vat_amt)}원 별도, 합계 {_f(sup + vat_amt)}원).")
 
     ver = int(ctx.get("version") or 1)
     badges = f'<span class="badge">{ym} 정산분</span>'
@@ -384,6 +509,17 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
         badges += f'<span class="badge sample">정정본 v{ver}</span>'
     if sample:
         badges += '<span class="badge sample">샘플 · 검토용</span>'
+    if marks:
+        badges += '<span class="badge mkv">변경 표시본</span>'
+
+    # 이번 판에서 바뀐 자리들. marks=False 면 전부 빈 문자열이 된다.
+    k_in, b_in = _mk("변경 · 정산 브랜드 자동 반영", marks)
+    k_hero, b_hero = _mk("신규 · 공급가액 · 부가세", marks)
+    k_sum, b_sum = _mk("변경 · '오픈·매출발생' 삭제, 공급가액·부가세 추가", marks)
+    k_kpi, b_kpi = _mk("신규 · 공급가액 · 부가세", marks)
+    k_sub, b_sub = _mk("신규 · 소계 분해", marks)
+    k_fx, b_fx = _mk("신규 · 국가별 적용 환율 전체", marks)
+    k_pr, b_pr = _mk("변경 · 부록으로 이동 · 상품 형태 표기", marks)
 
     sale = ctx.get("tickets", {}).get(used[0]) if used else None
     sale_txt = ""
@@ -396,12 +532,13 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
             ing = ""
         sale_txt = f" · 판매기간 {s0} ~ {e0}{ing}"
 
-    guide_no = {2: "② 포토이즘 국가별 내역", 3: "③ 스내피즘 국가별 내역 및 국가별 단가"}
+    NUM = "①②③④⑤"
     parts = []
     for i, b in enumerate(used):
-        parts.append(f"{'②③'[i]} {BRAND_LABEL[b]} 국가별 내역"
-                     + (" 및 국가별 단가" if i == len(used) - 1 else ""))
-    parts.append(f"{'②③④'[len(used)]} 별첨(국가 × 멤버 수량)")
+        parts.append(f"{NUM[i + 1]} {BRAND_LABEL[b]} 국가별 내역")
+    parts.append(f"{NUM[len(used) + 1]} 부록(국가별 적용 환율 · 단가)")
+    parts.append(f"{NUM[len(used) + 2]} 별첨(국가 × 멤버 수량)")
+    NPAGES = 3 + len(used)
 
     html = [f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <link rel="stylesheet" href="{PRETENDARD}"><style>{CSS}</style></head><body>
@@ -418,33 +555,34 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     <div class="title">{ip}<span>IP 정산서</span></div>
     <div class="subtitle num">정산기간 {S} ~ {E}{sale_txt}</div>
   </div>
-  <div class="intro">{ip}의 {ym} 정산 내역을 아래와 같이 송부드립니다.
-   {'포토이즘·스내피즘 두 브랜드의 매출을 합산하였으며' if multi else used_label + ' 매출 기준이며'},
+  <div class="intro{k_in}">{b_in}{ip}의 {ym} 정산 내역을 아래와 같이 송부드립니다.
+   {prose + ' 두 브랜드의 매출을 합산하였으며' if multi else prose + ' 매출 기준이며'},
    국가별 상세 내역과 멤버별 수량은 다음 장에 기재하였습니다.</div>
   <div class="hero">
     <div class="l">
       <div class="k">정산액 · {used_label}</div>
       <div class="v num">{_f(total)}원</div>
     </div>
-    <div class="r num">
+    <div class="r num{k_hero}">{b_hero}
       <div><span>정산기준액 (취소 제외)</span><b>{_f(base)}원</b></div>
       <div><span>요율</span><b>{rate_pct}</b></div>
       <div><span>취소 금액</span><b>{_f(cancel)}원</b></div>
-      <div><span>부가세</span><b>{'포함' if use_vat else '별도'}</b></div>
+      <div class="vl"><span>공급가액</span><b>{_f(sup)}원</b></div>
+      <div><span>부가세 ({vat_word})</span><b>{_f(vat_amt)}원</b></div>
     </div>
   </div>
-  <div class="sec">
-    <h3>{'브랜드별 요약' if multi else '요약'}<small>단위: 원</small></h3>
+  <div class="sec{k_sum}">{b_sum}
+    <h3>{'브랜드별 요약' if multi else '요약'}<small>단위: 원 · 부가세 {vat_word}</small></h3>
     <table class="t1 num">
-      <tr><th>브랜드</th><th>오픈 · 매출발생</th><th>수량</th><th>매출(KRW)</th>
-      <th>요율</th><th>정산액</th></tr>
+      <tr><th>브랜드</th><th>수량</th><th>매출(KRW)</th>
+      <th>요율</th><th>정산액</th><th>공급가액</th><th>부가세</th></tr>
       {brand_rows}
     </table>
   </div>
   <div class="sec">
     <h3>적용 환율<small>서울외국환중개 매매기준율 · {ctx['rate_date']} · KRW 기준</small></h3>
     <div class="fxgrid num">{fx_cells}</div>
-    <div class="fxnote">국가별 전체 적용 환율은 국가별 내역의 '적용 환율' 열에 기재하였습니다.</div>
+    <div class="fxnote">정산에 적용한 국가별 환율 전체는 부록에 기재하였습니다.</div>
   </div>
   <div class="guide">
     <b>이 문서의 구성</b> — {' · '.join(parts)}<br>
@@ -458,7 +596,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     · {vat_note}
     {'<br>· 본 문서는 레이아웃 검토용 샘플이며 요율·환율 등 일부 수치는 예시값입니다.' if sample else ''}
   </div>
-  {foot(1, 2 + len(used))}
+  {foot(1, NPAGES)}
 </div>"""]
 
     # ── 2p·3p 브랜드별 상세 ────────────────────────────────────────────
@@ -468,26 +606,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
         bars = _share_chart(pos, c["krw"])
         d = ctx["details"][b]
         top = pos[0] if pos else None
-        price_sec = ""
-        if i == len(used) - 1:                     # 마지막 브랜드 장에 단가표
-            order, items = [], []
-            for bb in used:
-                for r in calc[bb]["rows"]:
-                    if r["국가"] not in order:
-                        order.append(r["국가"])
-            ph = ctx["prices"].get("photoism", {})
-            sn = ctx["prices"].get("snapism", {})
-            for nat in order:
-                if nat not in ph and nat not in sn:
-                    continue
-                pv = ph.get(nat) or {}
-                items.append((nat, ctx["units"].get(nat, ""),
-                              list(pv.values())[0] if pv else 0, sn.get(nat) or {}))
-            half = (len(items) + 1) // 2
-            price_sec = (f'<div class="sec"><h3>국가별 단가'
-                         f'<small>현지통화 · 평균 · {len(items)}개국</small></h3>'
-                         f'<div class="pricegrid">{_price_table(items[:half])}'
-                         f'{_price_table(items[half:])}</div></div>')
+        bs, bv = vat3(c["set"], use_vat)
         html.append(f"""<div class="page">
   {_page_head(f'상세 내역 {"①②"[i]}', BRAND_LABEL[b],
               (ctx['titles'].get(b) or [''])[0],
@@ -496,7 +615,9 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     <div class="donutbox">{bars}</div>
     <div class="kpis num">
       <div class="kpi"><div class="k">매출(KRW)</div><div class="v">{_f(c['krw'])}원</div></div>
-      <div class="kpi hl"><div class="k">정산액 <span class="vt">· 부가세 {vat_word}</span></div><div class="v">{_f(c['set'])}원</div></div>
+      <div class="kpi hl{k_kpi}">{b_kpi}<div class="k">정산액 <span class="vt">· 부가세 {vat_word}</span></div>
+        <div class="v">{_f(c['set'])}원</div>
+        <div class="sub num">공급가액 {_f(bs)} · 부가세 {_f(bv)}</div></div>
       <div class="kpi"><div class="k">{QTY_LABEL[b]}</div><div class="v">{_f(c['qty'])}</div></div>
       <div class="kpi"><div class="k">1위 국가</div><div class="v">{
         (top['국가'] + ' ' + f"{top['매출액'] / c['krw'] * 100:.1f}%") if top else '—'}</div></div>
@@ -506,13 +627,41 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     <h3>국가별 내역<small>단위: 원 · 정산액 = 매출(KRW) × {rate_pct} (원 미만 반올림)
      · 부가세 {vat_word}</small></h3>
     {c['tbl']}
+    <div class="zeroline{k_sub}">{b_sub}소계 정산액 {_f(c['set'])}원 =
+     공급가액 {_f(bs)}원 + 부가세 {_f(bv)}원{'(별도)' if not use_vat else ''}</div>
   </div>
-  {price_sec}
-  {foot(2 + i, 2 + len(used))}
+  {foot(2 + i, NPAGES)}
+</div>""")
+
+    # ── 부록: 국가별 적용 환율 · 단가 ────────────────────────────────────
+    # ★단가표를 상세 장 밑에 붙이면 국가가 많을 때 페이지 밖으로 밀려 **조용히
+    #   잘린다**(.page 가 height 고정 + overflow:hidden). 환율표 요청도 같이 와서
+    #   한 장으로 뺐다 — 잘릴 일도 없고 참고표가 한곳에 모인다.
+    order = []
+    for bb in used:
+        for r in calc[bb]["rows"]:
+            if r["국가"] not in order:
+                order.append(r["국가"])
+    price = {bb: ctx["prices"].get(bb) or {} for bb in used}
+    items = [(nat, ctx["units"].get(nat, ""),
+              {bb: price[bb].get(nat) or {} for bb in used}) for nat in order]
+    html.append(f"""<div class="page">
+  {_page_head('부록', '국가별 적용 환율 · 단가', used_label,
+              f'{len(items)}개국 · 기준일 <b>{ctx["rate_date"]}</b>')}
+  <div class="sec{k_fx}">{b_fx}
+    <h3>국가별 적용 환율<small>{ctx.get('rate_source') or '서울외국환중개 매매기준율'}
+     · {ctx['rate_date']} · 현지통화 1단위당 원</small></h3>
+    {_fx_table(items, ctx.get('rates') or {})}
+  </div>
+  <div class="sec{k_pr}">{b_pr}
+    <h3>국가별 단가<small>현지통화 · 기간 내 평균</small></h3>
+    {_price_table([it for it in items if any(it[2].values())], used)}
+  </div>
+  {foot(2 + len(used), NPAGES)}
 </div>""")
 
     # ── 마지막 장: 별첨 ────────────────────────────────────────────────
-    members = sorted({m for p in ctx["pivots"].values()
+    members = sorted({m for b in used for p in [ctx["pivots"].get(b)]
                       if p is not None and not p.empty for m in p.columns})
     # ★별첨 합계는 국가별 내역 소계와 다를 수 있다.
     #   국가별은 '국가 분자 ÷ 국가 평균단가'를 내림하고, 별첨은 '멤버 분자 ÷ 멤버
@@ -543,8 +692,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
   {_page_head('별첨', '국가 × 멤버 수량', used_label, right)}
   {mx}
   {diff_note}
-
-  {foot(2 + len(used), 2 + len(used))}
+  {foot(NPAGES, NPAGES)}
 </div>
 </body></html>""")
     return "".join(html)

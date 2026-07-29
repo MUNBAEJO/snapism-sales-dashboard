@@ -243,12 +243,15 @@ def make_panel():
     # ── 미리보기 ──────────────────────────────────────────────────────
     ui_theme.sec(3, "금액 확인")
     tot_base = tot_a = tot_m = 0
-    warns, miss = [], []
+    warns, miss, shown = [], [], []
     for b, (tk, titles) in picks.items():
         if not tk or not titles:
             continue
         d = sc.fill_open(sc.country_detail(b, titles, S, E, RATES),
                          sc.open_countries(b, S, E))
+        if d.empty:                 # 그 기간 매출 행이 없으면 문서에도 안 들어간다
+            continue
+        shown.append(b)
         warns += sc.verify(d[d["매출액"] > 0], RATES)
         miss += fx.missing(RATES, d["unit"])
         base = int(d["매출액"].sum())
@@ -264,8 +267,8 @@ def make_panel():
                          hide_index=True, use_container_width=True)
 
     # ★한 브랜드만 정산하는 경우가 흔하다. 없는 브랜드를 적으면 안 된다.
-    used = " + ".join(sm.BRAND_LABEL[b] for b in sm.BRANDS
-                      if picks.get(b, (None, []))[0] and picks[b][1])
+    #   티켓을 골랐는지가 아니라 **매출 행이 있는지**로 판단한다(문서와 같은 기준).
+    used = " + ".join(sm.BRAND_LABEL[b] for b in sm.BRANDS if b in shown)
     ui_theme.kpis([
         ui_theme.kpi("정산기준액", f"{_fmt(tot_base)}원", used, hero=True),
         ui_theme.kpi("소속사 정산액", f"{_fmt(tot_a)}원"),
@@ -345,7 +348,9 @@ def make_panel():
             st.session_state["_pdfs"] = made
             st.session_state["_meta"] = {"ip": ipn, "v": rec["version"],
                                          "reason": reason.strip(),
-                                         "brands": used}
+                                         # ★티켓을 고른 브랜드가 아니라 **문서에
+                                         #   실제로 들어간** 브랜드를 적는다.
+                                         "brands": sp.brands_label(ctx)}
             auth.log_event(_email, f"settleissue:{ipn} v{rec['version']}")
         _rerun()
 
