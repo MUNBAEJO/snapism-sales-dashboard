@@ -307,6 +307,44 @@ def set_member_alias(ko: str, en: str) -> None:
     _alias_store.mutate(lambda d: d.setdefault("aliases", {}).update({ko: en}))
 
 
+def _allocate(df: "pd.DataFrame") -> "pd.Series":
+    """멤버별 수량을 **국가 소계에 정확히 맞춰** 배분한다(최대잔여법).
+
+    ★왜 필요한가 — 국가별 내역은 '국가 전체 분자 ÷ 국가 평균단가'를 한 번 내림하고,
+      별첨은 멤버마다 내림해 더한다. 소수가 여러 번 버려져 별첨 합계가 더 작아진다
+      (한국: 아사히 0.857 + 윤재혁 0.286 이 버려져 10,708 → 10,707).
+      같은 문서에 다른 숫자가 보이면 오해받으므로, 멤버별로 내림한 뒤 남는 몫을
+      **소수가 큰 멤버부터** 하나씩 얹어 국가 소계와 일치시킨다.
+      (선거 의석 배분에 쓰는 방식과 같다)
+    """
+    out = pd.Series(0, index=df.index, dtype="int64")
+    for nat, g in df.groupby("국가"):
+        cnt = g["up_cnt"].sum()
+        if not cnt:
+            continue
+        nat_price = g["up_sum"].sum() / cnt            # 국가 평균단가(행 기준)
+        target = int(g["num"].sum() / nat_price) if nat_price else 0
+        q = g.apply(lambda r: (r["num"] / (r["up_sum"] / r["up_cnt"]))
+                    if r["up_cnt"] else 0.0, axis=1)
+        base = q.astype("int64")
+        gap = target - int(base.sum())
+        if gap > 0:
+            # 소수가 큰 순 → 동률이면 분자가 큰 순(재현 가능하게 이름까지 본다)
+            order = sorted(g.index, key=lambda i: (-(q[i] - base[i]),
+                                                   -g.loc[i, "num"],
+                                                   str(g.loc[i, "member"])))
+            for i in order[:gap]:
+                base[i] += 1
+        elif gap < 0:
+            order = sorted([i for i in g.index if base[i] > 0],
+                           key=lambda i: (q[i] - base[i], g.loc[i, "num"],
+                                          str(g.loc[i, "member"])))
+            for i in order[:-gap]:
+                base[i] -= 1
+        out.loc[g.index] = base
+    return out
+
+
 def member_pivot(brand: str, titles: list[str], start: str, end: str,
                  rates: dict) -> pd.DataFrame:
     """국가 × 멤버 수량. 두 브랜드 다 나온다 —
@@ -342,7 +380,9 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                          + CASE WHEN cc IN ({coin}) THEN coin ELSE 0 END AS num
                   FROM t
                 )
-                SELECT "국가", member, SUM(num) AS num, AVG(NULLIF(up,0)) AS 단가
+                SELECT "국가", member, SUM(num) AS num,
+                       SUM(CASE WHEN up > 0 THEN up ELSE 0 END) AS up_sum,
+                       SUM(CASE WHEN up > 0 THEN 1  ELSE 0 END) AS up_cnt
                 FROM f WHERE num <> 0 GROUP BY 1,2
             """).df()
         else:
@@ -350,7 +390,10 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                 SELECT "국가", trim("상품 이름") AS member,
                        SUM(CAST("최종 결제 금액" AS BIGINT)
                            + CAST("쿠폰 할인 금액" AS BIGINT)) AS num,
-                       AVG(NULLIF(TRY_CAST("상품 단가" AS DOUBLE), 0)) AS 단가
+                       SUM(CASE WHEN TRY_CAST("상품 단가" AS DOUBLE) > 0
+                                THEN TRY_CAST("상품 단가" AS DOUBLE) ELSE 0 END) AS up_sum,
+                       SUM(CASE WHEN TRY_CAST("상품 단가" AS DOUBLE) > 0
+                                THEN 1 ELSE 0 END) AS up_cnt
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                   AND "프레임 이름" IN ({_sqlist(titles)})
@@ -366,7 +409,10 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
         return pd.DataFrame()
     df["국가"] = df["국가"].map(lambda x: NAT_KO.get(x, x))
     df["member"] = df["member"].map(_norm_member)
-    df["수량"] = (df["num"] / df["단가"].replace(0, pd.NA)).fillna(0).astype("int64")
+    # 별칭·키릴 정규화로 같은 멤버가 합쳐질 수 있으므로 다시 모은다.
+    df = df.groupby(["국가", "member"], as_index=False).agg(
+        num=("num", "sum"), up_sum=("up_sum", "sum"), up_cnt=("up_cnt", "sum"))
+    df["수량"] = _allocate(df)
     piv = df.pivot_table(index="국가", columns="member", values="수량",
                          aggfunc="sum", fill_value=0).astype(int)
     return piv.loc[piv.sum(axis=1).sort_values(ascending=False).index]
