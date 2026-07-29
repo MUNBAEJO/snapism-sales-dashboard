@@ -74,22 +74,24 @@ if start > end:
 S, E = start.isoformat(), end.isoformat()
 
 _, _eff, _src = load_titles("photoism", S, E)
-_official = _src == fx.SRC_OFFICIAL
+# 서울외국환중개 값이면 초록, 폴백이면 주황.
+_official = _src != fx.SRC_FALLBACK
+_chip = "st-ok" if _official else "st-warn"
 c3.markdown(
     f"<div style='padding-top:26px;font-size:12.5px;color:var(--text-2)'>"
     f"환율 기준일 <b>{_eff or '—'}</b>"
-    f"<span class='st-chip {"st-ok" if _official else "st-warn"}'>{_src}</span>"
+    f"<span class='st-chip {_chip}'>{_src}</span>"
     f"<div style='color:var(--text-3);font-size:11.5px;margin-top:2px'>"
     f"종료일 당일, 휴장일이면 직전 영업일</div></div>",
     unsafe_allow_html=True)
 
-# ★서울외국환중개는 공개 API 가 없고 과거 날짜 조회도 안 된다.
-#   과거 정산은 자동 조회값으로 폴백하므로, 공식 환율을 올려 덮어쓸 수 있게 한다.
+# 서울외국환중개는 공개 API 가 없지만 페이지에 날짜 검색 폼이 있어 과거도 조회된다.
+# 조회가 막혔을 때만(사이트 점검·차단 등) 수동 업로드로 메운다.
 if not _official:
     with st.expander("💱 서울외국환중개 공식 환율 올리기 "
-                     "— 지금은 자동 조회값을 쓰고 있어요", expanded=False):
-        st.caption(f"서울외국환중개는 공개 API 가 없어서 **과거 날짜는 못 가져와요**. "
-                   f"`TodayExRate.xls` 를 올리면 {_eff} 기준 공식 환율로 정산해요.")
+                     "— 지금은 참고 환율을 쓰고 있어요", expanded=True):
+        st.caption("서울외국환중개 조회에 실패했어요. `TodayExRate.xls` 를 올리면 "
+                   f"{_eff} 기준 공식 환율로 정산해요.")
         up = st.file_uploader("TodayExRate.xls", type=["xls", "xlsx", "csv", "html"],
                               key="fxup", disabled=not CAN_EDIT)
         if up is not None:
@@ -280,17 +282,27 @@ def _title_row(brand: str, row):
 
 # ── 정산 계산 ─────────────────────────────────────────────────────────────
 def _ticket_pick(brand: str):
-    """확정된 티켓 중에서 정산 대상을 고른다. 확정 안 된 건 애초에 후보에 없다."""
+    """확정된 티켓 중에서 정산 대상을 고른다.
+
+    ★여러 개 고를 수 있다 — 한 IP를 회차별로 여러 티켓에 나눠 등록하는 경우가 있고,
+      그때는 합쳐서 한 장으로 정산해야 한다. 고른 티켓들의 타이틀은 전부 합친다.
+    """
     tks = sc.confirmed_tickets(brand)
     if not tks:
-        return None, []
-    opts = ["(없음)"] + [f"{k} · {' / '.join(v[:2])}"
-                        + (f" 외 {len(v) - 2}" if len(v) > 2 else "")
-                        for k, v in tks.items()]
-    keys = [None] + list(tks.keys())
-    i = st.selectbox(f"{sm.BRAND_LABEL[brand]} 티켓", range(len(opts)),
-                     format_func=lambda x: opts[x], key=f"pk_{brand}")
-    return keys[i], tks.get(keys[i], [])
+        return [], []
+    def _lab(k):
+        # 모르는 키가 들어와도 죽지 않게 — 매핑이 그 사이 바뀌었을 수 있다.
+        v = tks.get(k)
+        if not v:
+            return str(k)
+        return (f"{k} · {' / '.join(v[:2])}"
+                + (f" 외 {len(v) - 2}" if len(v) > 2 else ""))
+    sel = st.multiselect(f"{sm.BRAND_LABEL[brand]} 티켓", list(tks),
+                         format_func=_lab, key=f"pk_{brand}")
+    titles = []
+    for k in sel:
+        titles += [t for t in tks[k] if t not in titles]
+    return sel, titles
 
 
 def _rate_input(brand: str, ticket: str):
@@ -344,40 +356,57 @@ def calc_panel():
 
     rates, eff, src = sm.load_rates(E)
     total_base = total_a = total_m = 0
-    details, pivots, warns = {}, {}, []
+    details, pivots, warns, miss = {}, {}, [], []
 
-    for b, (tk, titles) in picks.items():
-        if not tk:
+    for b, (tks, titles) in picks.items():
+        if not tks:
             continue
-        st.markdown(f"##### {sm.BRAND_LABEL[b]} · `{tk}`")
-        st.caption("타이틀: " + " / ".join(titles))
-        ra, rm = _rate_input(b, tk)
-        _mg_input(b, tk)
+        with ui_theme.card(f"{'📸' if b == 'photoism' else '📊'} "
+                           f"{sm.BRAND_LABEL[b]} · {len(tks)}개 티켓"):
+            st.caption("티켓: " + " · ".join(tks))
+            st.caption(f"타이틀 {len(titles)}개 — " + " / ".join(titles[:6])
+                       + (f" 외 {len(titles) - 6}" if len(titles) > 6 else ""))
+            # 요율·MG 는 티켓마다 다를 수 있어 각각 받는다.
+            # 여러 장이면 매출 비중이 큰 티켓의 요율을 대표로 쓰되 화면에 다 보여준다.
+            rates_seen = []
+            for tk in tks:
+                if len(tks) > 1:
+                    st.markdown(f"**`{tk}`**")
+                rates_seen.append(_rate_input(b, tk))
+                _mg_input(b, tk)
+            # 요율이 티켓마다 다르면 정산액이 갈리므로 그냥 넘어가면 안 된다.
+            uniq = {r for r in rates_seen if any(x is not None for x in r)}
+            if len(uniq) > 1:
+                st.warning("고른 티켓들의 요율이 서로 달라요. 같은 문서로 묶으면 "
+                           "어느 요율을 쓸지 모호해집니다 — 요율을 맞추거나 "
+                           "티켓을 나눠서 발행해 주세요.")
+            ra, rm = rates_seen[0] if rates_seen else (None, None)
 
-        d = sc.country_detail(b, titles, S, E, rates)
-        d = sc.fill_open(d, sc.open_countries(b, S, E))
-        details[b] = d
-        pivots[b] = sc.member_pivot(b, titles, S, E, rates)
-        warns += sc.verify(d[d["매출액"] > 0], rates)
+            d = sc.country_detail(b, titles, S, E, rates)
+            d = sc.fill_open(d, sc.open_countries(b, S, E))
+            details[b] = d
+            pivots[b] = sc.member_pivot(b, titles, S, E, rates)
+            warns += sc.verify(d[d["매출액"] > 0], rates)
+            miss += fx.missing(rates, d["unit"])
 
-        base = int(d["매출액"].sum())
-        total_base += base
-        total_a += round(base * ra) if ra else 0
-        total_m += round(base * rm) if rm else 0
+            base = int(d["매출액"].sum())
+            total_base += base
+            total_a += round(base * ra) if ra else 0
+            total_m += round(base * rm) if rm else 0
 
-        qty = "프레임수" if b == "photoism" else "건수"
-        ui_theme.kpis([
-            ui_theme.kpi("매출(KRW)", f"{_fmt(base)}원", hero=True),
-            ui_theme.kpi(qty, _fmt(d["수량"].sum())),
-            ui_theme.kpi("소속사", f"{_fmt(round(base * ra))}원" if ra else "—",
-                         f"요율 {ra * 100:.1f}%" if ra else "요율 없음"),
-            ui_theme.kpi("대행사", f"{_fmt(round(base * rm))}원" if rm else "—",
-                         f"요율 {rm * 100:.1f}%" if rm else "요율 없음"),
-        ], cls="k4")
-        with st.expander(f"국가별 내역 · 오픈 {len(d)}개국 중 "
-                         f"매출발생 {int((d['매출액'] > 0).sum())}개국"):
-            st.dataframe(d[["국가", "unit", "수량", "현지", "매출액"]],
-                         hide_index=True, use_container_width=True)
+            qty = "프레임수" if b == "photoism" else "건수"
+            ui_theme.kpis([
+                ui_theme.kpi("매출(KRW)", f"{_fmt(base)}원", hero=True),
+                ui_theme.kpi(qty, _fmt(d["수량"].sum())),
+                ui_theme.kpi("소속사", f"{_fmt(round(base * ra))}원" if ra else "—",
+                             f"요율 {ra * 100:.1f}%" if ra else "요율 없음"),
+                ui_theme.kpi("대행사", f"{_fmt(round(base * rm))}원" if rm else "—",
+                             f"요율 {rm * 100:.1f}%" if rm else "요율 없음"),
+            ], cls="k4")
+            with st.expander(f"국가별 내역 · 오픈 {len(d)}개국 중 "
+                             f"매출발생 {int((d['매출액'] > 0).sum())}개국"):
+                st.dataframe(d[["국가", "unit", "수량", "현지", "매출액"]],
+                             hide_index=True, use_container_width=True)
 
     # ── 합산 ──────────────────────────────────────────────────────────
     ui_theme.sec("합", "합산", f"환율 기준일 {eff or '—'} · {src}")
@@ -388,6 +417,13 @@ def calc_panel():
     ], cls="k3")
 
     # ── 검증 ──────────────────────────────────────────────────────────
+    miss = sorted(set(miss))
+    if miss:
+        ui_theme.nbox("warn",
+                      f"⚠️ <b>환율이 없는 통화 {', '.join(miss)}</b> — 그대로 두면 "
+                      f"1:1 로 계산돼 금액이 크게 부풀어요."
+                      "<div class='sub'>서울외국환중개가 고시하지 않는 통화예요. "
+                      "공식 환율 파일을 올리거나 해당 국가를 빼고 발행해 주세요.</div>")
     if warns:
         ui_theme.nbox("warn", "⚠️ <b>환율 검증 실패</b> — 현지 매출 × 환율이 "
                               "매출(KRW)과 안 맞아요.<div class='sub'>"
@@ -440,19 +476,22 @@ def calc_panel():
     if warns:
         blockers.append("환율 검증 실패")
     if not any((r or {}).get("agency") or (r or {}).get("mgmt")
-               for r in (sc.get_rs(b, t) for b, (t, _) in picks.items() if t)):
+               for r in (sc.get_rs(b, t) for b, (tl, _) in picks.items()
+                         for t in tl)):
         blockers.append("요율 없음")
     if not ipn:
         blockers.append("IP명 미입력")
     if nextv > 1 and not reason.strip():
         blockers.append("정정 사유 미입력")
+    if miss:
+        blockers.append(f"환율 없는 통화({', '.join(miss)})")
     if blockers:
         st.warning("발행 전에 정리할 게 있어요 — " + " · ".join(blockers))
 
     if st.button("📄 정산서 만들기", type="primary",
                  disabled=not CAN_EDIT or bool(blockers)):
         with st.spinner("PDF 를 만드는 중이에요…"):
-            ctx = sc.build_context({b: t for b, (t, _) in picks.items()},
+            ctx = sc.build_context({b: tl for b, (tl, _) in picks.items()},
                                    S, E, ipn, rates, eff or E,
                                    date.today().isoformat(), src)
             # ★스냅샷을 먼저 남긴다. 매출 데이터는 매일 바뀌고 취소도 뒤늦게 붙으므로

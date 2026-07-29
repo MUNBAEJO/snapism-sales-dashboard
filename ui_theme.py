@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 
 import streamlit as st
@@ -115,9 +116,17 @@ html, body{ letter-spacing:-0.02em; }
 
 
 def inject() -> None:
-    """페이지 상단에서 한 번 호출."""
-    st.markdown(f'<link rel="stylesheet" href="{PRETENDARD}">'
-                f"<style>{CSS}</style>", unsafe_allow_html=True)
+    """페이지 상단에서 한 번 호출.
+
+    ★CSS 안의 **빈 줄을 반드시 없애고 넣는다.** 마크다운은 빈 줄에서 raw HTML 블록을
+      끝내버려서, 그 뒤 CSS 가 화면에 그대로 글자로 찍힌다(실제로 그렇게 새어 나왔다).
+      주석도 함께 털어 전송량을 줄인다.
+    """
+    # 줄바꿈은 공백으로 잇는다 — 빈 문자열로 붙이면 줄 끝 토큰이 다음 줄과 엉킨다.
+    css = " ".join(ln.strip() for ln in CSS.splitlines() if ln.strip())
+    css = re.sub(r"/\*.*?\*/", "", css)
+    st.markdown(f'<link rel="stylesheet" href="{PRETENDARD}"><style>{css}</style>',
+                unsafe_allow_html=True)
 
 
 def sec(n, title: str, q: str = "") -> None:

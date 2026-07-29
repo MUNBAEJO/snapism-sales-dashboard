@@ -53,24 +53,36 @@ def _decode_smbs(s: str) -> str:
     return urllib.parse.unquote(decoded)
 
 
-def fetch_smbs_rates() -> dict | None:
-    """SMBS(한국수출입은행) 매매기준율 스크래핑.
+def fetch_smbs_rates(day: str | None = None) -> dict | None:
+    """서울외국환중개(smbs.biz) 매매기준율 스크래핑. 공개 API 가 없어 페이지를 읽는다.
 
-    반환: {"KRW": 1, "JPY": 9.46, "USD": 1511.3, ...}  실패 시 None.
-    오늘 환율만 지원 (과거 날짜 조회 불가).
+    day: "YYYY-MM-DD". 생략하면 오늘.
+      ★과거 날짜도 된다 — 페이지에 날짜 검색 폼(StrSch_Year/Month/Day)이 있고
+        POST 로 조회된다. 게다가 **사이트가 영업일 보정까지 해준다**
+        (2026-06-28 일요일 요청 → 2026-06-26 금요일 값을 돌려줌).
+      실제로 적용된 날짜는 반환 dict 의 "_asof" 에 담는다 — 요청일과 다를 수 있으므로
+      정산서에 찍을 땐 이 값을 써야 한다.
+
+    반환: {"KRW": 1, "JPY": 9.46, "USD": 1511.3, ..., "_asof": "2026-06-26"}
+          실패 시 None.
     """
     try:
-        req = urllib.request.Request(
-            SMBS_URL,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Referer": SMBS_URL,
-            },
-        )
         ctx = urllib.request.ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = urllib.request.ssl.CERT_NONE
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+        headers = {"User-Agent": "Mozilla/5.0", "Referer": SMBS_URL}
+        if day:
+            y, m, d = day.split("-")
+            body = urllib.parse.urlencode({
+                "StrSch_Year": y, "StrSch_Month": m, "StrSch_Day": d,
+                "StrSchFull": f"{y}.{m}.{d}",
+            }).encode()
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            req = urllib.request.Request(SMBS_URL, data=body, method="POST",
+                                         headers=headers)
+        else:
+            req = urllib.request.Request(SMBS_URL, headers=headers)
+        with urllib.request.urlopen(req, timeout=20, context=ctx) as r:
             html = r.read().decode("euc-kr", errors="replace")
     except Exception as e:
         log(f"[SMBS 접속 실패] {e}")
@@ -128,7 +140,15 @@ def fetch_smbs_rates() -> dict | None:
         log("[SMBS] 파싱 결과 부족 — fallback 사용")
         return None
 
-    log(f"[SMBS] {len(rates)-1}개 통화 파싱 완료")
+    # 페이지가 실제로 적용한 날짜를 되돌려준다(휴장일이면 직전 영업일로 당겨져 있다).
+    ym = re.search(r'name="StrSch_Year"\s*value="(\d{4})"', html)
+    mm = re.search(r'name="StrSch_Month"\s*value="(\d{1,2})"', html)
+    dm = re.search(r'name="StrSch_Day"\s*value="(\d{1,2})"', html)
+    if ym and mm and dm:
+        rates["_asof"] = f"{ym.group(1)}-{int(mm.group(1)):02d}-{int(dm.group(1)):02d}"
+
+    log(f"[SMBS] {len(rates)-1}개 통화 파싱 완료"
+        + (f" (기준일 {rates['_asof']})" if "_asof" in rates else ""))
     return rates
 
 
@@ -219,8 +239,11 @@ def update_exchange_rates() -> bool:
         log(f"[오류] config.json 읽기 실패: {e}")
         return False
 
+    asof = rates.pop("_asof", "")          # 메타는 환율 dict 에 섞어 두지 않는다
     config["exchange_rates"] = rates
     config["rates_updated"]  = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if asof:
+        config["rates_asof"] = asof
 
     # 원자적 저장(임시파일 → os.replace): 대시보드가 읽는 순간과 겹쳐도
     # 반쯤 쓰인 config.json 을 읽어 환율이 1로 왜곡되는 사고를 방지.
@@ -287,12 +310,15 @@ def get_rates_for_date(date_str: str) -> dict:
     if eff in cache:
         return cache[eff]
 
-    # 오늘 날짜 → SMBS 시도
-    if eff == today:
-        rates = fetch_smbs_rates()
-        if rates:
-            _save_cache(cache, eff, rates)
-            return rates
+    # ★SMBS 는 과거 날짜도 조회된다(POST 로 날짜 폼 전송). 오늘/과거 모두 여기서 끝낸다.
+    #   사이트가 휴장일을 직전 영업일로 당겨 주므로 그 날짜(_asof)로 캐시한다.
+    rates = fetch_smbs_rates(None if eff == today else eff)
+    if rates:
+        asof = rates.pop("_asof", eff)
+        _save_cache(cache, asof, rates)
+        if asof != eff:
+            _save_cache(cache, eff, rates)   # 요청일로도 찾을 수 있게
+        return rates
 
     # 과거(또는 SMBS 실패) → fawazahmed0
     urls = [

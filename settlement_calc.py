@@ -415,18 +415,26 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
                   rate_source: str = "") -> dict:
     """PDF 한 부를 만드는 데 필요한 값을 한 번에 모은다.
 
-    picks = {brand: ticket}. 확정 매핑에 없는 티켓은 그냥 비어 나온다.
+    picks = {brand: ticket 또는 [ticket, ...]}.
+    ★티켓을 여러 장 넘길 수 있다 — 한 IP를 회차별로 나눠 등록한 경우 합쳐서 한 장으로
+      정산해야 한다. 타이틀은 전부 합치고 요율·MG 는 첫 티켓 기준으로 잡는다
+      (요율이 서로 다르면 화면에서 미리 경고한다).
     """
     ctx = {"ip": ip_name, "start": start, "end": end, "issued": issued,
            "rate_date": rate_date, "rate_source": rate_source,
            "details": {}, "pivots": {}, "prices": {},
            "rs": {}, "mg": {}, "tickets": {}, "titles": {}, "units": {}}
-    for brand, ticket in picks.items():
-        if not ticket:
+    for brand, sel in picks.items():
+        tickets = [sel] if isinstance(sel, str) else list(sel or [])
+        tickets = [t for t in tickets if t]
+        if not tickets:
             continue
-        titles = titles_for_ticket(brand, ticket)
+        titles = []
+        for tk in tickets:
+            titles += [t for t in titles_for_ticket(brand, tk) if t not in titles]
         if not titles:
             continue
+        ticket = tickets[0]
         d = fill_open(country_detail(brand, titles, start, end, rates),
                       open_countries(brand, start, end))
         ctx["details"][brand] = d

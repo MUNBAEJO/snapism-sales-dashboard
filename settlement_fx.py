@@ -23,9 +23,9 @@ from json_store import JsonStore
 
 _store = JsonStore("settlement_fx.json", default={"dates": {}})
 
-SRC_OFFICIAL = "서울외국환중개 매매기준율"
-SRC_SCRAPE = "서울외국환중개 매매기준율(당일 조회)"
-SRC_FALLBACK = "참고 환율(자동 조회)"
+SRC_OFFICIAL = "서울외국환중개 매매기준율"          # 실무자가 올린 공식 파일
+SRC_SCRAPE = "서울외국환중개 매매기준율"            # 사이트에서 그 날짜로 직접 조회
+SRC_FALLBACK = "참고 환율(자동 조회)"               # 서울외국환중개 조회 실패 시
 
 # update_rates.CURRENCIES 와 같은 범위만 받는다.
 _CUR_RE = re.compile(r"\b([A-Z]{3})\b")
@@ -124,6 +124,49 @@ def parse_upload(data: bytes, filename: str = "") -> tuple[dict, str]:
     return out, ref_date
 
 
+# 서울외국환중개가 고시하지 않는 통화. 비워두면 SQL CASE 가 ELSE 1 로 떨어져
+# 라오스 1,820,000 LAK 가 1,820,000원으로 계산된다(실제 ≈118,300원, 15배 부풀림).
+UNLISTED = ("LAK", "PEN")
+
+
+def _backfill(rates: dict, asof: str) -> None:
+    """미고시 통화를 채운다. 못 채우면 **키를 아예 넣지 않는다** —
+    1.0 으로 두면 조용히 15배 부풀어 오히려 위험하다. missing() 이 잡아낸다."""
+    import update_rates as ur
+
+    need = [c for c in UNLISTED if c not in rates]
+    if not need:
+        return
+    # ① 야후 USD 크로스 (기존 정산 자동화와 같은 계산식)
+    try:
+        for cur, v in ur.fetch_yahoo_cross(rates.get("USD")).items():
+            if cur in need and v:
+                rates[cur] = v
+    except Exception:
+        pass
+    # ② 그래도 없으면 날짜별 참고 환율에서 가져온다
+    need = [c for c in UNLISTED if c not in rates]
+    if need:
+        try:
+            ref = ur.get_rates_for_date(asof)
+            for cur in need:
+                if ref.get(cur):
+                    rates[cur] = ref[cur]
+        except Exception:
+            pass
+
+
+def missing(rates: dict, units) -> list[str]:
+    """매출에 실제로 쓰인 통화 중 환율이 없는 것.
+
+    ★이걸 안 잡으면 조용히 틀린다 — 환율이 없으면 1.0 이 적용되는데,
+      현지 매출과 KRW 매출이 같은 값이 되어 검증식도 통과해 버린다."""
+    have = {k for k, v in rates.items()
+            if isinstance(v, (int, float)) and v > 0}
+    return sorted({str(u).strip() for u in units
+                   if str(u).strip() and str(u).strip() not in have})
+
+
 def resolve(rate_date: str) -> tuple[dict, str, str]:
     """(환율, 실제 기준일, 출처 문구).
 
@@ -139,12 +182,15 @@ def resolve(rate_date: str) -> tuple[dict, str, str]:
     if off:
         return off["rates"], eff, SRC_OFFICIAL
 
-    if eff and eff == _date.today().isoformat():
-        got = ur.fetch_smbs_rates()
-        if got:
-            return got, eff, SRC_SCRAPE
-
     if eff:
+        # 서울외국환중개는 공개 API 가 없지만 날짜 검색 폼이 있어 과거도 조회된다.
+        # 사이트가 휴장일을 직전 영업일로 당겨 주므로 _asof 를 실제 기준일로 쓴다.
+        today = _date.today().isoformat()
+        got = ur.fetch_smbs_rates(None if eff == today else eff)
+        if got:
+            asof = got.pop("_asof", eff)
+            _backfill(got, asof)
+            return got, asof, SRC_SCRAPE
         return ur.get_rates_for_date(eff), eff, SRC_FALLBACK
 
     import json
