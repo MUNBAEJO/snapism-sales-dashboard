@@ -222,10 +222,21 @@ def make_panel():
         amt = k4.number_input("MG 금액", 0, step=1_000_000,
                               value=int(mg_cur["amount"] or 0), disabled=not has,
                               key=f"mga_{b}")
-        if st.button(f"💾 {sm.BRAND_LABEL[b]} 요율·MG 저장", key=f"sv_{b}",
+        # 파트너사명 — 문서에 '제출처 ○○ 귀중' 과 정산 내역표 출자자명으로 들어간다.
+        pt = sc.get_partner(b, tk)
+        p1, p2, p3 = st.columns([1.3, 1.3, 0.9])
+        an = p1.text_input("소속사명", value=pt["agency_name"], key=f"pa_{b}",
+                           placeholder="예: 제이와이드컴퍼니")
+        mn = p2.text_input("대행사명", value=pt["mgmt_name"], key=f"pm_{b}",
+                           placeholder="선택")
+        vt = p3.checkbox("부가세 적용", value=pt["vat"], key=f"vt_{b}",
+                         help="총 지급액을 부가세 포함으로 보고 공급가액·VAT 를 나눠 적어요. "
+                              "해외 파트너면 꺼 주세요.")
+        if st.button(f"💾 {sm.BRAND_LABEL[b]} 저장", key=f"sv_{b}",
                      disabled=not CAN_EDIT):
             sc.set_rs(b, tk, a / 100 or None, m / 100 or None, _email)
             sc.set_mg(b, tk, has, amt, mg_cur.get("note", ""), _email)
+            sc.set_partner(b, tk, an, mn, vt, _email)
             _rerun()
         rs[b] = (a / 100 or None, m / 100 or None)
 
@@ -260,6 +271,18 @@ def make_panel():
         ui_theme.kpi("소속사 정산액", f"{_fmt(tot_a)}원"),
         ui_theme.kpi("대행사 정산액", f"{_fmt(tot_m)}원"),
     ], cls="k3")
+
+    # 세금계산서용 분해 — 문서 하단 표와 같은 값을 미리 보여준다.
+    _pt = next((sc.get_partner(b, t) for b, (t, _) in picks.items() if t), None)
+    if _pt and _pt["vat"] and (tot_a or tot_m):
+        rows = []
+        for lab, v in (("소속사", tot_a), ("대행사", tot_m)):
+            if not v:
+                continue
+            sup, vat = sc.vat_split(v, True)
+            rows.append(f"{lab} {_fmt(v)}원 = 공급가액 {_fmt(sup)} + 부가세 {_fmt(vat)}")
+        if rows:
+            st.caption("💳 " + " · ".join(rows))
 
     miss = sorted(set(miss))
     if miss:

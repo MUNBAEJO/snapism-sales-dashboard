@@ -273,6 +273,15 @@ def build_html(ctx: dict, kind: str) -> str:
 {ptbl}
 </div>"""
 
+    # 세금계산서 발행용 — 총 지급액은 부가세 포함 금액으로 보고 1.1 로 나눈다.
+    # (기존 정산서 엑셀과 같은 계산: 3,683,854 → 3,348,958 + 334,896)
+    _p2 = ctx.get("partner") or {}
+    supply, vat_amt = ((round(total_amt / 1.1), total_amt - round(total_amt / 1.1))
+                       if _p2.get("vat", True) else (total_amt, 0))
+    _rs_vals = [(ctx["rs"].get(b) or {}).get(rs_key) for b in ctx["details"]]
+    _rs_vals = [v for v in _rs_vals if v]
+    rs_pct = f"{_rs_vals[0] * 100:.2f}%" if _rs_vals else "—"
+
     mg_note = ""
     for b, m in ctx.get("mg", {}).items():
         if m and m.get("has_mg"):
@@ -292,6 +301,12 @@ def build_html(ctx: dict, kind: str) -> str:
     used_label = " + ".join(BRAND_LABEL[b] for b in used)
     multi = len(used) > 1
 
+    # 제출처(파트너사명). 없으면 수취처 유형으로 대신한다.
+    _p = ctx.get("partner") or {}
+    partner = (_p.get("agency_name") if kind == "agency"
+               else _p.get("mgmt_name")) or ""
+    use_vat = bool(_p.get("vat", True))
+
     ver = int(ctx.get("version") or 1)
     badge = ""
     if ver > 1:
@@ -308,10 +323,10 @@ def build_html(ctx: dict, kind: str) -> str:
 <div class="eyebrow">IP 정산서 · {label}</div>
 <h1>{ctx["ip"]}</h1>
 <div class="who">{ctx["start"]} ~ {ctx["end"]} 정산분</div>
-<div class="meta">발행일 {ctx["issued"]}</div>
+<div class="meta">발행일 {ctx["issued"]}{f' &nbsp;·&nbsp; 제출처 <b>{partner}</b> 귀중' if partner else ''}</div>
 
 <div class="greet">
-  <div class="g1">안녕하세요, {label} 담당자님</div>
+  <div class="g1">안녕하세요, {partner or label} 담당자님</div>
   <div class="g2"><b>{ctx["ip"]}</b> 의 {ctx["start"]} ~ {ctx["end"]} 정산 내역을
    정리해 드려요.<br>
    {"포토이즘·스내피즘 두 브랜드 매출을 합쳐 계산했고, " if multi
@@ -336,6 +351,19 @@ def build_html(ctx: dict, kind: str) -> str:
 <span>합계</span><span></span><span></span>
 <span class="r num">''' + _won(total_base) + '''</span>
 <span class="r num">''' + _won(total_amt) + '''</span></div>''' if multi else ""}
+</div>
+
+<div class="ct">💳 정산 내역 <span class="muted">단위 원</span></div>
+<div class="ntbl">
+<div class="ntr nth" style="grid-template-columns:1.6fr .7fr 1.1fr 1.1fr .9fr">
+<span>출자자</span><span class="c">지분율</span><span class="r">총 지급액</span>
+<span class="r">공급가액</span><span class="r">부가세</span></div>
+<div class="ntr" style="grid-template-columns:1.6fr .7fr 1.1fr 1.1fr .9fr">
+<span class="nname">{partner or label}</span>
+<span class="c num">{rs_pct}</span>
+<span class="r num b">{_won(total_amt)}</span>
+<span class="r num">{_won(supply)}</span>
+<span class="r num">{_won(vat_amt) if use_vat else '—'}</span></div>
 </div>
 
 <div class="final">최종 정산액 &nbsp; <b>{_won(total_amt)}원</b></div>

@@ -437,10 +437,58 @@ def get_rs(brand: str, ticket: str) -> dict:
 def set_rs(brand: str, ticket: str, agency, mgmt, by: str) -> None:
     from datetime import datetime
     tk = str(ticket or "").strip().upper()
-    rec = {"agency": agency, "mgmt": mgmt, "by": by,
-           "at": datetime.now().isoformat(timespec="seconds")}
-    _rates_store.mutate(
-        lambda d: d.setdefault("rates", {}).update({f"{brand}:{tk}": rec}))
+    key = f"{brand}:{tk}"
+    now = datetime.now().isoformat(timespec="seconds")
+
+    def _fn(d):
+        cur = d.setdefault("rates", {}).get(key) or {}
+        cur.update({"agency": agency, "mgmt": mgmt, "by": by, "at": now})
+        d["rates"][key] = cur          # 파트너사명 등 다른 필드는 보존한다
+
+    _rates_store.mutate(_fn)
+
+
+# ── 파트너사 · 부가세 ──────────────────────────────────────────────────────
+def get_partner(brand: str, ticket: str) -> dict:
+    """수취처별 회사명과 부가세 적용 여부.
+
+    문서에 '제출처 ○○ 귀중' 으로 찍히고, 하단 정산 내역표의 출자자명이 된다.
+    부가세는 국내 파트너만 해당하므로 티켓별로 끌 수 있게 둔다.
+    """
+    tk = str(ticket or "").strip().upper()
+    rec = (_rates_store.load().get("rates", {}) or {}).get(f"{brand}:{tk}") or {}
+    return {"agency_name": rec.get("agency_name", ""),
+            "mgmt_name": rec.get("mgmt_name", ""),
+            "vat": rec.get("vat", True)}
+
+
+def set_partner(brand: str, ticket: str, agency_name: str, mgmt_name: str,
+                vat: bool, by: str) -> None:
+    from datetime import datetime
+    tk = str(ticket or "").strip().upper()
+    key = f"{brand}:{tk}"
+    now = datetime.now().isoformat(timespec="seconds")
+
+    def _fn(d):
+        cur = d.setdefault("rates", {}).get(key) or {}
+        cur.update({"agency_name": str(agency_name or "").strip(),
+                    "mgmt_name": str(mgmt_name or "").strip(),
+                    "vat": bool(vat), "by": by, "at": now})
+        d["rates"][key] = cur
+
+    _rates_store.mutate(_fn)
+
+
+def vat_split(pay: int, vat: bool = True) -> tuple[int, int]:
+    """(공급가액, 부가세). 총 지급액은 **부가세 포함** 금액으로 본다.
+
+    기존 정산서 엑셀과 같은 계산 — 3,683,854 → 공급가액 3,348,958 · VAT 334,896.
+    """
+    pay = int(pay or 0)
+    if not vat:
+        return pay, 0
+    supply = round(pay / 1.1)
+    return supply, pay - supply
 
 
 def get_mg(brand: str, ticket: str) -> dict:
@@ -504,6 +552,14 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
         ctx["titles"][brand] = titles
         ctx["rs"][brand] = get_rs(brand, ticket)
         ctx["mg"][brand] = get_mg(brand, ticket)
+        # 파트너사명·부가세는 티켓마다 있지만 문서는 한 장이므로 먼저 채워진 값을 쓴다.
+        p = get_partner(brand, ticket)
+        cur = ctx.setdefault("partner", {"agency_name": "", "mgmt_name": "",
+                                         "vat": True})
+        for f in ("agency_name", "mgmt_name"):
+            if not cur[f] and p[f]:
+                cur[f] = p[f]
+        cur["vat"] = cur["vat"] and p["vat"]
         ctx["tickets"][brand] = smap.lookup_ticket(brand, ticket)
         for _, r in d.iterrows():
             ctx["units"].setdefault(r["국가"], r["unit"])
