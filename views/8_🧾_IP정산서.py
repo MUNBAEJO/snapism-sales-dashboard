@@ -11,6 +11,7 @@
 기획: CURRENT-PROJECTS/IP-정산서-생성.md · 지라 CO-288
 """
 import os
+import re
 import sys
 from datetime import date, timedelta
 
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auth
 import settlement_calc as sc
 import settlement_map as sm
+import settlement_pdf as sp
 
 # 금액을 다루는 페이지다. 사이드바에서 이미 걸러지지만 url 직접 입력도 막는다.
 _email = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
@@ -386,6 +388,48 @@ def calc_panel():
         if p is not None and not p.empty:
             with st.expander(f"{sm.BRAND_LABEL[b]} 국가 × 멤버"):
                 st.dataframe(p, use_container_width=True)
+
+    # ── 발행 ──────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("##### 📄 정산서 발행")
+    # 타이틀은 '260605 TREASURE' 처럼 날짜 접두가 붙어 있다. 문서에는 IP명만 쓴다.
+    _t = (picks["photoism"][1] or picks["snapism"][1] or [""])[0]
+    ip = st.text_input("정산서에 표기할 IP명", key="ipname",
+                       value=re.sub(r"^\s*\d{5,8}\s*", "", str(_t)).strip())
+    blockers = []
+    if warns:
+        blockers.append("환율 검증이 실패했어요.")
+    if not any((ctx or {}).get("agency") or (ctx or {}).get("mgmt")
+               for ctx in (sc.get_rs(b, t) for b, (t, _) in picks.items() if t)):
+        blockers.append("요율이 하나도 없어요.")
+    if not ip.strip():
+        blockers.append("IP명을 넣어 주세요.")
+
+    if blockers:
+        st.warning("발행 전에 정리할 게 있어요 — " + " / ".join(blockers))
+    if st.button("📄 정산서 만들기", type="primary",
+                 disabled=not CAN_EDIT or bool(blockers)):
+        with st.spinner("PDF 를 만드는 중이에요…"):
+            ctx = sc.build_context({b: t for b, (t, _) in picks.items()},
+                                   S, E, ip.strip(), rates, eff or E,
+                                   date.today().isoformat())
+            made = {}
+            for kind, lab in (("agency", "소속사"), ("mgmt", "대행사")):
+                if not any((ctx["rs"].get(b) or {}).get(
+                        "agency" if kind == "agency" else "mgmt")
+                        for b in ctx["details"]):
+                    continue        # 그 수취처 요율이 없으면 문서를 만들지 않는다
+                made[lab] = sp.render_pdf(
+                    sp.build_html(ctx, kind),
+                    f"IP 정산서({lab}) · {ip.strip()} · {S}~{E}")
+            st.session_state["_pdfs"] = made
+            auth.log_event(_email, f"settleissue:{ip.strip()}:{S}~{E}")
+
+    for lab, data in (st.session_state.get("_pdfs") or {}).items():
+        st.download_button(f"⬇️ {lab} 정산서 내려받기", data,
+                           file_name=f"정산서_{st.session_state.get('ipname','IP')}"
+                                     f"_{S[:7]}_{lab}.pdf",
+                           mime="application/pdf", key=f"dl_{lab}")
 
 
 t1, t2 = st.tabs(["🔗 티켓 매핑", "🧮 정산 계산"])

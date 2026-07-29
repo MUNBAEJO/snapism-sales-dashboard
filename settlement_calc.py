@@ -410,6 +410,38 @@ def settle(detail: pd.DataFrame, rs: float | None) -> pd.DataFrame:
     return out
 
 
+def build_context(picks: dict, start: str, end: str, ip_name: str,
+                  rates: dict, rate_date: str, issued: str) -> dict:
+    """PDF 한 부를 만드는 데 필요한 값을 한 번에 모은다.
+
+    picks = {brand: ticket}. 확정 매핑에 없는 티켓은 그냥 비어 나온다.
+    """
+    ctx = {"ip": ip_name, "start": start, "end": end, "issued": issued,
+           "rate_date": rate_date, "details": {}, "pivots": {}, "prices": {},
+           "rs": {}, "mg": {}, "tickets": {}, "titles": {}, "units": {}}
+    for brand, ticket in picks.items():
+        if not ticket:
+            continue
+        titles = titles_for_ticket(brand, ticket)
+        if not titles:
+            continue
+        d = fill_open(country_detail(brand, titles, start, end, rates),
+                      open_countries(brand, start, end))
+        ctx["details"][brand] = d
+        ctx["pivots"][brand] = member_pivot(brand, titles, start, end, rates)
+        ctx["titles"][brand] = titles
+        ctx["rs"][brand] = get_rs(brand, ticket)
+        ctx["mg"][brand] = get_mg(brand, ticket)
+        ctx["tickets"][brand] = smap.lookup_ticket(brand, ticket)
+        for _, r in d.iterrows():
+            ctx["units"].setdefault(r["국가"], r["unit"])
+        pt = price_table(brand, titles, start, end)
+        ctx["prices"][brand] = {
+            nat: dict(zip(g["형태"], g["단가"])) for nat, g in pt.groupby("국가")
+        }
+    return ctx
+
+
 def verify(detail: pd.DataFrame, rates: dict, tol: float = 0.002) -> list[str]:
     """현지 × 환율 == 매출(KRW) 검증. 어긋나면 환율·통화 매핑이 깨진 것이다."""
     bad = []
