@@ -280,10 +280,21 @@ def build_html(ctx: dict, kind: str) -> str:
                        + (f' · {m["note"]}' if m.get("note") else '') + '</div>')
             break
 
+    # 정정본은 첫 장에 명시한다. 파트너가 두 문서를 받았을 때 어느 게 최신인지
+    # 못 알아보면 오히려 혼란이 커진다.
+    ver = int(ctx.get("version") or 1)
+    badge = ""
+    if ver > 1:
+        why = ctx.get("reason") or ""
+        badge = (f'<span class="badge">정정본 v{ver}</span>'
+                 + (f'<div class="meta" style="margin-top:4px">정정 사유 · {why}</div>'
+                    if why else ""))
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="{PRETENDARD}">
 <style>{css}</style></head><body>
 
+{badge}
 <div class="eyebrow">IP 정산서 · {label}</div>
 <h1>{ctx["ip"]}</h1>
 <div class="who">{ctx["start"]} ~ {ctx["end"]} 정산분</div>
@@ -321,8 +332,9 @@ def build_html(ctx: dict, kind: str) -> str:
 <div class="notes">
 ※ 매출액은 취소분을 제외한 실제 판매 금액이에요.<br>
 ※ 국가별 내역에는 <b>매출이 발생하지 않은 오픈 국가도 함께</b> 실었어요.<br>
-※ 해외 매출은 원화로 환산해 합산해요. 환율은 <b>서울외국환중개 매매기준율
- {ctx["rate_date"]}</b> 기준이에요.
+※ 해외 매출은 원화로 환산해 합산해요. 환율은
+ <b>{ctx.get("rate_source") or "서울외국환중개 매매기준율"} {ctx["rate_date"]}</b>
+ 기준이에요.
 </div>
 {pages}
 </body></html>"""

@@ -411,13 +411,15 @@ def settle(detail: pd.DataFrame, rs: float | None) -> pd.DataFrame:
 
 
 def build_context(picks: dict, start: str, end: str, ip_name: str,
-                  rates: dict, rate_date: str, issued: str) -> dict:
+                  rates: dict, rate_date: str, issued: str,
+                  rate_source: str = "") -> dict:
     """PDF 한 부를 만드는 데 필요한 값을 한 번에 모은다.
 
     picks = {brand: ticket}. 확정 매핑에 없는 티켓은 그냥 비어 나온다.
     """
     ctx = {"ip": ip_name, "start": start, "end": end, "issued": issued,
-           "rate_date": rate_date, "details": {}, "pivots": {}, "prices": {},
+           "rate_date": rate_date, "rate_source": rate_source,
+           "details": {}, "pivots": {}, "prices": {},
            "rs": {}, "mg": {}, "tickets": {}, "titles": {}, "units": {}}
     for brand, ticket in picks.items():
         if not ticket:
@@ -440,6 +442,103 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
             nat: dict(zip(g["형태"], g["단가"])) for nat, g in pt.groupby("국가")
         }
     return ctx
+
+
+# ── 발행 이력 · 스냅샷 잠금 ────────────────────────────────────────────────
+# 왜 얼려야 하나 — 매출 데이터는 매일 갱신되고 취소도 뒤늦게 반영된다.
+# 발행 시점 값을 남겨두지 않으면 "지난달에 보낸 정산서"를 다시 뽑을 수 없고,
+# 파트너가 금액을 물어왔을 때 대조할 원본이 없다.
+_issue_store = JsonStore("settlement_issues.json", default={"issues": {}})
+
+
+def _ctx_key(ip: str, start: str, end: str) -> str:
+    return f"{ip}|{start}|{end}"
+
+
+def ctx_to_json(ctx: dict) -> dict:
+    """DataFrame 을 JSON 으로. 발행 시점 값을 그대로 재현할 수 있어야 한다."""
+    out = {k: v for k, v in ctx.items()
+           if k not in ("details", "pivots")}
+    out["details"] = {b: d.to_dict("records") for b, d in ctx["details"].items()}
+    out["pivots"] = {
+        b: {"index": list(p.index), "columns": list(p.columns),
+            "values": p.values.tolist()}
+        for b, p in ctx["pivots"].items() if p is not None and not p.empty}
+    return out
+
+
+def ctx_from_json(d: dict) -> dict:
+    ctx = dict(d)
+    ctx["details"] = {b: pd.DataFrame(v) for b, v in (d.get("details") or {}).items()}
+    ctx["pivots"] = {
+        b: pd.DataFrame(v["values"], index=v["index"], columns=v["columns"])
+        for b, v in (d.get("pivots") or {}).items()}
+    return ctx
+
+
+def record_issue(ctx: dict, by: str, reason: str = "") -> dict:
+    """발행 기록 + 스냅샷 저장. 같은 IP·기간을 다시 내면 정정본 v2, v3… 이 된다."""
+    from datetime import datetime
+    key = _ctx_key(ctx["ip"], ctx["start"], ctx["end"])
+    snap = ctx_to_json(ctx)
+
+    box = {}
+
+    def _fn(d):
+        issues = d.setdefault("issues", {})
+        cur = issues.get(key) or {"versions": []}
+        v = len(cur["versions"]) + 1
+        cur["versions"].append({
+            "version": v, "by": by,
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "reason": reason, "snapshot": snap,
+        })
+        issues[key] = cur
+        box["version"] = v
+
+    _issue_store.mutate(_fn)
+    return {"version": box.get("version", 1), "key": key}
+
+
+def list_issues(ip: str = "", start: str = "", end: str = "") -> list[dict]:
+    """발행 이력. 인자를 주면 그 건만, 없으면 전부(최신순)."""
+    issues = _issue_store.load().get("issues", {})
+    keys = [_ctx_key(ip, start, end)] if ip else list(issues)
+    out = []
+    for k in keys:
+        blk = issues.get(k)
+        if not blk:
+            continue
+        for v in blk["versions"]:
+            out.append({"key": k, **{x: v[x] for x in
+                                     ("version", "by", "at", "reason")}})
+    return sorted(out, key=lambda x: x["at"], reverse=True)
+
+
+def issue_version(ip: str, start: str, end: str) -> int:
+    """다음에 발행하면 몇 번째가 되는지. 1이면 최초 발행."""
+    blk = _issue_store.load().get("issues", {}).get(_ctx_key(ip, start, end))
+    return len(blk["versions"]) + 1 if blk else 1
+
+
+def load_snapshot(ip: str, start: str, end: str, version: int | None = None) -> dict | None:
+    """발행 당시 스냅샷을 되살린다. version 을 안 주면 최신본."""
+    blk = _issue_store.load().get("issues", {}).get(_ctx_key(ip, start, end))
+    if not blk or not blk["versions"]:
+        return None
+    vs = blk["versions"]
+    rec = vs[-1] if version is None else next(
+        (v for v in vs if v["version"] == version), None)
+    if not rec:
+        return None
+    ctx = ctx_from_json(rec["snapshot"])
+    ctx["version"] = rec["version"]
+    ctx["reason"] = rec.get("reason", "")
+    return ctx
+
+
+def issues_version() -> float:
+    return _issue_store.version()
 
 
 def verify(detail: pd.DataFrame, rates: dict, tol: float = 0.002) -> list[str]:

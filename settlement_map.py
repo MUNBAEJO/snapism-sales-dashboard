@@ -40,23 +40,24 @@ _store = JsonStore("settlement_mapping.json",
 
 
 # ── 환율 ──────────────────────────────────────────────────────────────────
-def load_rates(rate_date: str | None = None) -> tuple[dict, str]:
-    """(환율dict, 실제 적용 기준일). 정산 종료일 당일, 휴장일이면 직전 영업일.
+def load_rates(rate_date: str | None = None) -> tuple[dict, str, str]:
+    """(환율dict, 실제 적용 기준일, 출처 문구).
 
-    네트워크가 막히거나 조회에 실패하면 config.json 기본 환율로 떨어진다.
+    ★출처를 함께 돌려주는 이유 — 서울외국환중개(smbs.biz)는 공개 API 가 없고
+      **과거 날짜 조회도 안 된다.** 과거 정산은 자동 조회값으로 폴백하는데,
+      문서에 '서울외국환중개' 라고 찍으면 대외 문서에 틀린 출처가 박힌다.
+      settlement_fx.resolve() 가 실제 출처를 판별해 준다.
     """
-    if rate_date:
-        try:
-            from update_rates import get_effective_date, get_rates_for_date
-            eff = get_effective_date(rate_date)
-            return get_rates_for_date(eff), eff
-        except Exception:
-            pass
+    try:
+        import settlement_fx
+        return settlement_fx.resolve(rate_date or "")
+    except Exception:
+        pass
     try:
         cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
-        return cfg.get("exchange_rates", {"KRW": 1}), (rate_date or "")
+        return cfg.get("exchange_rates", {"KRW": 1}), (rate_date or ""), "참고 환율"
     except Exception:
-        return {"KRW": 1}, (rate_date or "")
+        return {"KRW": 1}, (rate_date or ""), "참고 환율"
 
 
 def _rate_case(rates: dict, col: str = '"결제 단위"') -> str:

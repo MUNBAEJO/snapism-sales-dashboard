@@ -22,8 +22,11 @@ from streamlit.errors import StreamlitAPIException
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auth
 import settlement_calc as sc
+import settlement_fx as fx
 import settlement_map as sm
+import settlement_mail as smail
 import settlement_pdf as sp
+import ui_theme
 
 # 금액을 다루는 페이지다. 사이드바에서 이미 걸러지지만 url 직접 입력도 막는다.
 _email = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
@@ -33,42 +36,28 @@ if not auth.can_view_page(_email, "settledoc"):
 
 CAN_EDIT = auth.can_edit(_email)     # 승인·저장은 owner/editor 만
 
-INK = "#1a1a2e"
-BRAND = "#4f46e5"
-
-st.markdown(f"""
-<style>
-.section-title {{ font-size:1.12rem; font-weight:700; color:{INK};
-  margin:4px 0 12px; padding-left:12px; border-left:4px solid {BRAND}; line-height:1.4; }}
-.res-ok, .res-warn {{ border-radius:12px; padding:14px 18px; margin:6px 0 14px;
-  border:1px solid; font-size:.92rem; }}
-.res-ok   {{ background:#eefbf3; border-color:#b6e6c8; color:#166534; }}
-.res-warn {{ background:#fff7ed; border-color:#fcd9a8; color:#92400e; }}
-.res-big  {{ font-size:1.5rem; font-weight:800; letter-spacing:-.02em; }}
-.tk {{ font-family:ui-monospace,Menlo,monospace; font-weight:700; color:{BRAND}; }}
-.muted {{ color:#8a93a3; font-size:.83rem; }}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="section-title">🧾 IP 정산서 · 티켓 매핑</div>',
+ui_theme.inject()
+st.markdown('<div class="sechd"><span class="secn">🧾</span>'
+            '<span class="sect">IP 정산서</span></div>'
+            '<div class="secq">지라 티켓번호를 기준으로 정산해요. '
+            '타이틀을 확정하면 잔여 매출이 줄고, 0원이 되면 정산서를 낼 수 있어요.</div>',
             unsafe_allow_html=True)
-st.caption("정산은 지라 티켓번호를 기준으로 해요. 타이틀마다 티켓을 확정하면 "
-           "아래 잔여 매출이 줄어들고, 0원이 되면 정산서를 낼 수 있어요.")
 
 
 # ── 데이터 로딩 ────────────────────────────────────────────────────────────
 # ★st.cache_data 는 밑줄로 시작하는 인자를 해시에서 제외한다.
 #   버전 값을 넘길 땐 절대 밑줄을 붙이지 말 것(캐시 키가 죽는다).
 @st.cache_data(ttl=900, max_entries=8, show_spinner="매출을 집계하는 중이에요…")
-def _titles(brand, start, end, rate_key):
+def _titles(brand, start, end, rate_key, fx_key):
     # 종료일 환율은 캐시에 없으면 조회를 시도한다(최대 수십 초). 캐시가 900초라
     # 실무자가 기다리는 건 기간을 처음 바꿀 때 한 번뿐이다.
-    rates, eff = sm.load_rates(end)
-    return sm.title_revenue(brand, start, end, rates), eff
+    # fx_key = 공식 환율 저장 파일 mtime — 환율을 올리면 캐시가 자동으로 풀린다.
+    rates, eff, src = sm.load_rates(end)
+    return sm.title_revenue(brand, start, end, rates), eff, src
 
 
 def load_titles(brand, start, end):
-    return _titles(brand, start, end, end)
+    return _titles(brand, start, end, end, fx.version())
 
 
 # ── 기간 ─────────────────────────────────────────────────────────────────
@@ -84,10 +73,43 @@ if start > end:
     st.stop()
 S, E = start.isoformat(), end.isoformat()
 
-_, _eff = load_titles("photoism", S, E)
-c3.markdown(f"<div class='muted' style='padding-top:30px'>환율 기준일 "
-            f"<b>{_eff or '—'}</b> · 서울외국환중개 매매기준율<br>"
-            f"종료일 당일, 휴장일이면 직전 영업일</div>", unsafe_allow_html=True)
+_, _eff, _src = load_titles("photoism", S, E)
+_official = _src == fx.SRC_OFFICIAL
+c3.markdown(
+    f"<div style='padding-top:26px;font-size:12.5px;color:var(--text-2)'>"
+    f"환율 기준일 <b>{_eff or '—'}</b>"
+    f"<span class='st-chip {"st-ok" if _official else "st-warn"}'>{_src}</span>"
+    f"<div style='color:var(--text-3);font-size:11.5px;margin-top:2px'>"
+    f"종료일 당일, 휴장일이면 직전 영업일</div></div>",
+    unsafe_allow_html=True)
+
+# ★서울외국환중개는 공개 API 가 없고 과거 날짜 조회도 안 된다.
+#   과거 정산은 자동 조회값으로 폴백하므로, 공식 환율을 올려 덮어쓸 수 있게 한다.
+if not _official:
+    with st.expander("💱 서울외국환중개 공식 환율 올리기 "
+                     "— 지금은 자동 조회값을 쓰고 있어요", expanded=False):
+        st.caption(f"서울외국환중개는 공개 API 가 없어서 **과거 날짜는 못 가져와요**. "
+                   f"`TodayExRate.xls` 를 올리면 {_eff} 기준 공식 환율로 정산해요.")
+        up = st.file_uploader("TodayExRate.xls", type=["xls", "xlsx", "csv", "html"],
+                              key="fxup", disabled=not CAN_EDIT)
+        if up is not None:
+            try:
+                parsed, ref = fx.parse_upload(up.getvalue(), up.name)
+                st.success(f"{len(parsed) - 1}개 통화를 읽었어요"
+                           + (f" · 파일 기준일 {ref}" if ref else ""))
+                st.dataframe([{"통화": k, "원화": v} for k, v in
+                              sorted(parsed.items()) if k != "KRW"],
+                             hide_index=True, use_container_width=True)
+                if ref and ref != _eff:
+                    st.warning(f"파일 기준일({ref})이 정산 기준일({_eff})과 달라요. "
+                               "그래도 저장하면 정산 기준일 환율로 씁니다.")
+                if st.button("💾 이 환율로 저장", disabled=not CAN_EDIT):
+                    fx.save(_eff, parsed, _email, memo=up.name)
+                    auth.log_event(_email, f"settlefx:{_eff}")
+                    st.cache_data.clear()
+                    st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"읽지 못했어요 — {e}")
 
 if not CAN_EDIT:
     st.info("🔎 보기 전용이에요. 승인·저장은 편집 권한이 있어야 해요.")
@@ -122,7 +144,7 @@ def _rerun():
 
 @st.fragment
 def brand_panel(brand: str):
-    df, _ = load_titles(brand, S, E)
+    df, _, _ = load_titles(brand, S, E)
     if df.empty:
         st.info("이 기간에 정산 대상 매출이 없어요.")
         return
@@ -131,25 +153,25 @@ def brand_panel(brand: str):
 
     # ── 잔여 검증 ─────────────────────────────────────────────────────
     if r["잔여매출"] == 0:
-        st.markdown(
-            f"<div class='res-ok'>✅ <b>잔여 매출 0원</b> — 모든 타이틀이 확정됐어요. "
-            f"정산서를 낼 수 있어요.<br><span class='muted'>확정 {r['확정건']}건 · "
-            f"총 {_fmt(r['총매출'])}원</span></div>", unsafe_allow_html=True)
+        ui_theme.nbox("ok", f"✅ <b>잔여 매출 0원</b> — 모든 타이틀이 확정됐어요. "
+                            f"정산서를 낼 수 있어요."
+                            f"<div class='sub'>확정 {r['확정건']}건 · "
+                            f"총 {_fmt(r['총매출'])}원</div>")
     else:
-        st.markdown(
-            f"<div class='res-warn'>미확정 매출 <span class='res-big'>"
-            f"{_fmt(r['잔여매출'])}원</span> · 전체의 {r['잔여비중']:.1f}%<br>"
-            f"<span class='muted'>남은 타이틀 {r['잔여건']}개 · 확정 {r['확정건']}개 · "
-            f"총 {_fmt(r['총매출'])}원 — 0원이 되면 발행할 수 있어요</span></div>",
-            unsafe_allow_html=True)
+        ui_theme.nbox("warn",
+                      f"미확정 매출 <span class='big'>{_fmt(r['잔여매출'])}원</span> "
+                      f"· 전체의 {r['잔여비중']:.1f}%"
+                      f"<div class='sub'>남은 타이틀 {r['잔여건']}개 · "
+                      f"확정 {r['확정건']}개 · 총 {_fmt(r['총매출'])}원 — "
+                      f"0원이 되면 발행할 수 있어요</div>")
 
     # ── 진행 현황 ─────────────────────────────────────────────────────
-    cols = st.columns(5)
-    for i, s in enumerate(["확정", "선택필요", "확인필요", "미연결", "제외"]):
-        sub = ann[ann["상태"] == s]
-        cols[i].metric(f"{STATE_ICON[s]} {s}", f"{len(sub)}건",
-                       f"{_fmt(sub['매출액'].sum())}원" if len(sub) else None,
-                       delta_color="off")
+    ui_theme.kpis([
+        ui_theme.kpi(f"{STATE_ICON[s]} {s}", f"{len(ann[ann['상태'] == s])}건",
+                     f"{_fmt(ann[ann['상태'] == s]['매출액'].sum())}원",
+                     hero=(s == "확정"))
+        for s in ["확정", "선택필요", "확인필요", "미연결", "제외"]
+    ], cls="k5")
 
     # ── 대기열 ────────────────────────────────────────────────────────
     # 매출 큰 것부터 처리하는 게 맞다 — 상위 73개면 전체 금액의 80% 가 잠긴다.
@@ -320,7 +342,7 @@ def calc_panel():
                 "확정된 티켓만 여기 나와요.")
         return
 
-    rates, eff = sm.load_rates(E)
+    rates, eff, src = sm.load_rates(E)
     total_base = total_a = total_m = 0
     details, pivots, warns = {}, {}, []
 
@@ -344,31 +366,35 @@ def calc_panel():
         total_m += round(base * rm) if rm else 0
 
         qty = "프레임수" if b == "photoism" else "건수"
-        k = st.columns(4)
-        k[0].metric("매출(KRW)", f"{_fmt(base)}원")
-        k[1].metric(qty, _fmt(d["수량"].sum()))
-        k[2].metric("소속사", f"{_fmt(round(base * ra))}원" if ra else "요율 없음")
-        k[3].metric("대행사", f"{_fmt(round(base * rm))}원" if rm else "요율 없음")
+        ui_theme.kpis([
+            ui_theme.kpi("매출(KRW)", f"{_fmt(base)}원", hero=True),
+            ui_theme.kpi(qty, _fmt(d["수량"].sum())),
+            ui_theme.kpi("소속사", f"{_fmt(round(base * ra))}원" if ra else "—",
+                         f"요율 {ra * 100:.1f}%" if ra else "요율 없음"),
+            ui_theme.kpi("대행사", f"{_fmt(round(base * rm))}원" if rm else "—",
+                         f"요율 {rm * 100:.1f}%" if rm else "요율 없음"),
+        ], cls="k4")
         with st.expander(f"국가별 내역 · 오픈 {len(d)}개국 중 "
                          f"매출발생 {int((d['매출액'] > 0).sum())}개국"):
             st.dataframe(d[["국가", "unit", "수량", "현지", "매출액"]],
                          hide_index=True, use_container_width=True)
-        st.divider()
 
     # ── 합산 ──────────────────────────────────────────────────────────
-    st.markdown("##### 🧾 합산")
-    k = st.columns(3)
-    k[0].metric("정산기준액", f"{_fmt(total_base)}원")
-    k[1].metric("소속사 정산액", f"{_fmt(total_a)}원")
-    k[2].metric("대행사 정산액", f"{_fmt(total_m)}원")
-    st.caption(f"환율 기준일 {eff or '—'} · 서울외국환중개 매매기준율")
+    ui_theme.sec("합", "합산", f"환율 기준일 {eff or '—'} · {src}")
+    ui_theme.kpis([
+        ui_theme.kpi("정산기준액", f"{_fmt(total_base)}원", "포토이즘 + 스내피즘", hero=True),
+        ui_theme.kpi("소속사 정산액", f"{_fmt(total_a)}원"),
+        ui_theme.kpi("대행사 정산액", f"{_fmt(total_m)}원"),
+    ], cls="k3")
 
     # ── 검증 ──────────────────────────────────────────────────────────
     if warns:
-        st.error("환율 검증 실패 — 현지 매출 × 환율이 매출(KRW)과 안 맞아요:\n\n"
-                 + "\n".join(f"- {w}" for w in warns[:5]))
+        ui_theme.nbox("warn", "⚠️ <b>환율 검증 실패</b> — 현지 매출 × 환율이 "
+                              "매출(KRW)과 안 맞아요.<div class='sub'>"
+                      + "<br>".join(warns[:5]) + "</div>")
     else:
-        st.success("✅ 검증 통과 — 모든 국가에서 현지 매출 × 환율 = 매출(KRW)")
+        ui_theme.nbox("ok", "✅ <b>검증 통과</b> — 모든 국가에서 "
+                            "현지 매출 × 환율 = 매출(KRW)")
 
     # ── 멤버명 정규화 ─────────────────────────────────────────────────
     unmapped = sc.unmapped_members(*pivots.values())
@@ -390,46 +416,146 @@ def calc_panel():
                 st.dataframe(p, use_container_width=True)
 
     # ── 발행 ──────────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("##### 📄 정산서 발행")
     # 타이틀은 '260605 TREASURE' 처럼 날짜 접두가 붙어 있다. 문서에는 IP명만 쓴다.
     _t = (picks["photoism"][1] or picks["snapism"][1] or [""])[0]
+    ui_theme.sec("발", "정산서 발행")
     ip = st.text_input("정산서에 표기할 IP명", key="ipname",
                        value=re.sub(r"^\s*\d{5,8}\s*", "", str(_t)).strip())
+    ipn = ip.strip()
+
+    # 같은 IP·기간을 다시 내면 정정본이다. 몇 번째가 되는지 먼저 알려준다.
+    nextv = sc.issue_version(ipn, S, E) if ipn else 1
+    reason = ""
+    if nextv > 1:
+        hist0 = sc.list_issues(ipn, S, E)
+        ui_theme.nbox("warn",
+                      f"이 건은 이미 <b>{nextv - 1}번</b> 발행됐어요. 다시 만들면 "
+                      f"<b>정정본 v{nextv}</b> 가 돼요."
+                      f"<div class='sub'>최근 발행 {hist0[0]['at'][:16]} · "
+                      f"{hist0[0]['by']}</div>")
+        reason = st.text_input("정정 사유 (문서 첫 장에 표기돼요)", key="reason",
+                               placeholder="예: 대만 취소분 반영")
+
     blockers = []
     if warns:
-        blockers.append("환율 검증이 실패했어요.")
-    if not any((ctx or {}).get("agency") or (ctx or {}).get("mgmt")
-               for ctx in (sc.get_rs(b, t) for b, (t, _) in picks.items() if t)):
-        blockers.append("요율이 하나도 없어요.")
-    if not ip.strip():
-        blockers.append("IP명을 넣어 주세요.")
-
+        blockers.append("환율 검증 실패")
+    if not any((r or {}).get("agency") or (r or {}).get("mgmt")
+               for r in (sc.get_rs(b, t) for b, (t, _) in picks.items() if t)):
+        blockers.append("요율 없음")
+    if not ipn:
+        blockers.append("IP명 미입력")
+    if nextv > 1 and not reason.strip():
+        blockers.append("정정 사유 미입력")
     if blockers:
-        st.warning("발행 전에 정리할 게 있어요 — " + " / ".join(blockers))
+        st.warning("발행 전에 정리할 게 있어요 — " + " · ".join(blockers))
+
     if st.button("📄 정산서 만들기", type="primary",
                  disabled=not CAN_EDIT or bool(blockers)):
         with st.spinner("PDF 를 만드는 중이에요…"):
             ctx = sc.build_context({b: t for b, (t, _) in picks.items()},
-                                   S, E, ip.strip(), rates, eff or E,
-                                   date.today().isoformat())
+                                   S, E, ipn, rates, eff or E,
+                                   date.today().isoformat(), src)
+            # ★스냅샷을 먼저 남긴다. 매출 데이터는 매일 바뀌고 취소도 뒤늦게 붙으므로
+            #   발행 시점 값을 얼려두지 않으면 보낸 문서를 다시 뽑을 수 없다.
+            rec = sc.record_issue(ctx, _email, reason.strip())
+            ctx["version"], ctx["reason"] = rec["version"], reason.strip()
             made = {}
             for kind, lab in (("agency", "소속사"), ("mgmt", "대행사")):
-                if not any((ctx["rs"].get(b) or {}).get(
-                        "agency" if kind == "agency" else "mgmt")
-                        for b in ctx["details"]):
-                    continue        # 그 수취처 요율이 없으면 문서를 만들지 않는다
+                key = "agency" if kind == "agency" else "mgmt"
+                if not any((ctx["rs"].get(b) or {}).get(key) for b in ctx["details"]):
+                    continue    # 그 수취처 요율이 없으면 문서를 만들지 않는다
                 made[lab] = sp.render_pdf(
                     sp.build_html(ctx, kind),
-                    f"IP 정산서({lab}) · {ip.strip()} · {S}~{E}")
+                    f"IP 정산서({lab}) · {ipn} · {S}~{E}")
             st.session_state["_pdfs"] = made
-            auth.log_event(_email, f"settleissue:{ip.strip()}:{S}~{E}")
+            st.session_state["_pdf_meta"] = {"ip": ipn, "v": rec["version"],
+                                             "reason": reason.strip()}
+            auth.log_event(_email, f"settleissue:{ipn} v{rec['version']}")
+        _rerun()
 
-    for lab, data in (st.session_state.get("_pdfs") or {}).items():
-        st.download_button(f"⬇️ {lab} 정산서 내려받기", data,
-                           file_name=f"정산서_{st.session_state.get('ipname','IP')}"
-                                     f"_{S[:7]}_{lab}.pdf",
-                           mime="application/pdf", key=f"dl_{lab}")
+    pdfs = st.session_state.get("_pdfs") or {}
+    meta = st.session_state.get("_pdf_meta") or {}
+    if pdfs:
+        ui_theme.nbox("ok",
+                      f"✅ <b>{meta.get('ip')}</b> 정산서 {len(pdfs)}부를 만들었어요"
+                      + (f" · 정정본 v{meta.get('v')}" if meta.get("v", 1) > 1 else "")
+                      + f"<div class='sub'>{' · '.join(pdfs)}</div>")
+        cols = st.columns(len(pdfs))
+        for c, (lab, data) in zip(cols, pdfs.items()):
+            c.download_button(
+                f"⬇️ {lab} 정산서", data,
+                file_name=f"정산서_{meta.get('ip', 'IP')}_{S[:7]}_{lab}.pdf",
+                mime="application/pdf", key=f"dl_{lab}",
+                use_container_width=True)
+
+        # ── 메일 발송 ─────────────────────────────────────────────────
+        # 정산서를 만든 뒤에만 보낼 수 있다. 수신자는 화면에서 직접 받는다 —
+        # 금액이 담긴 대외 문서라 고정 목록으로 자동 발송하면 안 된다.
+        ui_theme.sec("메", "메일 발송", "방금 만든 정산서를 원하는 사람에게 보내요")
+        ok, who = smail.config_ready()
+        if not ok:
+            st.info(f"메일 설정이 아직이에요 — {who}")
+        else:
+            st.caption(f"보내는 사람 · {who}")
+            m1, m2 = st.columns(2)
+            to_raw = m1.text_input("받는 사람", key="mail_to",
+                                   placeholder="a@b.com, c@d.com")
+            cc_raw = m2.text_input("참조", key="mail_cc", placeholder="선택")
+            picked = st.multiselect("첨부할 정산서", list(pdfs),
+                                    default=list(pdfs), key="mail_files")
+            note = st.text_area("덧붙일 말 (선택)", key="mail_note", height=80)
+
+            to = [x.strip() for x in to_raw.replace(";", ",").split(",") if "@" in x]
+            cc = [x.strip() for x in cc_raw.replace(";", ",").split(",") if "@" in x]
+            dup = smail.already_sent(meta.get("ip", ""), S, E, meta.get("v", 1))
+            if dup:
+                st.warning(f"이 건은 {dup['at'][:16]} 에 이미 보냈어요 "
+                           f"({', '.join(dup['to'])}). 다시 보내면 중복이에요.")
+
+            b1, b2 = st.columns(2)
+            if b1.button("👀 미리보기", use_container_width=True,
+                         disabled=not (to and picked)):
+                msg = smail.build_message(
+                    meta.get("ip", ""), S, E, {k: pdfs[k] for k in picked},
+                    to, cc, meta.get("v", 1), meta.get("reason", ""), note)
+                st.code(f"제목: {msg['Subject']}\n"
+                        f"받는 사람: {msg['To']}\n"
+                        f"참조: {msg.get('Cc') or '-'}\n"
+                        f"첨부: {', '.join(picked)}\n\n"
+                        + msg.get_body().get_content(), language=None)
+
+            if b2.button("📧 보내기", type="primary", use_container_width=True,
+                         disabled=not (CAN_EDIT and to and picked)):
+                try:
+                    msg = smail.build_message(
+                        meta.get("ip", ""), S, E, {k: pdfs[k] for k in picked},
+                        to, cc, meta.get("v", 1), meta.get("reason", ""), note)
+                    smail.send(msg, to, cc)
+                    smail.log_sent(meta.get("ip", ""), S, E, to, cc,
+                                   meta.get("v", 1), _email, picked)
+                    auth.log_event(_email,
+                                   f"settlemail:{meta.get('ip')}→{len(to)}명")
+                    st.success(f"보냈어요 — {', '.join(to)}")
+                except Exception as e:                      # noqa: BLE001
+                    st.error(f"발송 실패: {e}")
+
+    # ── 이력 ──────────────────────────────────────────────────────────
+    hist = sc.list_issues()
+    if hist:
+        with st.expander(f"🗂 발행 이력 ({len(hist)}건)"):
+            st.dataframe(
+                [{"IP·기간": h["key"].replace("|", " · "), "버전": h["version"],
+                  "발행일시": h["at"][:16], "발행자": h["by"],
+                  "정정사유": h["reason"] or "—"} for h in hist[:50]],
+                hide_index=True, use_container_width=True)
+    sent = smail.sent_log()
+    if sent:
+        with st.expander(f"📧 발송 이력 ({len(sent)}건)"):
+            st.dataframe(
+                [{"IP": r["ip"], "기간": f"{r['start']}~{r['end']}",
+                  "버전": r["version"], "받는 사람": ", ".join(r["to"]),
+                  "보낸일시": r["at"][:16], "보낸이": r["by"]} for r in sent],
+                hide_index=True, use_container_width=True)
 
 
 t1, t2 = st.tabs(["🔗 티켓 매핑", "🧮 정산 계산"])
