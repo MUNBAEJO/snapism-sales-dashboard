@@ -31,8 +31,10 @@ BASE_DIR = Path(__file__).parent
 PRETENDARD = ("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9"
               "/dist/web/variable/pretendardvariable-dynamic-subset.min.css")
 
-PIE = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#7c77ee",
-       "#c98a2e", "#5f6b7a"]
+# 도넛 팔레트. 스펙 순서에서 6번째만 바꿨다 — 원래 #7c77ee 는 1번(#6366f1)과
+# 거의 같은 보라라서 조각과 범례를 맞추기 어렵다는 피드백이 있었다. 금색으로 교체.
+PIE = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#c98a2e",
+       "#7c77ee", "#5f6b7a"]
 BRAND_LABEL = {"photoism": "포토이즘", "snapism": "스내피즘"}
 QTY_LABEL = {"photoism": "프레임수", "snapism": "건수"}
 QTY_UNIT = {"photoism": "프레임", "snapism": "건"}
@@ -64,24 +66,45 @@ def _fx_cell(unit: str, local, krw) -> str:
 
 
 def _donut(rows, total):
-    """conic-gradient 도넛 + 범례. 상위 6개국 + 기타."""
+    """도넛 + 범례. 상위 6개국 + 기타.
+
+    ★조각 사이에 흰 경계선을 넣는다. conic-gradient 는 색이 맞붙어서 비슷한 색끼리
+      경계가 안 보인다는 피드백이 있었다. SVG 로 그리면 stroke 로 갈라 줄 수 있고
+      크롬 인쇄에서도 안전하다.
+    ★범례는 순위 번호를 붙여 조각과 1:1로 짚을 수 있게 한다.
+    """
+    import math
     top = rows[:6]
-    acc, stops, leg = 0.0, [], []
-    for i, r in enumerate(top):
-        p = (r["매출액"] / total * 100) if total else 0
-        stops.append(f"{PIE[i]} {acc:.4f}% {acc + p:.4f}%")
-        acc += p
-        leg.append(f'<div><i style="background:{PIE[i]}"></i>{r["국가"]} '
-                   f'<b>{p:.1f}%</b></div>')
-    stops.append(f"{PIE[7]} {acc:.4f}% 100%")
     rest = len(rows) - len(top)
+    segs, leg, acc = [], [], 0.0
+    size, r_out, r_in = 148, 74, 41
+    items = [(r["국가"], (r["매출액"] / total * 100) if total else 0) for r in top]
     if rest > 0:
-        leg.append(f'<div><i style="background:{PIE[7]}"></i>기타 {rest}개국 '
-                   f'<b>{100 - acc:.1f}%</b></div>')
-    return f"background:conic-gradient({','.join(stops)})", "".join(leg)
+        items.append((f"기타 {rest}개국", max(0.0, 100 - sum(p for _, p in items))))
+    for i, (name, p) in enumerate(items):
+        col = PIE[i] if i < len(top) else PIE[7]
+        a0 = math.radians(acc * 3.6 - 90)
+        a1 = math.radians((acc + p) * 3.6 - 90)
+        acc += p
+        c = size / 2
+        x0, y0 = c + r_out * math.cos(a0), c + r_out * math.sin(a0)
+        x1, y1 = c + r_out * math.cos(a1), c + r_out * math.sin(a1)
+        xi1, yi1 = c + r_in * math.cos(a1), c + r_in * math.sin(a1)
+        xi0, yi0 = c + r_in * math.cos(a0), c + r_in * math.sin(a0)
+        big = 1 if p > 50 else 0
+        segs.append(
+            f'<path d="M {x0:.2f} {y0:.2f} A {r_out} {r_out} 0 {big} 1 '
+            f'{x1:.2f} {y1:.2f} L {xi1:.2f} {yi1:.2f} '
+            f'A {r_in} {r_in} 0 {big} 0 {xi0:.2f} {yi0:.2f} Z" '
+            f'fill="{col}" stroke="#fff" stroke-width="1.6"/>')
+        leg.append(f'<div><i style="background:{col}">{i + 1}</i>{name} '
+                   f'<b>{p:.1f}%</b></div>')
+    svg = (f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
+           + "".join(segs) + "</svg>")
+    return svg, "".join(leg)
 
 
-def _country_table(rows, qty_label, party, rate_pct, rs):
+def _country_table(rows, qty_label, rate_pct, rs):
     """국가 | 통화 | 수량 | 현지 매출 | 적용 환율 | 매출(KRW) | 요율 | 정산액 | 비중
 
     ★소계 정산액은 각 행 정산액의 합. 기준액×요율로 내면 1원 어긋난다.
@@ -92,7 +115,7 @@ def _country_table(rows, qty_label, party, rate_pct, rs):
     dens = " d2" if len(rows) > 33 else (" d1" if len(rows) > 26 else "")
     h = (f'<table class="t2 num{dens}"><tr><th>국가</th><th>통화</th>'
          f'<th>{qty_label}</th><th>현지 매출</th><th>적용 환율</th>'
-         f'<th>매출(KRW)</th><th>요율</th><th>{party} 정산액</th>'
+         '<th>매출(KRW)</th><th>요율</th><th>정산액</th>'
          '<th>비중</th></tr>')
     for r in rows:
         krw, loc, q = int(r["매출액"]), int(r["현지"]), int(r["수량"])
@@ -229,12 +252,11 @@ padding-bottom:10px;border-bottom:2px solid var(--ink)}
 .phd .r b{color:var(--text)}
 .duo{display:flex;gap:20px;margin-top:16px;align-items:center}
 .donutbox{flex:1.25;display:flex;align-items:center;gap:18px}
-.donut{width:148px;height:148px;border-radius:50%;position:relative;flex:none}
-.donut::after{content:"";position:absolute;inset:34px;background:#fff;border-radius:50%}
+.donut{width:148px;height:148px;flex:none;line-height:0}
 .leg{font-size:11.5px;color:var(--text-2);display:grid;
 grid-template-columns:1fr 1fr;gap:4px 16px}
 .leg div{display:flex;align-items:center;gap:6px;white-space:nowrap}
-.leg i{width:8px;height:8px;border-radius:2px;flex:none}
+.leg i{width:14px;height:14px;border-radius:4px;flex:none;color:#fff;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;font-style:normal}
 .leg b{color:var(--text)}
 .kpis{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .kpi{border:1px solid var(--border);border-radius:10px;padding:9px 12px}
@@ -293,7 +315,10 @@ padding:12px 16px;font-size:11px;color:var(--text-2);line-height:1.85}
 
 def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     """kind='agency'(소속사) | 'mgmt'(대행사). **자기 요율만** 문서에 넣는다."""
-    party = "소속사" if kind == "agency" else "대행사"
+    # ★수취처 구분(소속사/대행사)은 **문서에 쓰지 않는다.** 요율이 다른 두 부를
+    #   따로 만들지만 그건 내부 사정이고, 받는 쪽은 자기 정산서만 보면 된다.
+    #   구분은 파일명·문서번호(L/A)에만 남긴다.
+    party = "소속사" if kind == "agency" else "대행사"      # 내부용
     rs_key = "agency" if kind == "agency" else "mgmt"
     rs = next((v for v in ((ctx["rs"].get(b) or {}).get(rs_key)
                            for b in ctx["details"]) if v), None)
@@ -304,6 +329,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     iss = ctx.get("issuer") or {}
     _p = ctx.get("partner") or {}
     recv = (_p.get("agency_name") if kind == "agency" else _p.get("mgmt_name")) or ""
+    use_vat = bool(_p.get("vat", True))
 
     used = [b for b in ("photoism", "snapism")
             if ctx["details"].get(b) is not None and not ctx["details"][b].empty]
@@ -315,7 +341,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     for b in used:
         rows = ctx["details"][b].sort_values("매출액", ascending=False) \
             .to_dict("records")
-        tbl, krw, setl, qty = _country_table(rows, QTY_LABEL[b], party,
+        tbl, krw, setl, qty = _country_table(rows, QTY_LABEL[b],
                                              rate_pct, rs)
         calc[b] = {"rows": rows, "tbl": tbl, "krw": krw, "set": setl, "qty": qty}
     base = sum(c["krw"] for c in calc.values())
@@ -323,7 +349,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     cancel = sum(int(v or 0) for v in (ctx.get("cancel") or {}).values())
 
     def foot(n, tot=4):
-        return (f'<div class="foot"><span>IP 정산서({party}) · {ip} · {ym}'
+        return (f'<div class="foot"><span>IP 정산서 · {ip} · {ym}'
                 + (f' · {docno}' if docno else '')
                 + f'</span><span>{n} / {tot}</span></div>')
 
@@ -351,6 +377,13 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
         shown = v * 100 if cur in FX_100 else v
         fx_cells += (f'<div><span>{cur}{" (100)" if cur in FX_100 else ""}</span>'
                      f'<b>{shown:,.2f}</b></div>')
+
+    # 부가세 — 정산액이 포함인지 별도인지 문서에 못박는다.
+    sup, vat_amt = ((round(total / 1.1), total - round(total / 1.1))
+                    if use_vat else (total, 0))
+    vat_note = (f"정산액은 부가세 포함 금액입니다 (공급가액 {_f(sup)}원 · "
+                f"부가세 {_f(vat_amt)}원)." if use_vat
+                else "정산액은 부가세 별도 금액입니다.")
 
     ver = int(ctx.get("version") or 1)
     badges = f'<span class="badge">{ym} 정산분</span>'
@@ -385,11 +418,11 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     <div class="meta">{'문서번호 <b>' + docno + '</b> · ' if docno else ''}발행일 <b>{ctx['issued']}</b><br>
     발행: {iss.get('company','')} {iss.get('team','')}
     {'(담당 ' + iss.get('name','') + (' · ' + iss.get('email','') if iss.get('email') else '') + ')' if iss.get('name') or iss.get('email') else ''}<br>
-    수신: {recv or ('○○ ' + party)} {ip} 정산 담당</div>
+    수신: {recv + ' ' if recv else ''}{ip} 정산 담당</div>
   </div>
   <div style="margin-top:20px">
     {badges}
-    <div class="title">{ip}<span>IP 정산서 · {party}</span></div>
+    <div class="title">{ip}<span>IP 정산서</span></div>
     <div class="subtitle num">정산기간 {S} ~ {E}{sale_txt}</div>
   </div>
   <div class="intro">{ip}의 {ym} 정산 내역을 아래와 같이 송부드립니다.
@@ -397,20 +430,21 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
    국가별 상세 내역과 멤버별 수량은 다음 장에 기재하였습니다.</div>
   <div class="hero">
     <div class="l">
-      <div class="k">{party} 정산액 · {used_label}</div>
+      <div class="k">정산액 · {used_label}</div>
       <div class="v num">{_f(total)}원</div>
     </div>
     <div class="r num">
       <div><span>정산기준액 (취소 제외)</span><b>{_f(base)}원</b></div>
-      <div><span>{party} 요율</span><b>{rate_pct}</b></div>
+      <div><span>요율</span><b>{rate_pct}</b></div>
       <div><span>취소 금액</span><b>{_f(cancel)}원</b></div>
+      <div><span>부가세</span><b>{'포함' if use_vat else '별도'}</b></div>
     </div>
   </div>
   <div class="sec">
     <h3>{'브랜드별 요약' if multi else '요약'}<small>단위: 원</small></h3>
     <table class="t1 num">
       <tr><th>브랜드</th><th>오픈 · 매출발생</th><th>수량</th><th>매출(KRW)</th>
-      <th>요율</th><th>{party} 정산액</th></tr>
+      <th>요율</th><th>정산액</th></tr>
       {brand_rows}
     </table>
   </div>
@@ -427,7 +461,8 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
   <div class="notes">
     · 매출액은 취소분을 제외한 실판매 금액입니다. &nbsp;· 매출이 발생하지 않은 오픈 국가도
     국가별 내역에 함께 기재하였습니다.<br>
-    · 해외 매출은 정산 종료일 기준 매매기준율로 원화 환산하여 합산합니다.
+    · 해외 매출은 정산 종료일 기준 매매기준율로 원화 환산하여 합산합니다.<br>
+    · {vat_note}
     {'<br>· 본 문서는 레이아웃 검토용 샘플이며 요율·환율 등 일부 수치는 예시값입니다.' if sample else ''}
   </div>
   {foot(1, 2 + len(used))}
@@ -437,7 +472,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     for i, b in enumerate(used):
         c = calc[b]
         pos = [r for r in c["rows"] if r["매출액"] > 0]
-        css, leg = _donut(pos, c["krw"])
+        svg, leg = _donut(pos, c["krw"])
         d = ctx["details"][b]
         top = pos[0] if pos else None
         price_sec = ""
@@ -466,12 +501,12 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
               f'오픈 <b>{len(d)}개국</b> 중 매출발생 <b>{len(pos)}개국</b>')}
   <div class="duo">
     <div class="donutbox">
-      <div class="donut" style="{css}"></div>
+      <div class="donut">{svg}</div>
       <div class="leg num">{leg}</div>
     </div>
     <div class="kpis num">
       <div class="kpi"><div class="k">매출(KRW)</div><div class="v">{_f(c['krw'])}원</div></div>
-      <div class="kpi hl"><div class="k">{party} 정산액</div><div class="v">{_f(c['set'])}원</div></div>
+      <div class="kpi hl"><div class="k">정산액</div><div class="v">{_f(c['set'])}원</div></div>
       <div class="kpi"><div class="k">{QTY_LABEL[b]}</div><div class="v">{_f(c['qty'])}</div></div>
       <div class="kpi"><div class="k">1위 국가</div><div class="v">{
         (top['국가'] + ' ' + f"{top['매출액'] / c['krw'] * 100:.1f}%") if top else '—'}</div></div>
@@ -507,19 +542,17 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     right = " · ".join(f"{BRAND_LABEL[b]} <b class='num'>"
                        f"{_f(mx_tot.get(b, calc[b]['qty']))} {QTY_UNIT[b]}</b>"
                        for b in used)
-    diff_note = (" 멤버 단위로 각각 내림하므로 별첨 합계는 국가별 내역 소계보다 "
-                 f"{' · '.join(diff)} 적을 수 있습니다(정산액은 국가별 내역 기준입니다)."
-                 if diff else "")
+    # 산출 방식 박스는 뺐다(요청). 다만 별첨 합계가 국가별 소계와 다르면 그 이유는
+    # 반드시 남겨야 오해가 없다 → 별첨 표 아래 한 줄로만 붙인다.
+    diff_note = (f'<div class="zeroline" style="margin-top:10px">별첨 수량은 멤버 '
+                 f'단위로 각각 내림하여 산출하므로 국가별 내역 소계보다 '
+                 f"{' · '.join(diff)} 적습니다. 정산액은 국가별 내역 기준입니다."
+                 '</div>' if diff else "")
     html.append(f"""<div class="page">
   {_page_head('별첨', '국가 × 멤버 수량', used_label, right)}
   {mx}
-  <div class="method">
-    <b>산출 방식</b> — 국가별 수량은 국가별 매출액을 해당 국가의 평균 단가로 나눈 후
-    내림하여 산출합니다(매출액·단가 모두 현지통화 기준).
-    포토이즘은 1건에 여러 장이 출력될 수 있어 프레임수로, 스내피즘은 상품 1개가
-    1건이므로 건수로 표기합니다. 스내피즘은 상품 형태(미니 스티커·와이드 스티커·
-    포토카드)별로 단가가 상이합니다. '{ip}'는 멤버가 아닌 단체 항목입니다.{diff_note}
-  </div>
+  {diff_note}
+
   {foot(2 + len(used), 2 + len(used))}
 </div>
 </body></html>""")
