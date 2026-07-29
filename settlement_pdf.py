@@ -65,43 +65,32 @@ def _fx_cell(unit: str, local, krw) -> str:
     return f"{v:,.2f}" + (" <small>/100</small>" if u in FX_100 else "")
 
 
-def _donut(rows, total):
-    """도넛 + 범례. 상위 6개국 + 기타.
+def _share_chart(rows, total):
+    """국가별 매출 비중 — **가로 막대**.
 
-    ★조각 사이에 흰 경계선을 넣는다. conic-gradient 는 색이 맞붙어서 비슷한 색끼리
-      경계가 안 보인다는 피드백이 있었다. SVG 로 그리면 stroke 로 갈라 줄 수 있고
-      크롬 인쇄에서도 안전하다.
-    ★범례는 순위 번호를 붙여 조각과 1:1로 짚을 수 있게 한다.
+    ★도넛 + 범례는 조각과 이름을 눈으로 짝지어야 해서 한눈에 안 들어온다는
+      피드백이 있었다. 가로 막대는 길이만 보면 순위와 격차가 바로 읽히고
+      이름·수치가 같은 줄에 있어 시선을 옮길 필요가 없다.
+      (디자인 스펙의 도넛에서 의도적으로 벗어난 부분)
     """
-    import math
     top = rows[:6]
     rest = len(rows) - len(top)
-    segs, leg, acc = [], [], 0.0
-    size, r_out, r_in = 148, 74, 41
-    items = [(r["국가"], (r["매출액"] / total * 100) if total else 0) for r in top]
+    items = [(r["국가"], (r["매출액"] / total * 100) if total else 0,
+              int(r["매출액"])) for r in top]
     if rest > 0:
-        items.append((f"기타 {rest}개국", max(0.0, 100 - sum(p for _, p in items))))
-    for i, (name, p) in enumerate(items):
+        items.append((f"기타 {rest}개국",
+                      max(0.0, 100 - sum(p for _, p, _ in items)),
+                      total - sum(v for _, _, v in items)))
+    mx = max((p for _, p, _ in items), default=1) or 1
+    h = ""
+    for i, (name, p, amt) in enumerate(items):
         col = PIE[i] if i < len(top) else PIE[7]
-        a0 = math.radians(acc * 3.6 - 90)
-        a1 = math.radians((acc + p) * 3.6 - 90)
-        acc += p
-        c = size / 2
-        x0, y0 = c + r_out * math.cos(a0), c + r_out * math.sin(a0)
-        x1, y1 = c + r_out * math.cos(a1), c + r_out * math.sin(a1)
-        xi1, yi1 = c + r_in * math.cos(a1), c + r_in * math.sin(a1)
-        xi0, yi0 = c + r_in * math.cos(a0), c + r_in * math.sin(a0)
-        big = 1 if p > 50 else 0
-        segs.append(
-            f'<path d="M {x0:.2f} {y0:.2f} A {r_out} {r_out} 0 {big} 1 '
-            f'{x1:.2f} {y1:.2f} L {xi1:.2f} {yi1:.2f} '
-            f'A {r_in} {r_in} 0 {big} 0 {xi0:.2f} {yi0:.2f} Z" '
-            f'fill="{col}" stroke="#fff" stroke-width="1.6"/>')
-        leg.append(f'<div><i style="background:{col}">{i + 1}</i>{name} '
-                   f'<b>{p:.1f}%</b></div>')
-    svg = (f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
-           + "".join(segs) + "</svg>")
-    return svg, "".join(leg)
+        h += (f'<div class="brow"><span class="bn">{name}</span>'
+              f'<span class="bt"><i style="width:{max(p / mx * 100, 1.5):.1f}%;'
+              f'background:{col}"></i></span>'
+              f'<span class="bp num">{p:.1f}%</span>'
+              f'<span class="ba num">{_f(amt)}</span></div>')
+    return f'<div class="bars">{h}</div>'
 
 
 def _country_table(rows, qty_label, rate_pct, rs):
@@ -251,14 +240,16 @@ padding-bottom:10px;border-bottom:2px solid var(--ink)}
 .phd .r{font-size:11px;color:var(--text-2);text-align:right;line-height:1.6}
 .phd .r b{color:var(--text)}
 .duo{display:flex;gap:20px;margin-top:16px;align-items:center}
-.donutbox{flex:1.25;display:flex;align-items:center;gap:18px}
-.donut{width:148px;height:148px;flex:none;line-height:0}
-.leg{font-size:11.5px;color:var(--text-2);display:grid;
-grid-template-columns:1fr 1fr;gap:4px 16px}
-.leg div{display:flex;align-items:center;gap:6px;white-space:nowrap}
-.leg i{width:14px;height:14px;border-radius:4px;flex:none;color:#fff;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;font-style:normal}
-.leg b{color:var(--text)}
-.kpis{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.donutbox{flex:1.28 1 0;min-width:0}
+.bars{display:flex;flex-direction:column;gap:5px}
+.brow{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text)}
+.bn{width:70px;flex:none;font-weight:700;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis}
+.bt{flex:1;height:11px;background:#eef1f5;border-radius:3px;overflow:hidden}
+.bt i{display:block;height:100%;border-radius:3px}
+.bp{width:42px;text-align:right;font-weight:800;flex:none}
+.ba{width:78px;text-align:right;color:var(--text-3);font-size:10.2px;flex:none}
+.kpis{flex:1 1 0;min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .kpi{border:1px solid var(--border);border-radius:10px;padding:9px 12px}
 .kpi .k{font-size:10.5px;font-weight:700;color:var(--text-2)}
 .kpi .v{font-size:14px;font-weight:800;margin-top:3px;white-space:nowrap}
@@ -472,7 +463,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
     for i, b in enumerate(used):
         c = calc[b]
         pos = [r for r in c["rows"] if r["매출액"] > 0]
-        svg, leg = _donut(pos, c["krw"])
+        bars = _share_chart(pos, c["krw"])
         d = ctx["details"][b]
         top = pos[0] if pos else None
         price_sec = ""
@@ -500,10 +491,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True) -> str:
               (ctx['titles'].get(b) or [''])[0],
               f'오픈 <b>{len(d)}개국</b> 중 매출발생 <b>{len(pos)}개국</b>')}
   <div class="duo">
-    <div class="donutbox">
-      <div class="donut">{svg}</div>
-      <div class="leg num">{leg}</div>
-    </div>
+    <div class="donutbox">{bars}</div>
     <div class="kpis num">
       <div class="kpi"><div class="k">매출(KRW)</div><div class="v">{_f(c['krw'])}원</div></div>
       <div class="kpi hl"><div class="k">정산액</div><div class="v">{_f(c['set'])}원</div></div>
