@@ -479,6 +479,70 @@ def set_partner(brand: str, ticket: str, agency_name: str, mgmt_name: str,
     _rates_store.mutate(_fn)
 
 
+def cancel_amount(brand: str, titles: list[str], start: str, end: str,
+                  rates: dict) -> int:
+    """그 기간 취소 금액(원화, 양수). 정산서 표지에 '취소 금액'으로 적는다.
+
+    취소는 음수 거래로 들어온다. 매출액에는 이미 차감돼 있고, 이 값은
+    '얼마가 취소됐는지' 를 보여주기 위한 별도 표기다.
+    """
+    if not titles:
+        return 0
+    rate = smap._rate_case(rates)
+    con = _con()
+    try:
+        if brand == "photoism":
+            raws = _raw_titles(titles, start, end)
+            if not raws:
+                return 0
+            q = f"""
+                SELECT CAST(ROUND(SUM(-CAST("최종 결제 금액" AS BIGINT) * {rate}))
+                       AS BIGINT) AS v
+                FROM read_parquet('{PH_RAW.as_posix()}')
+                WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+                  AND "타이틀명" IN ({_sqlist(raws)}) {_gubun_filter()}
+                  AND CAST("최종 결제 금액" AS BIGINT) < 0"""
+        else:
+            q = f"""
+                SELECT CAST(ROUND(SUM(-(CAST("최종 결제 금액" AS BIGINT)
+                       + CAST("쿠폰 할인 금액" AS BIGINT)) * {rate})) AS BIGINT) AS v
+                FROM read_parquet('{SN_MASTER.as_posix()}')
+                WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+                  AND "프레임 이름" IN ({_sqlist(titles)})
+                  AND CAST("최종 결제 금액" AS BIGINT)
+                      + CAST("쿠폰 할인 금액" AS BIGINT) < 0"""
+        v = con.execute(q).fetchone()[0]
+    finally:
+        con.close()
+    return int(v or 0)
+
+
+def doc_number(ip: str, end: str, kind: str, seq: int = 1) -> str:
+    """문서번호 SB-SET-{YYYYMM}-{IP코드}-{L|A}{일련번호}.
+
+    IP코드는 영문/숫자만 남겨 앞 3글자를 대문자로. 한글만 있으면 IPX 로 둔다.
+    """
+    import re as _re
+    code = _re.sub(r"[^A-Za-z0-9]", "", str(ip or ""))[:3].upper()
+    if len(code) < 3:
+        code = (code + "IPX")[:3]
+    return f"SB-SET-{end[:7].replace('-', '')}-{code}-{'L' if kind == 'agency' else 'A'}{seq:02d}"
+
+
+def issuer() -> dict:
+    """발행처 정보. config.json 의 settlement.issuer 를 쓰고 없으면 기본값."""
+    try:
+        cfg = json.loads((BASE_DIR / "config.json").read_text(encoding="utf-8"))
+        s = (cfg.get("settlement") or {}).get("issuer") or {}
+    except Exception:
+        s = {}
+    return {"company": s.get("company", "㈜서북"),
+            "company_en": s.get("company_en", "SEOBUK CORP."),
+            "team": s.get("team", "콘텐츠운영팀"),
+            "name": s.get("name", ""),
+            "email": s.get("email", "")}
+
+
 def vat_split(pay: int, vat: bool = True) -> tuple[int, int]:
     """(공급가액, 부가세). 총 지급액은 **부가세 포함** 금액으로 본다.
 
@@ -567,6 +631,11 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
         ctx["prices"][brand] = {
             nat: dict(zip(g["형태"], g["단가"])) for nat, g in pt.groupby("국가")
         }
+        ctx.setdefault("cancel", {})[brand] = cancel_amount(
+            brand, titles, start, end, rates)
+    ctx["issuer"] = issuer()
+    ctx["rates"] = {k: v for k, v in rates.items()
+                    if isinstance(v, (int, float)) and v > 0}
     return ctx
 
 
