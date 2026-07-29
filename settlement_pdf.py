@@ -42,8 +42,6 @@ QTY_UNIT = {"photoism": "프레임", "snapism": "건"}
 PRICE_HEAD = {"photoism": "프레임 단가", "snapism": "상품 형태별 단가"}
 # 100단위로 고시하는 통화 — 표기만 100배로 하고 ' /100' 을 붙인다.
 FX_100 = {"JPY", "IDR", "VND", "LAK", "MNT"}
-# 표지 '적용 환율' 그리드에 올릴 통화(8칸)
-FX_SHOW = ["CNY", "JPY", "IDR", "TWD", "MYR", "THB", "HKD", "USD"]
 
 
 def used_brands(ctx: dict) -> list[str]:
@@ -485,12 +483,21 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
                        f'<td>{_f(base)}</td><td></td><td>{_f(total)}</td>'
                        f'<td>{_f(st_)}</td><td>{_f(vt_)}</td></tr>')
 
+    # 표지 환율 그리드 8칸 — ★이번 정산에 **실제로 쓴 통화**만. 고정 목록으로
+    # 찍으면 한국에서만 판매한 건에도 엔·바트가 올라가 정산 범위를 오해시킨다.
+    # 매출 큰 순으로 채우고, 전체 목록은 부록에 있다.
     fxr = ctx.get("rates") or {}
+    seen, ranked = set(), []
+    for b in used:
+        for r in calc[b]["rows"]:
+            u = str(r["unit"] or "").strip().upper()
+            if u and u != "KRW" and u not in seen and fxr.get(u):
+                seen.add(u)
+                ranked.append((r["매출액"], u))
+    ranked.sort(key=lambda x: -x[0])
     fx_cells = ""
-    for cur in FX_SHOW:
-        v = fxr.get(cur)
-        if not v:
-            continue
+    for _, cur in ranked[:8]:
+        v = fxr[cur]
         shown = v * 100 if cur in FX_100 else v
         fx_cells += (f'<div><span>{cur}{" (100)" if cur in FX_100 else ""}</span>'
                      f'<b>{shown:,.2f}</b></div>')
