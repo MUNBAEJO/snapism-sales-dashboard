@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import ip_classify
 import settlement_map as smap
 from json_store import JsonStore
 
@@ -38,6 +39,18 @@ _alias_store = JsonStore("member_aliases.json", default={"aliases": {}})
 def _con():
     # 메모리 한도·스풀 경로는 settlement_map.duck() 한 곳에서 관리한다.
     return smap.duck()
+
+
+def _gubun_filter() -> str:
+    """원거래에도 IP구분 필터를 건다.
+
+    ★_raw_titles 는 '타이틀명' 으로만 좁히는데, 같은 타이틀명 안에 렌탈 행이 섞여 있다
+      (예: 260628 추영우 → 아티스트 8,610,000 + 렌탈 98,000). 집계본은 IP구분으로
+      걸러지지만 원거래는 안 걸러져서 렌탈이 정산에 다시 들어왔다.
+      집계본과 같은 분류식을 원거래에도 그대로 적용한다.
+    """
+    g = ",".join(f"'{x}'" for x in smap.SETTLE_GUBUN)
+    return f"AND ({ip_classify.IP_GUBUN_SQL}) IN ({g})"
 
 
 def _sqlist(vals) -> str:
@@ -164,6 +177,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                     AND "타이틀명" IN ({_sqlist(raws)})
+                    {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
                   SELECT *, pay
@@ -174,9 +188,10 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                 SELECT "국가", any_value(unit) AS unit,
                        CAST(SUM(num) AS BIGINT) AS 현지,
                        CAST(ROUND(SUM(num * r)) AS BIGINT) AS 매출액,
-                       CAST(COUNT(*) AS BIGINT) AS 건수,
+                       CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수,
                        AVG(NULLIF(up, 0)) AS 단가
-                FROM f WHERE num > 0 GROUP BY 1
+                -- 음수(취소)를 살려야 차감된다
+                FROM f WHERE num <> 0 GROUP BY 1
             """).df()
         else:
             df = con.execute(f"""
@@ -193,9 +208,9 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                 SELECT "국가", any_value(unit) AS unit,
                        CAST(SUM(num) AS BIGINT) AS 현지,
                        CAST(ROUND(SUM(num * r)) AS BIGINT) AS 매출액,
-                       CAST(COUNT(*) AS BIGINT) AS 건수,
+                       CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수,
                        AVG(NULLIF(up, 0)) AS 단가
-                FROM t WHERE num > 0 GROUP BY 1
+                FROM t WHERE num <> 0 GROUP BY 1
             """).df()
     finally:
         con.close()
@@ -319,6 +334,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                     AND "타이틀명" IN ({_sqlist(raws)})
+                    {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
                   SELECT *, pay
@@ -327,7 +343,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                   FROM t
                 )
                 SELECT "국가", member, SUM(num) AS num, AVG(NULLIF(up,0)) AS 단가
-                FROM f WHERE num > 0 GROUP BY 1,2
+                FROM f WHERE num <> 0 GROUP BY 1,2
             """).df()
         else:
             df = con.execute(f"""
@@ -340,7 +356,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                   AND "프레임 이름" IN ({_sqlist(titles)})
                   AND NOT COALESCE("취소 여부", FALSE)
                   AND CAST("최종 결제 금액" AS BIGINT)
-                      + CAST("쿠폰 할인 금액" AS BIGINT) > 0
+                      + CAST("쿠폰 할인 금액" AS BIGINT) <> 0
                 GROUP BY 1,2
             """).df()
     finally:
@@ -373,6 +389,7 @@ def price_table(brand: str, titles: list[str], start: str, end: str) -> pd.DataF
                 FROM read_parquet('{PH_RAW.as_posix()}')
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                   AND "타이틀명" IN ({_sqlist(raws)})
+                  {_gubun_filter()}
                   AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 GROUP BY 1,3
             """).df()

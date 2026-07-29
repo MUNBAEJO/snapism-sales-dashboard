@@ -116,12 +116,13 @@ def title_revenue(brand: str, start: str, end: str, rates: dict) -> pd.DataFrame
                          + CASE WHEN cc IN ({cpn})  THEN cpn  * r ELSE 0 END
                          + CASE WHEN cc IN ({coin}) THEN coin * r ELSE 0 END
                        )) AS BIGINT) AS 매출액,
-                       CAST(SUM("건수") AS BIGINT) AS 건수,
+                       CAST(SUM(CASE WHEN pay < 0 THEN -"건수" ELSE "건수" END) AS BIGINT) AS 건수,
                        COUNT(DISTINCT "국가") AS 국가수
                 FROM t
-                WHERE pay > 0
-                   OR (cc IN ({cpn})  AND cpn  > 0)
-                   OR (cc IN ({coin}) AND coin > 0)
+                -- ★취소는 음수 거래로 들어온다. '> 0' 으로 거르면 차감이 안 된다.
+                WHERE pay <> 0
+                   OR (cc IN ({cpn})  AND cpn  <> 0)
+                   OR (cc IN ({coin}) AND coin <> 0)
                 GROUP BY 1 HAVING 매출액 > 0 ORDER BY 매출액 DESC
             """).df()
         else:
@@ -141,10 +142,10 @@ def title_revenue(brand: str, start: str, end: str, rates: dict) -> pd.DataFrame
                 )
                 SELECT 타이틀, any_value("IP구분") AS "IP구분",
                        CAST(ROUND(SUM((pay + cpn) * r)) AS BIGINT) AS 매출액,
-                       CAST(COUNT(*) AS BIGINT) AS 건수,
+                       CAST(SUM(CASE WHEN pay + cpn < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수,
                        COUNT(DISTINCT "국가") AS 국가수
                 FROM t
-                WHERE pay + cpn > 0
+                WHERE pay + cpn <> 0          -- 음수(취소)를 살려 차감되게 한다
                 GROUP BY 1 HAVING 매출액 > 0 ORDER BY 매출액 DESC
             """).df()
     finally:

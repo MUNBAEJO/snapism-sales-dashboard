@@ -78,7 +78,14 @@ def parse_excel(filepath: Path, country_code: str, config: dict) -> pd.DataFrame
         cancelled = pd.Series(False, index=df.index)
 
     # 결제일시 파싱 (형식: 2026-06-01T10:11:54)
-    결제일시 = pd.to_datetime(df.get("결제일", pd.Series(dtype=str)), errors="coerce")
+    # ★format="ISO8601" 을 반드시 지정한다.
+    #   CMS 는 **취소 거래에만** 밀리초를 붙여 준다(2026-07-11T17:07:21.863).
+    #   포맷을 안 주면 pandas 가 첫 행 기준으로 단일 포맷을 추론해서 밀리초가 붙은
+    #   행을 전부 NaT 로 만들고, 아래 cutoff 필터(날짜 notna)에서 통째로 잘려나간다.
+    #   그 결과 **취소가 한 건도 수집되지 않아** 취소된 매출이 그대로 정산에 남았다.
+    #   (2026-07-11 한국 하루치에서만 취소 14건 유실 확인)
+    결제일시 = pd.to_datetime(df.get("결제일", pd.Series(dtype=str)),
+                           format="ISO8601", errors="coerce")
 
     # 금액 컬럼 정수화
     def to_int(col):
