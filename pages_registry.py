@@ -15,8 +15,10 @@ PAGES = [
     ("photoism",   "views/1_📸_포토이즘.py",                 "포토이즘",          "📸", "photoism",    True),
     ("weekly",     "views/4_📋_주간리포트.py",                "주간리포트",        "📋", "weekly",      True),
     ("runs",       "views/7_🆚_타이틀_런_비교.py",            "타이틀 런 비교",     "🆚", "runs",        False),
-    ("settlement", "views/2_💰_IP정산현황_(스내피즘).py",      "IP정산현황 (스내피즘)", "💰", "settlement", False),
     ("settledoc",  "views/8_🧾_IP정산서.py",                 "IP정산서",         "🧾", "settlement-doc", False),
+    # ↓ settledoc 으로 대체 예정. 2026-06 정산을 새 페이지로 끝내고 숫자를 대조한 뒤 제거한다.
+    #   (여기는 스내피즘 전용 + 렌탈 필터가 없어 같은 IP에 다른 금액이 나온다)
+    ("settlement", "views/2_💰_IP정산현황_(스내피즘).py",      "IP매출 조회 (구)",   "💰", "settlement", False),
     ("expired",    "views/3_⚠️_기간_후_매출분석.py",           "기간 후 매출분석",   "⚠️", "expired",     False),
     ("sm",         "views/6_🎬_SM촬영현황.py",                "SM 촬영현황",       "🎬", "sm-shooting", False),
 ]
