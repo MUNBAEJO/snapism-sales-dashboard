@@ -16,6 +16,7 @@ PAGES = [
     ("weekly",     "views/4_📋_주간리포트.py",                "주간리포트",        "📋", "weekly",      True),
     ("runs",       "views/7_🆚_타이틀_런_비교.py",            "타이틀 런 비교",     "🆚", "runs",        False),
     ("settlement", "views/2_💰_IP정산현황_(스내피즘).py",      "IP정산현황 (스내피즘)", "💰", "settlement", False),
+    ("settledoc",  "views/8_🧾_IP정산서.py",                 "IP정산서",         "🧾", "settlement-doc", False),
     ("expired",    "views/3_⚠️_기간_후_매출분석.py",           "기간 후 매출분석",   "⚠️", "expired",     False),
     ("sm",         "views/6_🎬_SM촬영현황.py",                "SM 촬영현황",       "🎬", "sm-shooting", False),
 ]

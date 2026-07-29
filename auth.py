@@ -550,7 +550,17 @@ def _pretty_event(ev: str) -> str:
     if ev.startswith("view:"):
         k = ev.split(":", 1)[1]
         return "👁 열람 → " + pages_registry.PAGE_TITLE.get(k, k)
+    # 정산 매핑은 금액에 직접 영향을 주므로 누가 무엇을 확정했는지 남긴다.
+    if ev.startswith("settlemap:"):
+        return "🧾 정산 매핑 → " + ev.split(":", 1)[1]
+    if ev.startswith("settleskip:"):
+        return "⛔ 정산 제외 → " + ev.split(":", 1)[1]
     return ev
+
+
+def log_event(email: str, event: str) -> None:
+    """다른 모듈에서 활동 로그를 남길 때 쓰는 공개 진입점."""
+    _log_access(email, event)
 
 
 def read_access_log(limit: int = 1000) -> list[dict]:
