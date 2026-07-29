@@ -19,8 +19,10 @@
 from __future__ import annotations
 
 import math
-import queue
-import threading
+import shutil
+import subprocess
+import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -340,44 +342,58 @@ def build_html(ctx: dict, kind: str) -> str:
 </body></html>"""
 
 
-def render_pdf(html: str, footer: str) -> bytes:
-    """Playwright chromium 으로 인쇄. 바이트로 돌려준다(파일 저장은 호출부 몫).
+def _render_to_file(html_path: str, out_path: str, footer: str) -> None:
+    """실제 인쇄. **별도 프로세스에서만** 호출된다(아래 __main__ 참고)."""
+    from playwright.sync_api import sync_playwright
 
-    ★Streamlit 스크립트 스레드에는 asyncio 루프가 붙어 있을 수 있어
-      sync API 가 거부당한다. 별도 스레드에서 돌려 그 문제를 피한다.
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        page = b.new_page()
+        page.goto(Path(html_path).resolve().as_uri(), wait_until="networkidle")
+        page.pdf(path=out_path, format="A4", print_background=True,
+                 display_header_footer=True, header_template="<div></div>",
+                 footer_template=(
+                     '<div style="width:100%;font-size:7px;color:#98a0af;'
+                     'font-family:sans-serif;padding:0 12mm;display:flex;'
+                     'justify-content:space-between">'
+                     f'<span>{footer}</span>'
+                     '<span><span class="pageNumber"></span> / '
+                     '<span class="totalPages"></span></span></div>'),
+                 margin={"top": "13mm", "bottom": "13mm",
+                         "left": "12mm", "right": "12mm"})
+        b.close()
+
+
+def render_pdf(html: str, footer: str, timeout: int = 240) -> bytes:
+    """Playwright chromium 으로 인쇄해 바이트로 돌려준다.
+
+    ★반드시 **별도 프로세스**에서 돌린다.
+      Streamlit 서버(Tornado)가 Windows 에서 asyncio 정책을 SelectorEventLoop 로
+      바꿔 놓는데, 이 루프는 서브프로세스를 못 띄운다 → Playwright 가 브라우저를
+      실행하는 순간 NotImplementedError. 정책은 프로세스 전역이라 스레드로는 못 피하고,
+      정책을 바꾸면 Streamlit 서버 쪽이 위험하다. 프로세스를 나누는 게 가장 안전하고,
+      덤으로 chromium 메모리가 대시보드 프로세스에 안 쌓인다.
     """
-    out: queue.Queue = queue.Queue()
+    tmp = Path(tempfile.mkdtemp(prefix="settle_pdf_"))
+    try:
+        hp, op = tmp / "doc.html", tmp / "out.pdf"
+        hp.write_text(html, encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()),
+             "--render", str(hp), str(op), footer],
+            capture_output=True, timeout=timeout)
+        if not op.exists() or op.stat().st_size == 0:
+            msg = (r.stderr or b"").decode("utf-8", "replace").strip()
+            raise RuntimeError("PDF 생성 실패"
+                               + (f" — {msg[-500:]}" if msg else ""))
+        return op.read_bytes()
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"PDF 생성이 {timeout}초 안에 끝나지 않았어요.")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
-    def _work():
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                b = p.chromium.launch()
-                page = b.new_page()
-                page.set_content(html, wait_until="networkidle")
-                data = page.pdf(
-                    format="A4", print_background=True,
-                    display_header_footer=True, header_template="<div></div>",
-                    footer_template=(
-                        '<div style="width:100%;font-size:7px;color:#98a0af;'
-                        'font-family:sans-serif;padding:0 12mm;display:flex;'
-                        'justify-content:space-between">'
-                        f'<span>{footer}</span>'
-                        '<span><span class="pageNumber"></span> / '
-                        '<span class="totalPages"></span></span></div>'),
-                    margin={"top": "13mm", "bottom": "13mm",
-                            "left": "12mm", "right": "12mm"})
-                b.close()
-            out.put(("ok", data))
-        except Exception as e:                      # noqa: BLE001
-            out.put(("err", e))
 
-    t = threading.Thread(target=_work, daemon=True)
-    t.start()
-    t.join(timeout=180)
-    if out.empty():
-        raise RuntimeError("PDF 생성이 시간 안에 끝나지 않았어요.")
-    kind, val = out.get()
-    if kind == "err":
-        raise val
-    return val
+if __name__ == "__main__":
+    # 부모(Streamlit)가 서브프로세스로 부른다. 여기선 asyncio 정책이 깨끗하다.
+    if len(sys.argv) >= 5 and sys.argv[1] == "--render":
+        _render_to_file(sys.argv[2], sys.argv[3], sys.argv[4])
