@@ -121,7 +121,7 @@ def parse_excel(filepath: Path, country_code: str, config: dict) -> pd.DataFrame
 
 
 def _file_date(fp: Path):
-    """파일명 photoism_{code}_{YYYYMMDD}.xlsx 에서 날짜 추출."""
+    """파일명에서 **마지막** 날짜(=구간 끝) 추출."""
     m = re.search(r"_(\d{8})\.xlsx$", fp.name)
     if not m:
         return None
@@ -129,6 +129,29 @@ def _file_date(fp: Path):
         return datetime.strptime(m.group(1), "%Y%m%d").date()
     except ValueError:
         return None
+
+
+def _file_span(fp: Path):
+    """파일이 담는 날짜 구간 (시작, 끝).
+
+    ★파일명이 두 가지다.
+        photoism_kr_20260711.xlsx            하루치 (2026-05-31 이후 수집분)
+        photoism_kr_20260629_20260701.xlsx   3일치 (그 이전 수집분)
+      `_file_date` 는 **끝 날짜**만 돌려주므로, 구간 파일을 끝 날짜로만 걸러내면
+      월 경계에 걸친 파일이 통째로 빠진다. 그런데 병합은 그 구간의 옛 행을 지우므로
+      **데이터가 사라진다**(6월 재수집에서 336행 유실 확인). 구간이 겹치면 읽고,
+      행 단위 날짜 필터로 정확히 잘라낸다.
+    """
+    end = _file_date(fp)
+    if end is None:
+        return None, None
+    m = re.search(r"_(\d{8})_(\d{8})\.xlsx$", fp.name)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y%m%d").date(), end
+        except ValueError:
+            pass
+    return end, end
 
 
 def _master_max_date():
@@ -143,12 +166,20 @@ def _master_max_date():
 
 def main():
     # 시작일 결정: 인수가 있으면 그날부터 재구성, 없으면 기존 최신일부터(증분)
-    target_date = None
+    # 두 번째 인수(선택)로 **종료일**을 주면 그 구간만 처리한다.
+    #   ★대량 재수집용. 2026년 전체는 raw 3,300개 1.8GB 라 한 번에 concat 하면
+    #     대시보드와 같은 서버에서 메모리가 터진다. 월 단위로 끊어 돌리기 위한 것.
+    target_date = end_date = None
     if len(sys.argv) >= 2:
         try:
             target_date = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
         except ValueError:
             target_date = None
+    if len(sys.argv) >= 3:
+        try:
+            end_date = datetime.strptime(sys.argv[2], "%Y-%m-%d").date()
+        except ValueError:
+            end_date = None
 
     config = load_config()
     DATA_DIR.mkdir(exist_ok=True)
@@ -159,9 +190,27 @@ def main():
     else:
         log("기존 parquet 없음 → raw 전체 처리")
 
+    if end_date:
+        log(f"종료일 지정: {end_date} 까지만 처리")
+
     all_files = sorted(RAW_DIR.glob("photoism_*.xlsx"))
-    sel = [f for f in all_files
-           if cutoff is None or (_file_date(f) is not None and _file_date(f) >= cutoff)]
+
+    # ★파일 선택에 앞뒤 여유를 둔다.
+    #   CMS 파일은 타임존 경계 때문에 인접일 거래가 섞여 들어온다(스필오버).
+    #   예: 6/30 매출 일부가 photoism_xx_20260701_20260703.xlsx 에 들어 있다.
+    #   여유 없이 자르면 그 행들이 통째로 사라진다(6/30 하루에만 834행 유실 확인).
+    #   행 단위 날짜 필터가 아래에서 정확히 잘라내므로 넉넉히 읽어도 안전하다.
+    MARGIN = timedelta(days=3)
+
+    def _in_range(f):
+        s, e = _file_span(f)
+        if e is None:
+            return False
+        if cutoff is not None and e < cutoff - MARGIN:
+            return False
+        return not (end_date and s > end_date + MARGIN)
+
+    sel = [f for f in all_files if cutoff is None or _in_range(f)]
     if not sel:
         log("새로 처리할 파일이 없습니다 (이미 최신).")
         return
@@ -189,7 +238,10 @@ def main():
     # cutoff 이상만 신규로 교체. → 완결된 과거일(예: 06-08)을 부분 데이터로 덮어쓰지 않는다.
     if cutoff is not None:
         _nd = pd.to_datetime(new_df["날짜"], errors="coerce").dt.date
-        new_df = new_df[_nd.notna() & (_nd >= cutoff)]
+        keep = _nd.notna() & (_nd >= cutoff)
+        if end_date:                      # 타임존 경계로 딸려온 뒷날짜도 잘라낸다
+            keep &= _nd <= end_date
+        new_df = new_df[keep]
     if new_df.empty:
         log("cutoff 이후 신규 데이터 없음")
         return
@@ -217,10 +269,14 @@ def main():
     con.execute(f"PRAGMA temp_directory='{str(tdir).replace(chr(92), '/')}'")
     try:
         if MASTER_PARQ.exists() and cutoff is not None:
+            # ★종료일을 준 경우 그 이후 날짜는 **기존 데이터를 그대로 남긴다.**
+            #   안 그러면 이번에 안 읽은 뒷날짜가 통째로 지워진다(월 단위 재수집 사고).
+            keep = f'TRY_CAST("날짜" AS DATE) < DATE \'{cutoff}\''
+            if end_date:
+                keep += f' OR TRY_CAST("날짜" AS DATE) > DATE \'{end_date}\''
             con.execute(f"""
                 COPY (
-                    SELECT * FROM read_parquet('{src}')
-                      WHERE TRY_CAST("날짜" AS DATE) < DATE '{cutoff}'
+                    SELECT * FROM read_parquet('{src}') WHERE {keep}
                     UNION ALL BY NAME
                     SELECT * FROM read_parquet('{tnew}')
                 ) TO '{out}' (FORMAT PARQUET, COMPRESSION SNAPPY)
