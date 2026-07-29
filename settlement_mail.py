@@ -44,8 +44,12 @@ def config_ready() -> tuple[bool, str]:
 
 def build_message(ip: str, start: str, end: str, files: dict[str, bytes],
                   to: list[str], cc: list[str], version: int = 1,
-                  reason: str = "", note: str = "") -> EmailMessage:
-    """정산서 메일 한 통. files = {수취처라벨: PDF 바이트}."""
+                  reason: str = "", note: str = "",
+                  brands: str = "") -> EmailMessage:
+    """정산서 메일 한 통. files = {수취처라벨: PDF 바이트}.
+
+    brands: 실제로 정산에 들어간 브랜드 표기(예 '포토이즘'). 한 브랜드만 정산하는
+            경우가 흔해서 '두 브랜드' 로 못 박으면 안 된다."""
     m = mail_config()
     sender = (m.get("sender") or "").strip()
     tag = f" (정정본 v{version})" if version > 1 else ""
@@ -61,8 +65,9 @@ def build_message(ip: str, start: str, end: str, files: dict[str, bytes],
         "안녕하세요 :)",
         "",
         f"{ip} 의 {start} ~ {end} 정산서를 보내드려요.",
-        "포토이즘·스내피즘 두 브랜드 매출을 합쳐 계산했고, "
-        "국가별 상세와 수량은 문서 뒷장에 담았어요.",
+        (f"{brands} 매출을 합쳐 계산했고, " if "+" in brands
+         else f"{brands} 매출 기준이고, " if brands else "")
+        + "국가별 상세와 수량은 문서 뒷장에 담았어요.",
     ]
     if version > 1:
         body += ["", f"이번 건은 정정본(v{version})이에요."

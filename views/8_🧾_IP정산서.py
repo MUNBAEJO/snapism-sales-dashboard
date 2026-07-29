@@ -252,8 +252,11 @@ def make_panel():
             st.dataframe(d[["국가", "unit", "수량", "현지", "매출액"]],
                          hide_index=True, use_container_width=True)
 
+    # ★한 브랜드만 정산하는 경우가 흔하다. 없는 브랜드를 적으면 안 된다.
+    used = " + ".join(sm.BRAND_LABEL[b] for b in sm.BRANDS
+                      if picks.get(b, (None, []))[0] and picks[b][1])
     ui_theme.kpis([
-        ui_theme.kpi("정산기준액", f"{_fmt(tot_base)}원", "포토이즘 + 스내피즘", hero=True),
+        ui_theme.kpi("정산기준액", f"{_fmt(tot_base)}원", used, hero=True),
         ui_theme.kpi("소속사 정산액", f"{_fmt(tot_a)}원"),
         ui_theme.kpi("대행사 정산액", f"{_fmt(tot_m)}원"),
     ], cls="k3")
@@ -318,7 +321,8 @@ def make_panel():
                                           f"IP 정산서({lab}) · {ipn} · {S}~{E}")
             st.session_state["_pdfs"] = made
             st.session_state["_meta"] = {"ip": ipn, "v": rec["version"],
-                                         "reason": reason.strip()}
+                                         "reason": reason.strip(),
+                                         "brands": used}
             auth.log_event(_email, f"settleissue:{ipn} v{rec['version']}")
         _rerun()
 
@@ -365,7 +369,8 @@ def _deliver():
                  disabled=not (to and picked)):
         msg = smail.build_message(meta.get("ip", ""), S, E,
                                   {k: pdfs[k] for k in picked}, to, cc,
-                                  meta.get("v", 1), meta.get("reason", ""), note)
+                                  meta.get("v", 1), meta.get("reason", ""), note,
+                                  meta.get("brands", ""))
         st.code(f"제목: {msg['Subject']}\n받는 사람: {msg['To']}\n"
                 f"참조: {msg.get('Cc') or '-'}\n첨부: {', '.join(picked)}\n\n"
                 + msg.get_body().get_content(), language=None)
@@ -374,7 +379,8 @@ def _deliver():
         try:
             msg = smail.build_message(meta.get("ip", ""), S, E,
                                       {k: pdfs[k] for k in picked}, to, cc,
-                                      meta.get("v", 1), meta.get("reason", ""), note)
+                                      meta.get("v", 1), meta.get("reason", ""), note,
+                                      meta.get("brands", ""))
             smail.send(msg, to, cc)
             smail.log_sent(meta.get("ip", ""), S, E, to, cc, meta.get("v", 1),
                            _email, picked)

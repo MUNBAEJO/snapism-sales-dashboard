@@ -284,6 +284,14 @@ def build_html(ctx: dict, kind: str) -> str:
 
     # 정정본은 첫 장에 명시한다. 파트너가 두 문서를 받았을 때 어느 게 최신인지
     # 못 알아보면 오히려 혼란이 커진다.
+    # ★한 브랜드만 정산하는 경우가 흔하다. 실제로 들어간 브랜드만 적는다 —
+    #   없는 브랜드가 문서에 적히면 "왜 스내피즘이 0원이지?" 하는 문의가 생긴다.
+    used = [b for b in ("photoism", "snapism")
+            if ctx["details"].get(b) is not None
+            and not ctx["details"][b].empty]
+    used_label = " + ".join(BRAND_LABEL[b] for b in used)
+    multi = len(used) > 1
+
     ver = int(ctx.get("version") or 1)
     badge = ""
     if ver > 1:
@@ -306,26 +314,28 @@ def build_html(ctx: dict, kind: str) -> str:
   <div class="g1">안녕하세요, {label} 담당자님</div>
   <div class="g2"><b>{ctx["ip"]}</b> 의 {ctx["start"]} ~ {ctx["end"]} 정산 내역을
    정리해 드려요.<br>
-   포토이즘·스내피즘 두 브랜드 매출을 합쳐 계산했고, 국가별 상세와 수량은 뒷장에 담았어요.
+   {"포토이즘·스내피즘 두 브랜드 매출을 합쳐 계산했고, " if multi
+    else f"{used_label} 매출 기준이고, "}국가별 상세와 수량은 뒷장에 담았어요.
    확인해 보시고 궁금한 점은 편하게 알려주세요.</div>
 </div>
 
 <div class="kpi">
-  <div class="l">{label} 정산액 <span style="color:var(--text-3)">· 포토이즘 + 스내피즘</span></div>
+  <div class="l">{label} 정산액 <span style="color:var(--text-3)">· {used_label}</span></div>
   <div class="v">{_won(total_amt)}원</div>
   <div class="d">정산기준액 <b>{_won(total_base)}원</b></div>
 </div>
 
-<div class="ct">🧾 브랜드별 요약 <span class="muted">단위 원</span></div>
+<div class="ct">🧾 {"브랜드별 요약" if multi else "요약"} <span class="muted">단위 원</span></div>
 <div class="ntbl">
 <div class="ntr nth" style="grid-template-columns:1.3fr .9fr .9fr 1.1fr 1.1fr">
-<span>브랜드</span><span class="r">오픈 · 매출발생</span><span class="r">프레임수 · 건수</span>
+<span>브랜드</span><span class="r">오픈 · 매출발생</span>
+<span class="r">{"프레임수 · 건수" if multi else (QTY_LABEL[used[0]] if used else "수량")}</span>
 <span class="r">매출(KRW)</span><span class="r">{label} 정산액</span></div>
 {brand_rows}
-<div class="ntr sum" style="grid-template-columns:1.3fr .9fr .9fr 1.1fr 1.1fr">
+{'''<div class="ntr sum" style="grid-template-columns:1.3fr .9fr .9fr 1.1fr 1.1fr">
 <span>합계</span><span></span><span></span>
-<span class="r num">{_won(total_base)}</span>
-<span class="r num">{_won(total_amt)}</span></div>
+<span class="r num">''' + _won(total_base) + '''</span>
+<span class="r num">''' + _won(total_amt) + '''</span></div>''' if multi else ""}
 </div>
 
 <div class="final">최종 정산액 &nbsp; <b>{_won(total_amt)}원</b></div>
