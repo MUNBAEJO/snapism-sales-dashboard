@@ -96,7 +96,16 @@ def build_agg(con, parq: str):
         SELECT
             "날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
             "결제 단위","구좌","IP구분","날짜코드_c" AS "날짜코드","IP명_c" AS "IP명_raw","취소 여부",
-            CAST(COUNT(*)                          AS BIGINT) AS "건수",
+            -- ★★취소는 **음수 거래**로 들어온다(포토이즘은 '취소 여부' 플래그가 안 붙는다).
+            --   그냥 SUM 하면 같은 그룹의 정상 매출과 상쇄돼 **취소가 통째로 사라진다** —
+            --   원본 518건/-300만원이 집계에서는 45행/-29만원으로만 남아 있었다.
+            --   금액은 계속 net(상쇄분 반영)으로 두고, '얼마가 취소됐는지'를 별도 열로 보존한다.
+            CAST(COALESCE(SUM(CASE WHEN "_amt" < 0 THEN 0 ELSE 1 END),0)
+                                                   AS BIGINT) AS "건수",
+            CAST(COALESCE(SUM(CASE WHEN "_amt" < 0 THEN -"_amt" ELSE 0 END),0)
+                                                   AS BIGINT) AS "취소금액",
+            CAST(COALESCE(SUM(CASE WHEN "_amt" < 0 THEN 1 ELSE 0 END),0)
+                                                   AS BIGINT) AS "취소건수",
             CAST(COALESCE(SUM("_amt"),0)           AS BIGINT) AS "최종 결제 금액",
             CAST(COALESCE(SUM("_cpn"),0)           AS BIGINT) AS "쿠폰 할인 금액",
             CAST(COALESCE(SUM("_coin"),0)          AS BIGINT) AS "서비스코인"
@@ -116,7 +125,8 @@ def build_agg(con, parq: str):
             --   가짜 IP 로 화면에 뜬다(기존 pandas 방식의 잠복 버그).
             COALESCE(m."v", NULLIF(TRIM(g."IP명_raw"), ''), '') AS "_ip",
             g."날짜코드" AS "_date",
-            g."건수", g."최종 결제 금액", g."쿠폰 할인 금액", g."서비스코인"
+            g."건수", g."취소금액", g."취소건수",
+            g."최종 결제 금액", g."쿠폰 할인 금액", g."서비스코인"
         FROM grouped g
         LEFT JOIN alias_map m ON TRIM(g."IP명_raw") = m."k"
     )
@@ -128,6 +138,8 @@ def build_agg(con, parq: str):
              WHEN "_date"='' THEN "_ip"
              ELSE "_date" || ' ' || "_ip" END AS "타이틀",
         CAST(SUM("건수")           AS BIGINT) AS "건수",
+        CAST(SUM("취소금액")       AS BIGINT) AS "취소금액",
+        CAST(SUM("취소건수")       AS BIGINT) AS "취소건수",
         CAST(SUM("최종 결제 금액") AS BIGINT) AS "최종 결제 금액",
         CAST(SUM("쿠폰 할인 금액") AS BIGINT) AS "쿠폰 할인 금액",
         CAST(SUM("서비스코인")     AS BIGINT) AS "서비스코인"

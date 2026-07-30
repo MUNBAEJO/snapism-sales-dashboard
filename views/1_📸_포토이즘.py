@@ -72,6 +72,8 @@ h2, h3{ letter-spacing:-0.02em !important; }
 
 /* KPI 카드 */
 .kpis{ display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin:14px 0 8px; }
+/* k4 = 합계+실결제+쿠폰·코인+취소 4칸 (스내피즘과 동일 구성) */
+.kpis.k4{ grid-template-columns:1.8fr 1fr 1fr 1fr; }
 .kpi{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:15px 17px;
       box-shadow:0 1px 2px rgba(20,28,45,.04),0 1px 3px rgba(20,28,45,.06); }
 .kpi.hero{ background:linear-gradient(180deg,#fbfbff,#fff); border-color:#dcdcfb; }
@@ -515,7 +517,10 @@ def _load_data(agg_mtime, cfg_mtime):
     # int32 로 낮춘다 — 219만행 × 4컬럼이 int64면 67MB, int32면 33MB.
     # 캐시는 이 프레임을 피클로 들고 있어서 메모리 압박이 곧 OOM 으로 이어진다.
     # 현지통화 최댓값(VND 수백만)도 int32 상한(21.4억)에 한참 못 미친다.
-    for col in ["건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
+    # ★취소금액·취소건수는 2026-07-30 집계에 추가된 열이다. 예전 집계 파일이 남아 있어도
+    #   죽지 않게 없으면 0 으로 채운다(그 경우 취소 카드가 0원으로 나온다 → 재집계 안내).
+    for col in ["건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인",
+                "취소금액", "취소건수"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int32")
         else:
@@ -538,6 +543,8 @@ def _load_data(agg_mtime, cfg_mtime):
     df["쿠폰KRW"]    = (df["쿠폰 할인 금액"] * df["환율"]).round(0).astype("int32")
     df["정산금액"]   = (df["KRW환산금액"] + df["쿠폰KRW"]).astype("int32")
     df["서비스코인KRW"] = (df["서비스코인"] * df["환율"]).round(0).astype("int32")
+    # 취소액은 양수로 들고 다닌다(표기용). 매출액에는 이미 음수 거래로 차감돼 있다.
+    df["취소KRW"] = (df["취소금액"] * df["환율"]).round(0).astype("int32")
 
     # 쿠폰·코인 가산대상(지정 국가) — 카테고리만 검사해 3.5M 문자열 변환 회피
     if "국가코드" in df.columns:
@@ -856,7 +863,16 @@ def load_sales_detail(group_col, start_date, end_date, ip_list=None,
 
 
 def paid_sales(df):
-    return df[~df["취소 여부"] & (df["최종 결제 금액"] >= 0)]
+    """매출 집계 대상 행.
+
+    ★예전엔 `최종 결제 금액 >= 0` 으로 음수 행을 버렸다. 그런데 포토이즘 취소는
+      **음수 거래**로 들어오고 집계 단계에서 같은 그룹의 정상 매출과 이미 상쇄된다.
+      그래서 net 이 음수로 남은 45행만 버려지는 셈이었고 — 취소가 어떤 그룹에
+      떨어졌는지에 따라 차감되기도, 통째로 빠지기도 했다(합계가 29만원 부풀어 있었다).
+      지금은 전부 남긴다 → 합계·국가별·매장별이 모두 **취소 반영 net** 으로 일치한다.
+      (취소 여부 플래그는 포토이즘엔 안 붙지만 다른 소스가 붙일 수 있어 가드로 남긴다.)
+    """
+    return df[~df["취소 여부"]]
 
 
 def tx_count(df):
@@ -1306,20 +1322,25 @@ def period_rev(d):
 period_amt = period_rev(df)
 _period_days = ((date_range[1] - date_range[0]).days + 1) if len(date_range) == 2 else "-"
 _dr = (f"{date_range[0]} ~ {date_range[1]}" if len(date_range) == 2 else "전체")
-# 총매출 = 실결제(카드·현금) + 쿠폰·코인 정산분 으로 구성 표시(취소는 집계에 없음)
+# 총매출 = 실결제(카드·현금) + 쿠폰·코인 정산분. ★취소는 음수 거래로 이미 차감돼 있다.
 pure_krw = int(sales["KRW환산금액"].sum())
 cc_krw = int((sales["쿠폰기여"] + sales["코인기여"]).sum())
 cc_cnt = int(sales[(sales["쿠폰기여"] > 0) | (sales["코인기여"] > 0)]["건수"].sum())
+cancel_krw = int(sales["취소KRW"].sum())
+cancel_cnt = int(sales["취소건수"].sum())
 
 st.markdown(
-    '<div class="kpis">'
+    '<div class="kpis k4">'
     f'<div class="kpi hero"><div class="l">조회기간 매출 (합계)</div>'
     f'<div class="v num">{fmt_krw(period_amt)}</div>'
-    f'<div class="d">{_dr} · {_period_days}일 · {tx_count(sales):,}건</div></div>'
+    f'<div class="d">{_dr} · {_period_days}일 · {tx_count(sales):,}건 · 취소 반영</div></div>'
     f'<div class="kpi"><div class="l">실결제 매출 (카드·현금)</div>'
     f'<div class="v num">{fmt_krw(pure_krw)}</div><div class="d">쿠폰·코인 제외분</div></div>'
     f'<div class="kpi"><div class="l">쿠폰·코인 매출 (정산분)</div>'
     f'<div class="v num">{fmt_krw(cc_krw)}</div><div class="d">{cc_cnt:,}건 · 지정국가 정산</div></div>'
+    f'<div class="kpi"><div class="l">취소 매출</div>'
+    f'<div class="v num">{fmt_krw(cancel_krw)}</div>'
+    f'<div class="d">{cancel_cnt:,}건 · 합계에서 차감됨</div></div>'
     '</div>', unsafe_allow_html=True)
 
 _scope_bits = []
@@ -1338,18 +1359,23 @@ if _scope_bits:
                 unsafe_allow_html=True)
 
 helpbox("""
-**KPI 3카드 — 조회기간 매출 · 실결제 · 쿠폰·코인**
+**KPI 4카드 — 조회기간 매출 · 실결제 · 쿠폰·코인 · 취소**
 
 **공통 기준 (이하 모든 카드 동일)**
 - **원본**: 30개국 포토이즘 매장 거래(매일 자동 수집)를 **DuckDB로 집계**한 값 · 환율은 `config.json` 실시간 환율표.
 - **매출액 = 실결제 + 쿠폰기여 + 코인기여** — `KRW환산금액`(= 최종 결제 금액 × 환율)에, **지정 국가에서만** 쿠폰(`쿠폰기여`)·서비스코인(`코인기여`)을 더함(나라마다 정산 규칙이 달라서).
 - **필터 반영**: 필터바(기간·국가·매장·상품·IP구분·IP)로 거른 뒤 계산. 미선택 = 전체.
-- **취소 없음**: 집계 데이터에 취소행이 없어 취소 KPI는 없어요(스내피즘과 다른 점).
 
 **각 카드 계산**
-- **조회기간 매출(합계)** = 매출액 합(실결제 + 지정국가 쿠폰·코인). 건수 = 거래 건수.
+- **조회기간 매출(합계)** = 매출액 합(실결제 + 지정국가 쿠폰·코인) — **취소가 차감된 순매출**이에요. 건수 = 취소 아닌 거래 건수.
 - **실결제 매출(카드·현금)** = `KRW환산금액` 합 (쿠폰·코인 제외한 순수 결제분).
 - **쿠폰·코인 매출(정산분)** = `쿠폰기여 + 코인기여` 합 = 매출 합계 − 실결제. 지정 국가에서만 잡혀요.
+- **취소 매출** = 취소된 금액의 합(양수로 표기). **위 합계에서 이미 빠져 있어요** — '얼마가 취소됐나'를 보는 참고값이에요. 되돌리려면 `합계 + 취소 매출`.
+
+**★취소를 어떻게 잡나 (스내피즘과 다른 점)**
+- 포토이즘 취소는 `취소 여부` 플래그가 아니라 **음수 거래**로 들어와요(스내피즘은 플래그).
+- 그래서 집계에서 그냥 더하면 **같은 그룹의 정상 매출과 상쇄돼 취소가 사라져요** — 원본 518건·300만원이 집계엔 45행·29만원으로만 남아 있었어요. 지금은 `취소금액`·`취소건수` 열로 따로 보존해요(`build_photoism_agg.py`).
+- 취소액 정의는 **IP 정산서와 동일**(`최종 결제 금액 < 0` 인 거래의 절댓값)이라 정산서 표지의 '취소 금액'과 같은 기준이에요.
 """)
 
 # ── 사이드바: 실시간 환율(접기) — 소유자(본인)만, 위 '관리자 전용' 카드 안에 함께 ──
