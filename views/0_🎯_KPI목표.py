@@ -143,7 +143,9 @@ def _calc_revenue_from_cms(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for col in ["최종 결제 금액", "쿠폰 할인 금액"]:
         df[col] = pd.to_numeric(df.get(col, 0), errors="coerce").fillna(0)
-    df = df[df["최종 결제 금액"] >= 0]
+    # ★음수 행을 버리지 않는다 — 포토이즘 취소는 음수 거래로 들어오므로 여기서
+    #   걸러내면 실적이 취소분만큼 부풀어 오른다(포토이즘 대시보드와 어긋났던 원인).
+    #   위 agg 경로는 원래 안 걸렀고, 이 CSV 폴백만 기준이 달랐다.
     ex = load_exchange_rates()
     df["결제 단위"]     = df["결제 단위"].fillna("KRW").astype(str).str.strip()
     df["환율"]          = df["결제 단위"].map(ex).fillna(1)

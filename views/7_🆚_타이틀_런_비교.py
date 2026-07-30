@@ -167,7 +167,10 @@ def _load_photoism(_v):
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df = df[df["날짜"].notna()]
     photoism_rules.add_revenue(df, _rates())
-    return df[df["매출액"] > 0].reset_index(drop=True)
+    # ★`> 0` 이 아니라 `!= 0` — 포토이즘 취소는 음수 거래로 들어와서 `> 0` 으로 거르면
+    #   취소가 차감되지 않고 런 매출이 부풀어 오른다(포토이즘 대시보드와 어긋났던 원인).
+    #   0원 행만 빼면 행 수는 사실상 그대로다.
+    return df[df["매출액"] != 0].reset_index(drop=True)
 
 
 def _load(brand, _v):
