@@ -121,6 +121,12 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .tstat.soon{ background:#fdf3e7; color:var(--amber); }
 .tstat.live{ background:#eefaf4; color:var(--green); }
 .tstat.unk{  background:#f6f7f9; color:var(--text-3); }
+/* ★건수(우측정렬)와 판매기간(좌측정렬)이 gap 10px 만 두고 맞붙어 한 값처럼 읽혔다.
+   칸 경계선 + 넉넉한 안쪽 여백으로 확실히 끊는다. 세로선이 행 높이를 꽉 채워야
+   눈에 걸리므로 align-self:stretch + flex 로 글자를 다시 가운데 맞춘다. */
+.ntr .vs{ border-left:1px solid var(--border); padding-left:16px; margin-left:6px;
+          align-self:stretch; display:flex; align-items:center; }
+.ntr.nth .vs{ border-left-color:var(--border-strong); }
 .tper{ font-size:11.5px; color:var(--text-2); white-space:nowrap; }
 .cur{ font-size:11px; font-weight:700; color:var(--text-2); background:var(--surface-3); padding:2px 8px; border-radius:6px; }
 .rk{ font-weight:800; color:var(--text-3); font-variant-numeric:tabular-nums; }
@@ -726,10 +732,11 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
     has_cnt = "건수" in d.columns
     has_st = bool(status_map)
     if has_st:
-        grid = "grid-template-columns:34px 1.75fr 1.2fr .65fr 1.25fr 1.1fr"
+        grid = "grid-template-columns:34px 1.7fr 1.2fr .7fr 1.3fr 1.1fr"
         head = (f'<div class="ntr nth" style="{grid}">'
                 '<span>#</span><span>이름</span><span class="r">매출</span>'
-                '<span class="r">건수</span><span>판매기간</span><span>비중</span></div>')
+                '<span class="r">건수</span><span class="vs">판매기간</span>'
+                '<span>비중</span></div>')
     elif has_cnt:
         grid = "grid-template-columns:34px 1.7fr 1.3fr .8fr 1.5fr"
         head = (f'<div class="ntr nth" style="{grid}">'
@@ -755,10 +762,8 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
                 #      판매기간은 지라 티켓의 '오픈~종료'(계획 시작~종료일) 기준으로 표기한다.
                 _o = _md(s.get("오픈일"))
                 _e = _md(s.get("종료일"))
-                if s and (_o or _e):
-                    per = f'<span class="tper num">{_o or "?"} ~ {_e or "진행중"}</span>'
-                else:
-                    per = '<span class="tper num">—</span>'
+                _ps = f'{_o or "?"} ~ {_e or "진행중"}' if s and (_o or _e) else "—"
+                per = f'<span class="tper num vs">{_ps}</span>'
             h += (f'<div class="ntr" style="{grid}">{rk}{nm}'
                   f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{per}{pct_bar(frac, mx)}</div>')
         return h
@@ -1532,12 +1537,11 @@ with tab_nat:
                         if _end:
                             _bits.append(f'<span style="color:var(--red)">-{_end}</span>')
                         _chg = " ".join(_bits) or '<span style="color:var(--text-3)">–</span>'
-                        _thin = ('<span style="font-size:10px;font-weight:700;color:#b45309;'
-                                 'background:#fdf3e7;padding:1px 6px;border-radius:5px;'
-                                 'margin-left:5px">표본 적음</span>'
-                                 if r["대수"] < _MIN_DEV else '')
+                        # '표본 적음' 배지 제거(요청). 정렬(기준 미달 국가는 아래쪽)은
+                        # 그대로 둔다 — 몇 대뿐인 나라가 1위로 튀는 걸 막는 장치라서,
+                        # 빼면 순위 자체가 못 믿을 값이 된다. 이유는 캡션에 남긴다.
                         html += (f'<div class="ntr" style="{grid}">'
-                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}{_thin}</span>'
+                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
                                  f'<span class="r num">{int(r["대수"]):,}대</span>'
                                  f'<span class="r num" style="font-size:12px">{_chg}</span>'
                                  f'<span class="r num">{fmt_krw(int(r["대당월"]))}</span>'
@@ -1567,11 +1571,15 @@ with tab_nat:
                             f'{_tail}{_note}</div>',
                             unsafe_allow_html=True)
 
-                    st.caption(f"조회기간({_pkd}일) **실제 매출**을 키오스크 1대·30일 기준으로 환산한 값이에요"
-                               "(예상치가 아니에요). "
-                               f"'{_lead} 대비'는 1대당 매출 1위인 **{_lead}**{josa(_lead, '을', '를')} 100%로 둔 비율이에요 — "
-                               "총매출 1위와는 다른 나라일 수 있고, 위 국가별 매출표의 "
-                               "'실결제 비중'(전체 대비 점유율)과도 다른 값이에요.")
+                    _cap = (f"조회기간({_pkd}일) **실제 매출**을 키오스크 1대·30일 기준으로 환산한 값이에요"
+                            "(예상치가 아니에요). "
+                            f"'{_lead} 대비'는 1대당 매출 1위인 **{_lead}**{josa(_lead, '을', '를')} 100%로 둔 비율이에요 — "
+                            "총매출 1위와는 다른 나라일 수 있고, 위 국가별 매출표의 "
+                            "'실결제 비중'(전체 대비 점유율)과도 다른 값이에요.")
+                    if not _small.empty:
+                        _cap += (f" 가동 대수가 **{_MIN_DEV}대 미만**인 {len(_small)}개국은 "
+                                 "매장 한 곳 성적이 국가 대표값이 돼 버려서 표 아래쪽에 따로 모았어요.")
+                    st.caption(_cap)
 
                     with st.expander("📜 키오스크 계약 이력 (최근 12개월, 월별 신규·종료)"):
                         _h = _dev[~_dev["렌탈"]].copy()
@@ -1609,7 +1617,7 @@ with tab_nat:
   - ⚠️ 분모가 **가동 대수**라, 이번 기간에 **막 계약한(증설한) 나라**는 새 키오스크도 온전히 한 대로 세어져 대당 매출이 실제보다 **눌려(낮게)** 보일 수 있어요. 아래 '기간 내 변동'·'계약 이력'을 함께 보세요.
 - **'○○ 대비'** = 이 표의 1위, 즉 **1대당 매출이 가장 높은 국가**를 100%로 둔 비율이에요. 헤더에 그 나라 이름이 그대로 나와요.
   - ★**총매출 1위와 다른 나라일 수 있어요.** 한국은 총매출은 1위지만 1대당으로는 아래쪽이라 100%가 아니에요.
-  - ⚠️ **표본이 적은 국가**(가동 대수가 기준 미만)는 `표본 적음` 배지를 달고 표 아래쪽으로 내려요. 매장 한 곳 성적이 그대로 국가 대표값이 돼서 1위로 튀거든요. 기준은 **최대 보유국의 1%**(최소 3대)라 나라 규모가 커지면 같이 올라가요. 100%와 헤더 국가명도 기준을 넘긴 나라에서만 잡아요.
+  - ⚠️ **표본이 적은 국가**(가동 대수가 기준 미만)는 표 아래쪽으로 내려요. 매장 한 곳 성적이 그대로 국가 대표값이 돼서 1위로 튀거든요. 기준은 **최대 보유국의 1%**(최소 3대)라 나라 규모가 커지면 같이 올라가요. 100%와 헤더 국가명도 기준을 넘긴 나라에서만 잡아요. (배지 표기는 뺐고, 몇 개국이 내려갔는지는 표 아래 캡션에 나와요.)
   - 위 '국가별 매출' 표의 **실결제 비중(전체 대비 점유율)과도 다른 값**이에요.
 - 여기서 매출은 **실결제 + 쿠폰(정산금액)** 이에요. 실결제만 쓰면 전액 쿠폰으로 결제되는 국가(대만)가 1대당 0원이 돼요.
 - **팝업·렌탈은 분자·분모 모두 제외**했어요. 며칠만 도는 행사 장비라 상시 매장과 섞으면 왜곡돼요.

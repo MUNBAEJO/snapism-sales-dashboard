@@ -122,6 +122,12 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .tstat.soon{ background:#fdf3e7; color:var(--amber); }
 .tstat.live{ background:#eefaf4; color:var(--green); }
 .tstat.unk{  background:#f6f7f9; color:var(--text-3); }
+/* ★건수(우측정렬)와 판매기간(좌측정렬)이 gap 10px 만 두고 맞붙어 한 값처럼 읽혔다.
+   칸 경계선 + 넉넉한 안쪽 여백으로 확실히 끊는다. 세로선이 행 높이를 꽉 채워야
+   눈에 걸리므로 align-self:stretch + flex 로 글자를 다시 가운데 맞춘다. */
+.ntr .vs{ border-left:1px solid var(--border); padding-left:16px; margin-left:6px;
+          align-self:stretch; display:flex; align-items:center; }
+.ntr.nth .vs{ border-left-color:var(--border-strong); }
 .tper{ font-size:11.5px; color:var(--text-2); white-space:nowrap; }
 .cur{ font-size:11px; font-weight:700; color:var(--text-2); background:var(--surface-3); padding:2px 8px; border-radius:6px; }
 .rk{ font-weight:800; color:var(--text-3); font-variant-numeric:tabular-nums; }
@@ -320,9 +326,13 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-scard-storefilter{ background:#fbfbff !important; }
 .st-key-scard-storefilter [data-testid="stMultiSelect"] label{
   font-size:11.5px !important; font-weight:800 !important; color:var(--text-2) !important; }
-/* ── 구좌별 타이틀 TOP5 — 칸 머리 미니카드 ── */
+/* ── 구좌타입 분석 — 칸 머리 미니카드 ── */
 .gzc{ border:1px solid var(--border); border-left-width:3px; border-radius:10px;
   padding:9px 11px 8px; margin:0 0 9px; background:var(--surface); }
+/* 국가 × 구좌타입 표의 한 줄 누적막대 — 그 나라 안에서의 구성비(100% 기준이 나라마다 다름) */
+.gzbar{ display:flex; height:8px; background:var(--surface-3); border-radius:5px;
+  overflow:hidden; min-width:70px; }
+.gzbar i{ display:block; height:100%; }
 .gzc-l{ font-size:12px; font-weight:800; color:#39406b; display:flex; align-items:center; gap:6px; }
 .gzc-b{ font-size:9.5px; font-weight:800; letter-spacing:.05em; color:var(--text-3);
   background:var(--surface-3); border-radius:5px; padding:1px 5px; }
@@ -1043,10 +1053,11 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
     has_cnt = "건수" in d.columns
     has_st = bool(status_map)
     if has_st:
-        grid = "grid-template-columns:34px 1.75fr 1.2fr .65fr 1.25fr 1.1fr"
+        grid = "grid-template-columns:34px 1.7fr 1.2fr .7fr 1.3fr 1.1fr"
         head = (f'<div class="ntr nth" style="{grid}">'
                 '<span>#</span><span>이름</span><span class="r">매출</span>'
-                '<span class="r">건수</span><span>판매기간</span><span>비중</span></div>')
+                '<span class="r">건수</span><span class="vs">판매기간</span>'
+                '<span>비중</span></div>')
     elif has_cnt:
         grid = "grid-template-columns:34px 1.7fr 1.3fr .8fr 1.5fr"
         head = (f'<div class="ntr nth" style="{grid}">'
@@ -1071,8 +1082,7 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
                 # 상태 배지(신규/확인필요/판매중/종료 등) 제거 — 스내피즘과 동일 기준.
                 # 판매기간은 **지라 티켓의 계획 오픈일~종료일**만 쓴다(실측 첫·마지막 거래일 아님).
                 _ps = _period_str(s.get("오픈일"), s.get("종료일")) if s else ""
-                per = (f'<span class="tper num">{_ps}</span>' if _ps
-                       else '<span class="tper num">—</span>')
+                per = f'<span class="tper num vs">{_ps or "—"}</span>'
             h += (f'<div class="ntr" style="{grid}">{rk}{nm}'
                   f'<span class="r num">{fmt_krw(r["매출"])}</span>{cnt}{per}{pct_bar(frac, mx)}</div>')
         return h
@@ -1396,6 +1406,9 @@ SHOW_TAB_ETC = False
 # [제거] '세부 항목' 탭 — 의미 낮아 UI에서 뺌(포8). 코드·데이터는 그대로 보존.
 #         되살리려면 SHOW_TAB_DETAIL = True (아래 세부항목 블록도 함께 켜짐).
 SHOW_TAB_DETAIL = False
+# [숨김] '국가별 분석' 탭의 '🏆 국가별 타이틀 TOP 10' 카드 — UI 에서만 뺌(요청).
+#         계산 코드는 그대로 남겨 뒀으니 True 로만 바꾸면 되살아난다.
+SHOW_NAT_TITLE = False
 # 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. st.tabs 는 안 열어도 매 rerun 마다
 #      모든 탭을 실행(런 빌드가 무겁다)하므로, 탭엔 무거운 연산 대신 전용 페이지 링크만 둔다.
 _tab_labels = ["📊 매출 한눈에", "🎫 구좌타입 분석", "🌏 국가별 분석", "🏬 매장별 분석", "🆚 런 비교"]
@@ -1462,23 +1475,26 @@ with tab_home:
     sec("2", "무엇이 매출을 만드나", "비중 — 어떤 구좌 타입·브랜드가 매출을 끄나")
     _c1, _c2 = st.columns(2)
     with _c1:
-        with card("🎫 구좌 타입별 비중"):
-            # 포1.1: IP구분 비중 → 구좌(BASIC/WITH/EVENT) 타입별 비중으로 변경.
-            _GZ_LAB = {"BASIC": "오리지널 (BASIC)", "WITH": "아티스트·캐릭터 (WITH)", "EVENT": "PICK (EVENT)"}
-            _GZ_COL = {"BASIC": "#7c77ee", "WITH": BRAND2, "EVENT": PINK}
-            gz = (sales.groupby("구좌", observed=True)["매출액"].sum().rename("매출").reset_index())
-            gz = gz[(gz["매출"] > 0) & gz["구좌"].astype(str).str.strip().ne("")]
+        with card("🎫 구좌 타입별 비중 <span class='muted'>IP구분별</span>"):
+            # ★구좌(BASIC/WITH/EVENT) 3분류로 그리다가 **IP구분 5분류로 되돌렸다** —
+            #   바로 위 '매출 추이'가 IP구분(아티스트·캐릭터·PICK·오리지널 2종)으로
+            #   쌓이는데 그 아래 도넛만 다른 축이라, 같은 화면에서 두 분류를 눈으로
+            #   맞춰야 했다. 색도 _GUB_COLORS 로 통일해 추이 막대와 그대로 짝이 맞는다.
+            gz = (sales[sales["IP구분"].astype(str).isin(present)]
+                  .groupby("IP구분", observed=True)["매출액"].sum()
+                  .rename("매출").reset_index()) if present else pd.DataFrame()
+            gz = gz[gz["매출"] > 0] if not gz.empty else gz
             if not gz.empty:
                 gz = gz.sort_values("매출", ascending=False)
-                colors = [_GZ_COL.get(str(g), "#c7ccd6") for g in gz["구좌"]]
-                labs = [_GZ_LAB.get(str(g), str(g)) for g in gz["구좌"]]
-                css_donut(list(zip(labs, gz["매출"])), colors)
+                colors = [_GUB_COLORS.get(str(g), "#c7ccd6") for g in gz["IP구분"]]
+                css_donut(list(zip(gz["IP구분"].astype(str), gz["매출"])), colors)
             else:
                 st.info("데이터가 없어요.")
             helpbox("""
-**구좌 타입별 비중**
-- 결제 `구좌` 타입별 매출액 비중(도넛). **BASIC** = 오리지널(자체·기본 프레임) · **WITH** = 아티스트·캐릭터(위드/라이선스) · **EVENT** = PICK.
-- IP구분(아티스트·캐릭터·오리지널…)은 이 구좌를 더 잘게 나눈 거예요. 자세한 건 'IP · 타이틀 분석' 탭에서 봐요.
+**구좌 타입별 비중 (IP구분별)**
+- `IP구분`별 매출액 비중(도넛) — **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본)**.
+- 위 '매출 추이'와 **같은 분류·같은 색**이에요. 추이는 시간축, 이 도넛은 기간 합계 비중이라 짝으로 봐요.
+- 구좌(BASIC/WITH/EVENT)는 이 IP구분을 더 크게 묶은 상위 개념이에요 — 구좌 기준 숫자는 '매장별 분석' 탭의 구좌타입 분석에서 봐요.
 """)
     with _c2:
         with card("🏷 브랜드 비중"):
@@ -1778,12 +1794,11 @@ with tab_nat:
                                 '<span style="color:var(--text-3)">–</span>')
                         if _stop:
                             _chg += f'<span style="color:var(--text-3)"> / 중지 {_stop}</span>'
-                        _thin = ('<span style="font-size:10px;font-weight:700;color:#b45309;'
-                                 'background:#fdf3e7;padding:1px 6px;border-radius:5px;'
-                                 'margin-left:5px">표본 적음</span>'
-                                 if r["대수"] < _MIN_DEV else '')
+                        # '표본 적음' 배지 제거(요청). 정렬(기준 미달 국가는 아래쪽)은
+                        # 그대로 둔다 — 4대짜리 나라가 1위로 튀는 걸 막는 장치라서,
+                        # 빼면 순위 자체가 못 믿을 값이 된다. 이유는 캡션에 남긴다.
                         html += (f'<div class="ntr" style="{grid}">'
-                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}{_thin}</span>'
+                                 f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
                                  f'<span class="r num">{int(r["대수"]):,}대</span>'
                                  f'<span class="r num" style="font-size:12px">{_chg}</span>'
                                  f'<span class="r num">{fmt_krw(int(r["대당월"]))}</span>'
@@ -1813,11 +1828,15 @@ with tab_nat:
                             f'{_tail}{_note}</div>',
                             unsafe_allow_html=True)
 
-                    st.caption(f"조회기간({_pkd}일) **실제 매출**을 장비 1대·30일 기준으로 환산한 값이에요"
-                               "(예상치가 아니에요). "
-                               f"'{_lead} 대비'는 1대당 매출 1위인 **{_lead}**{josa(_lead, '을', '를')} 100%로 둔 비율이에요 — "
-                               "총매출 1위와는 다른 나라일 수 있고, 위 국가별 매출표의 "
-                               "'비중'(전체 대비 점유율)과도 다른 값이에요.")
+                    _cap = (f"조회기간({_pkd}일) **실제 매출**을 장비 1대·30일 기준으로 환산한 값이에요"
+                            "(예상치가 아니에요). "
+                            f"'{_lead} 대비'는 1대당 매출 1위인 **{_lead}**{josa(_lead, '을', '를')} 100%로 둔 비율이에요 — "
+                            "총매출 1위와는 다른 나라일 수 있고, 위 국가별 매출표의 "
+                            "'비중'(전체 대비 점유율)과도 다른 값이에요.")
+                    if not _small.empty:
+                        _cap += (f" 가동 대수가 **{_MIN_DEV}대 미만**인 {len(_small)}개국은 "
+                                 "매장 한 곳 성적이 국가 대표값이 돼 버려서 표 아래쪽에 따로 모았어요.")
+                    st.caption(_cap)
 
                     # 숫자 배경이 되는 설치 이력 — 매출이 오르내린 이유를 같이 보게 한다.
                     with st.expander("📜 장비 설치 이력 (최근 12개월, 월별 신규 설치 대수)"):
@@ -1848,7 +1867,7 @@ with tab_nat:
   - ⚠️ 분모가 **가동 대수**라, 이번 기간에 **막 증설한 나라**는 새 장비도 온전히 한 대로 세어져 대당 매출이 실제보다 **눌려(낮게)** 보일 수 있어요. 아래 '기간 내 변동'·'설치 이력'을 함께 보세요.
 - **'○○ 대비'** = 이 표의 1위, 즉 **1대당 매출이 가장 높은 국가**를 100%로 둔 비율이에요. 헤더에 그 나라 이름이 그대로 나와요.
   - ★**총매출 1위와 다른 나라일 수 있어요.** 한국은 총매출은 1위지만 1대당으로는 아래쪽이라 100%가 아니에요.
-  - ⚠️ **표본이 적은 국가**(가동 대수가 기준 미만)는 `표본 적음` 배지를 달고 표 아래쪽으로 내려요. 매장 한 곳 성적이 그대로 국가 대표값이 돼서 1위로 튀거든요. 기준은 **최대 보유국의 1%**(최소 3대)라 나라 규모가 커지면 같이 올라가요. 100%와 헤더 국가명도 기준을 넘긴 나라에서만 잡아요.
+  - ⚠️ **표본이 적은 국가**(가동 대수가 기준 미만)는 표 아래쪽으로 내려요. 매장 한 곳 성적이 그대로 국가 대표값이 돼서 1위로 튀거든요. 기준은 **최대 보유국의 1%**(최소 3대)라 나라 규모가 커지면 같이 올라가요. 100%와 헤더 국가명도 기준을 넘긴 나라에서만 잡아요. (배지 표기는 뺐고, 몇 개국이 내려갔는지는 표 아래 캡션에 나와요.)
   - 위 '국가별 매출' 표의 **비중(전체 대비 점유율)과도 다른 값**이에요.
 - **기간 내 변동** = 이 기간에 새로 깔린 대수(+)와 지금 '중지' 상태인 대수.
 - 아래 **설치 이력**(월별 신규 설치)을 펼치면 어느 달에 증설했는지 보여요. 매출이 뛴 시점과 겹치는지 보면 증설 효과를 가늠할 수 있어요.
@@ -1856,7 +1875,10 @@ with tab_nat:
 - 가동 대수는 CMS 장비관리 기준이에요(설치일은 기기 S/N 앞 6자리 YYMMDD). '중지' 상태 장비는 분모(가동 대수)에서 빠져요.
 """)
 
-        with card("🏆 국가별 타이틀 TOP 10 <span class='muted'>(날짜+IP)</span>", key="scard-nattitle"):
+        # [숨김] '국가별 타이틀 TOP 10' — UI 에서만 뺐다(요청). 코드·데이터는 그대로다.
+        #        되살리려면 SHOW_NAT_TITLE = True 로만 바꾸면 된다(위 SHOW_TAB_ETC 와 같은 방식).
+        if SHOW_NAT_TITLE:
+          with card("🏆 국가별 타이틀 TOP 10 <span class='muted'>(날짜+IP)</span>", key="scard-nattitle"):
             ip_src = sales[(sales["타이틀"] != "") & sales["타이틀"].notna()]
             if ip_src.empty:
                 st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
@@ -1939,59 +1961,106 @@ def _store_tab(sales, date_range, sel_countries):
 - 전용 필터를 적용한 뒤 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).
 """)
 
-    # 포6-②: 구좌(BASIC/WITH/EVENT)별 타이틀 TOP 5
-    #   BASIC 은 본 집계에 타이틀이 접혀 있어(그룹 폭증 방지) 경량 오리지널 집계의 '프레임'을
-    #   함께 붙인다. 합계(매출)는 sales 의 BASIC 행이 이미 오리지널을 포함하므로 중복 없음.
-    with card("🎫 구좌별 타이틀 TOP 5 <span class='muted'>(BASIC · WITH · EVENT)</span>"):
-        _od = load_orig()
-        if not _od.empty and len(date_range) == 2:
-            _od = _od[(_od["날짜"] >= date_range[0]) & (_od["날짜"] <= date_range[1])]
-        # 국가는 상단 필터바 + 전용 필터를 둘 다, 상품(브랜드)은 전용 필터만 건다.
-        # ※ `_col in columns` 가드 — 예전 경량 집계(브랜드 열 없음)가 캐시에 남아 있어도 죽지 않게.
-        for _col, _pick in (("국가", list(sel_countries)), ("국가", f_nat), ("브랜드", f_prd)):
-            if _pick and not _od.empty and _col in _od.columns:
-                _od = _od[_od[_col].isin(_pick)]
-
-        _GZ_CARDS = [("BASIC", "🖼 오리지널 · 라이선스", "#7c77ee"),
+    # ── 구좌타입 분석 (전용 필터 반영) ──────────────────────────────────
+    # ★'구좌별 타이틀 TOP 5' 를 이걸로 갈았다(요청). TOP5 는 어느 타이틀이 잘 팔렸나를
+    #   보여줬는데, 매장 탭에서 필요한 건 **고른 국가에서 구좌 구성이 어떻게 다른가**다.
+    #   전용 필터의 국가를 그대로 물려받아 국가 × 구좌타입으로 쪼개 준다.
+    with card("🎫 구좌타입 분석 <span class='muted'>(전용 필터 반영 · 국가를 고르면 그 국가 기준)</span>",
+              key="scard-storegz"):
+        # ★BASIC 을 원래 색(#7c77ee)으로 두면 WITH(BRAND2 #6366f1)와 거의 같은 보라라
+        #   누적막대에서 두 구좌가 한 덩어리로 보인다 → 오리지널 계열 색인 AMBER 로.
+        #   (매출 추이의 '오리지널(포토이즘)' 과도 같은 색이라 짝이 맞는다)
+        _GZ_CARDS = [("BASIC", "🖼 오리지널 · 라이선스", AMBER),
                      ("WITH", "🎤 아티스트 · 캐릭터", BRAND2),
                      ("EVENT", "💗 PICK", PINK)]
-        _gcols = st.columns(3)
-        for (_gz, _lab, _clr), _c in zip(_GZ_CARDS, _gcols):
-            with _c:
-                _g = _sc[_sc["구좌"] == _gz] if "구좌" in _sc.columns else _sc.iloc[0:0]
-                _t = (_g[_g["타이틀"].notna() & (_g["타이틀"] != "")]
-                      .groupby("타이틀", observed=True)
-                      .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index()
-                      .rename(columns={"타이틀": "항목"}))
-                _t["항목"] = _t["항목"].astype(str)
-                if _gz == "BASIC" and not _od.empty:
-                    _fr = (_od.groupby("프레임", observed=True)
-                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index()
-                           .rename(columns={"프레임": "항목"}))
-                    _fr["항목"] = _fr["항목"].astype(str)
-                    _t = pd.concat([_t, _fr], ignore_index=True)
-                _t = _t[(_t["매출"] > 0) & _t["항목"].str.strip().ne("")]
-                st.markdown(
-                    f'<div class="gzc" style="border-color:{_clr}">'
-                    f'<div class="gzc-l">{_lab}<span class="gzc-b">{_gz}</span></div>'
-                    f'<div class="gzc-v num">{fmt_krw(int(_g["매출액"].sum()))}</div>'
-                    f'<div class="gzc-d">{tx_count(_g):,}건 · 항목 {len(_t):,}개</div></div>',
-                    unsafe_allow_html=True)
-                if _t.empty:
-                    st.caption("해당 조건에 데이터가 없어요.")
-                else:
-                    hbar_list(_t, "항목", top=5)
-        st.caption("**BASIC** 은 오리지널(프레임)과 라이선스 캐릭터(타이틀)를 함께 봐요.  "
-                   "※ 오리지널 프레임은 경량 집계라 **매장 필터는 적용되지 않아요**(기간·국가·상품만).")
+        _scope = " · ".join(f_nat) if f_nat else "전체 국가"
+        # ★구좌가 빈 행이 소수 섞여 있다(집계 원본에 635건). 그대로 두면 3칸 비중 합이
+        #   100%가 안 되고 표 합계도 위 '매장 전체 순위'와 어긋난다 → 여기서만 걷어내고
+        #   몇 건을 뺐는지 캡션에 밝힌다(조용히 사라지게 두지 않는다).
+        _gz_keys = [g for g, _, _ in _GZ_CARDS]
+        if "구좌" in _sc.columns:
+            _gsrc = _sc[_sc["구좌"].astype(str).str.strip().isin(_gz_keys)]
+        else:
+            _gsrc = _sc.iloc[0:0]
+        _drop_rev = int(_sc["매출액"].sum()) - int(_gsrc["매출액"].sum())
+        _tot_gz = int(_gsrc["매출액"].sum())
+
+        if _tot_gz <= 0:
+            st.info("해당 조건에 데이터가 없어요. 위 전용 필터를 넓혀 보세요.")
+        else:
+            st.markdown(
+                '<div style="font-size:13px;color:var(--text-2);margin:2px 0 14px">'
+                f'<b style="color:var(--text)">{_scope}</b>'
+                '<span style="color:var(--text-3);margin:0 8px">·</span>'
+                f'매출 <b style="color:var(--text)">{fmt_krw(_tot_gz)}</b>'
+                '<span style="color:var(--text-3);margin:0 8px">·</span>'
+                f'매장 {_gsrc["매장 이름"].nunique():,}개</div>', unsafe_allow_html=True)
+
+            # ① 구좌별 요약 3칸 + 그 안의 IP구분 구성
+            _gcols = st.columns(3)
+            for (_gz, _lab, _clr), _c in zip(_GZ_CARDS, _gcols):
+                with _c:
+                    _g = _gsrc[_gsrc["구좌"] == _gz]
+                    _rev = int(_g["매출액"].sum())
+                    st.markdown(
+                        f'<div class="gzc" style="border-color:{_clr}">'
+                        f'<div class="gzc-l">{_lab}<span class="gzc-b">{_gz}</span></div>'
+                        f'<div class="gzc-v num">{fmt_krw(_rev)}</div>'
+                        f'<div class="gzc-d">{tx_count(_g):,}건 · 비중 '
+                        f'{_rev / _tot_gz * 100:.1f}%</div></div>', unsafe_allow_html=True)
+                    _gi = (_g.groupby("IP구분", observed=True)["매출액"].sum()
+                           .rename("매출").reset_index()) if "IP구분" in _g.columns else pd.DataFrame()
+                    _gi = _gi[_gi["매출"] > 0] if not _gi.empty else _gi
+                    if _gi.empty:
+                        st.caption("해당 조건에 데이터가 없어요.")
+                    else:
+                        hbar_list(_gi.rename(columns={"IP구분": "_n"}), "_n")
+
+            # ② 국가 × 구좌타입 — 나라마다 구성이 어떻게 다른지가 이 카드의 핵심.
+            _nat_gz = (_gsrc.groupby(["국가", "구좌"], observed=True)["매출액"].sum()
+                       .rename("매출").reset_index())
+            _nat_gz = _nat_gz[_nat_gz["매출"] > 0]
+            if not _nat_gz.empty:
+                _piv = (_nat_gz.pivot_table(index="국가", columns="구좌", values="매출",
+                                            aggfunc="sum", fill_value=0, observed=True)
+                        .reindex(columns=_gz_keys, fill_value=0))
+                _piv["합계"] = _piv.sum(axis=1)
+                _piv = _piv.sort_values("합계", ascending=False)
+                _grid = ("grid-template-columns:1.5fr repeat(3,1fr) 1.15fr 1.5fr")
+                _h = (f'<div class="ntbl"><div class="ntr nth" style="{_grid}">'
+                      '<span>국가</span>'
+                      + "".join(f'<span class="r">{g}</span>' for g, _, _ in _GZ_CARDS)
+                      + '<span class="r">합계</span><span class="vs">구좌 구성</span></div>')
+                for _n, _r in _piv.iterrows():
+                    _t3 = _r["합계"] or 1
+                    # 한 줄 누적막대 — 나라별 구좌 구성이 한눈에 비교되는 게 목적이다.
+                    _bar = "".join(
+                        f'<i style="width:{_r[g] / _t3 * 100:.2f}%;background:{c}"></i>'
+                        for g, _, c in _GZ_CARDS if _r[g] > 0)
+                    _h += (f'<div class="ntr" style="{_grid}">'
+                           f'<span class="nname">{flag_img(_n)}{_n}</span>'
+                           + "".join(
+                               f'<span class="r num">{fmt_krw(int(_r[g]))}</span>' if _r[g]
+                               else '<span class="r num" style="color:var(--text-3)">–</span>'
+                               for g, _, _ in _GZ_CARDS)
+                           + f'<span class="r num"><b>{fmt_krw(int(_r["합계"]))}</b></span>'
+                           f'<span class="vs"><span class="gzbar" '
+                           f'style="flex:1">{_bar}</span></span></div>')
+                st.markdown(_h + "</div>", unsafe_allow_html=True)
+                st.caption(f"{len(_piv)}개국 · 매출 내림차순. 막대는 그 나라 안에서의 "
+                           "구좌 구성비예요(나라끼리의 크기 비교가 아니에요).")
+            _cap2 = ("상단 필터바 + 매장별 전용 필터가 모두 반영된 값이에요. "
+                     "오리지널을 **프레임 단위**로 보려면 '구좌타입 분석' 탭에서 봐요.")
+            if _drop_rev:
+                _cap2 += (f" 구좌값이 비어 있는 {fmt_krw(_drop_rev)}은 이 카드에서만 "
+                          "빠져 있어요(위 '매장 전체 순위' 합계와 그만큼 차이 나요).")
+            st.caption(_cap2)
         helpbox("""
-**구좌별 타이틀 TOP 5**
-- `구좌`(BASIC/WITH/EVENT)로 나눠 각 칸에서 **매출 상위 5개 항목**만 가로막대로 보여줘요.
-- 큰 숫자 = 그 구좌의 **전체 매출액 합**(TOP5 합이 아니라 구좌 전체). 건수·항목 수도 같은 기준.
-- **WITH / EVENT** 항목 = `타이틀`(날짜+IP명).
-- **BASIC** 항목 = `타이틀`이 있는 라이선스 캐릭터 + 경량 집계(`master_photoism_orig.parquet`)의 `프레임`.
-  - 본 집계는 오리지널을 프레임 단위로 두면 그룹이 폭증해 OOM 이 나서 타이틀을 `''` 로 접어 뒀어요.
-    그래서 프레임 순위는 매장 차원이 없는 경량 집계에서 따로 가져와요 → **매장 필터 미적용**.
-  - 큰 숫자(BASIC 전체 매출)에는 오리지널이 이미 포함돼 있어 **중복 합산되지 않아요**.
+**구좌타입 분석 (매장별 탭)**
+- 위 **전용 필터**(국가·상품)를 그대로 물려받아요. 국가를 고르면 그 국가만, 여러 개 고르면 고른 나라들만 나와요.
+- **3칸 요약** = `구좌`(BASIC/WITH/EVENT)별 매출액·건수·비중. 칸 안 막대는 그 구좌를 `IP구분`으로 더 쪼갠 거예요.
+- **국가 × 구좌타입 표** = 나라별로 구좌 구성이 어떻게 다른지 봐요. 맨 오른쪽 막대는 **그 나라 안에서의 구성비**(100% 기준이 나라마다 달라요) — 나라끼리 크기를 비교하는 막대가 아니에요.
+- 오리지널을 **프레임 단위**로 보려면 '구좌타입 분석' 탭의 오리지널 하위탭에서 봐요(본 집계는 그룹 폭증 방지로 오리지널 타이틀을 접어 뒀어요).
 """)
 
 
