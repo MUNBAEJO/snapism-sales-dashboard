@@ -223,10 +223,15 @@ def _yahoo_close(symbol: str, day: str | None) -> float | None:
         return None
 
 
-def fetch_yahoo_cross(usd_krw: float, day: str | None = None) -> dict:
+def fetch_yahoo_cross(usd_krw: float, day: str | None = None,
+                      detail: dict | None = None) -> dict:
     """SMBS 미고시 통화(LAK/PEN)를 야후 USD 크로스레이트로 보강.
     Yahoo '<CUR>=X' = 1 USD 당 해당 통화 수량 → 1 통화 = (1/price) USD → × USD_KRW.
-    (정산 자동화 Code.gs 와 동일한 계산식·동일한 날짜 기준)"""
+    (정산 자동화 Code.gs 와 동일한 계산식·동일한 날짜 기준)
+
+    detail 을 주면 {통화: {sym, px, usd_krw}} 로 **산출 근거**를 채워 준다 —
+    정산서에 '어느 종가를 어떻게 나눴는지'까지 적어야 상대가 검산할 수 있다.
+    """
     out: dict = {}
     if not usd_krw or usd_krw <= 0:
         return out
@@ -234,6 +239,9 @@ def fetch_yahoo_cross(usd_krw: float, day: str | None = None) -> dict:
         price = _yahoo_close(sym, day)
         if price and price > 0:
             out[cur] = round((1.0 / price) * usd_krw, 4)
+            if detail is not None:
+                detail[cur] = {"sym": sym, "px": float(price),
+                               "usd_krw": float(usd_krw)}
     return out
 
 

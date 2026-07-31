@@ -720,6 +720,8 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
     ctx["issuer"] = issuer()
     ctx["rates"] = {k: v for k, v in rates.items()
                     if isinstance(v, (int, float)) and v > 0}
+    # 미고시 통화(LAK·PEN)의 크로스 환율 산출 근거 — 부록에 계산식을 적는 데 쓴다.
+    ctx["fx_cross"] = rates.get("_cross") or {}
     return ctx
 
 
