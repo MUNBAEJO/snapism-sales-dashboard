@@ -1,5 +1,5 @@
 @echo off
 cd /d "%~dp0"
 echo Starting dashboard at http://localhost:8503
-"C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe" -m streamlit run ½º³»ÇÇÁò.py --server.port 8503 --browser.gatherUsageStats false --server.headless false
+"C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe" -m streamlit run ìŠ¤ë‚´í”¼ì¦˜.py --server.port 8503 --browser.gatherUsageStats false --server.headless false
 pause
