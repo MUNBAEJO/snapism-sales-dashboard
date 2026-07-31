@@ -36,10 +36,13 @@ PRETENDARD = ("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9"
 PIE = ["#6366f1", "#b45309", "#0f9d77", "#d24d8b", "#38a3e8", "#c98a2e",
        "#7c77ee", "#5f6b7a"]
 BRAND_LABEL = {"photoism": "포토이즘", "snapism": "스내피즘"}
-QTY_LABEL = {"photoism": "프레임수", "snapism": "건수"}
-QTY_UNIT = {"photoism": "프레임", "snapism": "건"}
+# ★수량 표기는 **두 브랜드 다 '건수'로 통일**한다(요청). 포토이즘은 프레임, 스내피즘은
+#   스티커·포토카드로 물건은 다르지만, 둘 다 '매출 ÷ 평균단가'로 구한 **판매 수량**이라
+#   같은 뜻이다. 브랜드마다 단어가 다르면 표를 나란히 볼 때 다른 지표로 오해받는다.
+QTY_LABEL = {"photoism": "건수", "snapism": "건수"}
+QTY_UNIT = {"photoism": "건", "snapism": "건"}
 # 단가표 열 이름. 한 브랜드만 정산할 때는 브랜드명을 빼도 문서 전체가 그 브랜드다.
-PRICE_HEAD = {"photoism": "프레임 단가", "snapism": "상품 형태별 단가"}
+PRICE_HEAD = {"photoism": "건당 단가", "snapism": "상품 형태별 단가"}
 # 100단위로 고시하는 통화 — 표기만 100배로 하고 ' /100' 을 붙인다.
 FX_100 = {"JPY", "IDR", "VND", "LAK", "MNT"}
 # ★서울외국환중개 **미고시** 통화. 라오스·페루 둘뿐이고 USD 크로스로 채운다.
@@ -613,6 +616,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     k_sub, b_sub = _mk("소계 = 공급가액 + 부가세", marks)
     k_ch, b_ch = _mk("변경 · KPI 4칸 삭제 · 그래프 전폭", marks)
     k_mx, b_mx = _mk("변경 · 멤버별 매출 동시 표기 · 별첨을 앞으로", marks)
+    k_qty, b_qty = _mk("변경 · 프레임수 → 건수 통일", marks)
     k_fx, b_fx = _mk("변경 · 표지 환율 삭제 · 미고시 통화 안내 추가", marks)
     k_pr, b_pr = _mk("국가별 단가", marks)
 
@@ -695,7 +699,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
   {_page_head(f'상세 내역 {"①②"[i]}', BRAND_LABEL[b],
               (ctx['titles'].get(b) or [''])[0], '')}
   <div class="chartwide{k_ch}">{b_ch}{bars}</div>
-  <div class="sec">
+  <div class="sec{k_qty}">{b_qty}
     <h3>국가별 내역<small>단위: 원 · 정산액 = 매출(KRW) × {rate_pct} (원 미만 반올림)
      · 부가세 {vat_word}</small></h3>
     {c['tbl']}

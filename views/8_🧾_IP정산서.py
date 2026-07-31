@@ -259,7 +259,7 @@ def make_panel():
         tot_base += base
         tot_a += round(base * ra) if ra else 0
         tot_m += round(base * rm) if rm else 0
-        qty = "프레임수" if b == "photoism" else "건수"
+        qty = "건수"          # 정산서와 같은 표기로 통일(브랜드 구분 없음)
         with st.expander(f"{sm.BRAND_LABEL[b]} · {_fmt(base)}원 · "
                          f"{qty} {_fmt(d['수량'].sum())} · "
                          f"매출발생 {int((d['매출액'] > 0).sum())}개국"):
