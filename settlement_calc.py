@@ -307,6 +307,28 @@ def set_member_alias(ko: str, en: str) -> None:
     _alias_store.mutate(lambda d: d.setdefault("aliases", {}).update({ko: en}))
 
 
+def _allocate_krw(df: "pd.DataFrame") -> "pd.Series":
+    """멤버별 매출(원)을 **국가 합계에 정확히 맞춰** 정수로 배분한다(최대잔여법).
+
+    ★멤버마다 반올림해 더하면 국가 합계가 국가별 내역과 1원씩 어긋난다(중국
+      68,816,170 vs 68,816,169). 같은 문서 안에서 1원이 안 맞으면 반드시 질문이
+      들어오므로, 국가 합계를 먼저 정하고 그 안에서 나눈다. 수량과 같은 방식.
+    """
+    import math
+    out = pd.Series(0, index=df.index, dtype="int64")
+    for _, g in df.groupby("국가"):
+        target = int(round(g["krw_raw"].sum()))
+        base = g["krw_raw"].map(math.floor).astype("int64")
+        gap = target - int(base.sum())
+        if gap > 0:
+            frac = g["krw_raw"] - base
+            order = sorted(g.index, key=lambda i: (-frac[i], str(g.loc[i, "member"])))
+            for i in order[:gap]:
+                base[i] += 1
+        out.loc[base.index] = base
+    return out
+
+
 def _allocate(df: "pd.DataFrame") -> "pd.Series":
     """멤버별 수량을 **국가 소계에 정확히 맞춰** 배분한다(최대잔여법).
 
@@ -346,11 +368,15 @@ def _allocate(df: "pd.DataFrame") -> "pd.Series":
 
 
 def member_pivot(brand: str, titles: list[str], start: str, end: str,
-                 rates: dict) -> pd.DataFrame:
-    """국가 × 멤버 수량. 두 브랜드 다 나온다 —
-    포토이즘은 '프레임 이름', 스내피즘은 '상품 이름' 이 멤버다."""
+                 rates: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """국가 × 멤버의 **(수량, 매출KRW)** 두 표. 두 브랜드 다 나온다 —
+    포토이즘은 '프레임 이름', 스내피즘은 '상품 이름' 이 멤버다.
+
+    ★수량만 주면 '이 멤버가 얼마를 벌었나'를 문서에서 알 수 없어 매출을 함께 낸다.
+      매출은 국가별 내역과 같은 분자(실결제+쿠폰·코인)를 원화로 환산한 값이다.
+    """
     if not titles:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
     from photoism_rules import COIN_CC, COUPON_CC
 
     rate = smap._rate_case(rates)
@@ -360,10 +386,11 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
             cpn, coin = _sqlist(sorted(COUPON_CC)), _sqlist(sorted(COIN_CC))
             raws = _raw_titles(titles, start, end)
             if not raws:
-                return pd.DataFrame()
+                return pd.DataFrame(), pd.DataFrame()
             df = con.execute(f"""
                 WITH t AS (
                   SELECT "국가", lower(trim("국가코드")) AS cc,
+                         "결제 단위",
                          trim("프레임 이름") AS member,
                          CAST("최종 결제 금액" AS BIGINT) AS pay,
                          CAST("쿠폰 할인 금액"  AS BIGINT) AS cpn,
@@ -381,6 +408,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                   FROM t
                 )
                 SELECT "국가", member, SUM(num) AS num,
+                       SUM(num * {rate}) AS krw_raw,
                        SUM(CASE WHEN up > 0 THEN up ELSE 0 END) AS up_sum,
                        SUM(CASE WHEN up > 0 THEN 1  ELSE 0 END) AS up_cnt
                 FROM f WHERE num <> 0 GROUP BY 1,2
@@ -390,6 +418,8 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                 SELECT "국가", trim("상품 이름") AS member,
                        SUM(CAST("최종 결제 금액" AS BIGINT)
                            + CAST("쿠폰 할인 금액" AS BIGINT)) AS num,
+                       SUM((CAST("최종 결제 금액" AS BIGINT)
+                           + CAST("쿠폰 할인 금액" AS BIGINT)) * {rate}) AS krw_raw,
                        SUM(CASE WHEN TRY_CAST("상품 단가" AS DOUBLE) > 0
                                 THEN TRY_CAST("상품 단가" AS DOUBLE) ELSE 0 END) AS up_sum,
                        SUM(CASE WHEN TRY_CAST("상품 단가" AS DOUBLE) > 0
@@ -406,16 +436,23 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
         con.close()
 
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
     df["국가"] = df["국가"].map(lambda x: NAT_KO.get(x, x))
     df["member"] = df["member"].map(_norm_member)
     # 별칭·키릴 정규화로 같은 멤버가 합쳐질 수 있으므로 다시 모은다.
     df = df.groupby(["국가", "member"], as_index=False).agg(
-        num=("num", "sum"), up_sum=("up_sum", "sum"), up_cnt=("up_cnt", "sum"))
+        num=("num", "sum"), krw_raw=("krw_raw", "sum"),
+        up_sum=("up_sum", "sum"), up_cnt=("up_cnt", "sum"))
     df["수량"] = _allocate(df)
+    df["매출"] = _allocate_krw(df)
     piv = df.pivot_table(index="국가", columns="member", values="수량",
                          aggfunc="sum", fill_value=0).astype(int)
-    return piv.loc[piv.sum(axis=1).sort_values(ascending=False).index]
+    rev = df.pivot_table(index="국가", columns="member", values="매출",
+                         aggfunc="sum", fill_value=0).astype("int64")
+    order = piv.sum(axis=1).sort_values(ascending=False).index
+    # 두 표의 행·열 순서를 맞춰 둔다 — 화면에서 같은 칸을 겹쳐 그리기 때문.
+    return piv.loc[order], rev.reindex(index=order, columns=piv.columns,
+                                       fill_value=0)
 
 
 def price_table(brand: str, titles: list[str], start: str, end: str) -> pd.DataFrame:
@@ -642,7 +679,7 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
     """
     ctx = {"ip": ip_name, "start": start, "end": end, "issued": issued,
            "rate_date": rate_date, "rate_source": rate_source,
-           "details": {}, "pivots": {}, "prices": {},
+           "details": {}, "pivots": {}, "pivots_rev": {}, "prices": {},
            "rs": {}, "mg": {}, "tickets": {}, "titles": {}, "units": {}}
     for brand, sel in picks.items():
         tickets = [sel] if isinstance(sel, str) else list(sel or [])
@@ -658,7 +695,8 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
         d = fill_open(country_detail(brand, titles, start, end, rates),
                       open_countries(brand, start, end))
         ctx["details"][brand] = d
-        ctx["pivots"][brand] = member_pivot(brand, titles, start, end, rates)
+        ctx["pivots"][brand], ctx["pivots_rev"][brand] = member_pivot(
+            brand, titles, start, end, rates)
         ctx["titles"][brand] = titles
         ctx["rs"][brand] = get_rs(brand, ticket)
         ctx["mg"][brand] = get_mg(brand, ticket)
@@ -698,22 +736,29 @@ def _ctx_key(ip: str, start: str, end: str) -> str:
 
 def ctx_to_json(ctx: dict) -> dict:
     """DataFrame 을 JSON 으로. 발행 시점 값을 그대로 재현할 수 있어야 한다."""
+    def _piv(src):
+        return {b: {"index": list(p.index), "columns": list(p.columns),
+                    "values": p.values.tolist()}
+                for b, p in (src or {}).items() if p is not None and not p.empty}
+
     out = {k: v for k, v in ctx.items()
-           if k not in ("details", "pivots")}
+           if k not in ("details", "pivots", "pivots_rev")}
     out["details"] = {b: d.to_dict("records") for b, d in ctx["details"].items()}
-    out["pivots"] = {
-        b: {"index": list(p.index), "columns": list(p.columns),
-            "values": p.values.tolist()}
-        for b, p in ctx["pivots"].items() if p is not None and not p.empty}
+    out["pivots"] = _piv(ctx.get("pivots"))
+    out["pivots_rev"] = _piv(ctx.get("pivots_rev"))
     return out
 
 
 def ctx_from_json(d: dict) -> dict:
+    def _piv(src):
+        return {b: pd.DataFrame(v["values"], index=v["index"], columns=v["columns"])
+                for b, v in (src or {}).items()}
+
     ctx = dict(d)
     ctx["details"] = {b: pd.DataFrame(v) for b, v in (d.get("details") or {}).items()}
-    ctx["pivots"] = {
-        b: pd.DataFrame(v["values"], index=v["index"], columns=v["columns"])
-        for b, v in (d.get("pivots") or {}).items()}
+    ctx["pivots"] = _piv(d.get("pivots"))
+    # 옛 스냅샷엔 매출 피벗이 없다 — 없으면 빈 dict 로 두고 수량만 그린다.
+    ctx["pivots_rev"] = _piv(d.get("pivots_rev"))
     return ctx
 
 
