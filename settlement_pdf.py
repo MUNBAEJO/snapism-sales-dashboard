@@ -672,10 +672,6 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
       {brand_rows}
     </table>
   </div>
-  <div class="guide">
-    본 정산서에 대한 이의는 수신일로부터 7영업일 이내에 회신하여 주시기 바랍니다.
-    기한 내 회신이 없는 경우 확정 처리됩니다.
-  </div>
   <div class="notes">
     · 매출액은 취소분을 제외한 실판매 금액입니다.<br>
     · 해외 매출은 정산 종료일 기준 매매기준율로 원화 환산하여 합산합니다.<br>
