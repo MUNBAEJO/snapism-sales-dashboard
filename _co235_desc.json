@@ -1,0 +1,269 @@
+{
+  "type": "doc",
+  "version": 1,
+  "content": [
+    {
+      "type": "panel",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 4
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "업무 설명",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "스내피즘 브랜드의 일일 매출과 IP별 성과를 임원에게 매일 아침 보고하기 위한 대시보드가 필요"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "현재는 Admin에서 CSV를 수동 다운로드 후 가공하는 방식이라 시간이 오래 걸리고 휴먼 에러 위험도 있음"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "attrs": {
+        "panelType": "info"
+      }
+    },
+    {
+      "type": "panel",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 4
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "개선 Point",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "스내피즘 API에서 전일 매출 데이터를 매일 새벽 자동 수집"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "임원용 / 실무자용 2개 모드로 IP 순위 노출 (임원 TOP 5 / 실무자 TOP 10)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "포토카드·스티커프레임 카테고리별, IP별 매출 순위 표시"
+                    }
+                  ]
+                },
+                {
+                  "type": "bulletList",
+                  "content": [
+                    {
+                      "type": "listItem",
+                      "content": [
+                        {
+                          "type": "paragraph",
+                          "content": [
+                            {
+                              "type": "text",
+                              "text": "해외 매출은 국가별 카드 + 원화 환산 병기"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "매일 08:00 자동 갱신, 사내 SSO로 접근 제한"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "attrs": {
+        "panelType": "note"
+      }
+    },
+    {
+      "type": "panel",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 4
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "운영 도구 및 세팅",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "실행 환경: Apps Script Web App + Google Sheets"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "인증: Google Workspace SSO"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "트리거: 매일 08:00 자동 갱신"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "데이터 소스: 스내피즘 공식 API (sale-statistics/export endpoint)"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "보존: 전체 누적 (24개월 시점 BigQuery 마이그레이션 예정)"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "attrs": {
+        "panelType": "warning"
+      }
+    }
+  ]
+}

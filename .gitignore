@@ -2,6 +2,8 @@
 config.json
 .streamlit/secrets.toml
 allowed-users.json
+# ★백업본도 같은 내용(직원 이메일·접근권한) — 절대 커밋 금지
+allowed-users.json.bak*
 
 # 원자적 저장/락 임시 파일 (auth·config 저장 시 잠깐 생겼다 사라짐)
 *.json.tmp
