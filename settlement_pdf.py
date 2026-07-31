@@ -481,7 +481,7 @@ text-align:right;white-space:nowrap}
    ★멤버 이름(PARK JEONG WOO 등)이 길어 nowrap 이면 표가 페이지 밖으로 밀려
    합계 열이 통째로 잘렸다(.page 가 overflow:hidden 이라 조용히 사라진다).
    머리글만 줄바꿈을 허용해 폭을 되찾는다. */
-.t3.rv th{white-space:normal;word-break:break-word;padding:5px 3px;line-height:1.2}
+.t3.rv th{white-space:normal;padding:5px 3px;line-height:1.2}
 .t3.rv td{padding:3px;line-height:1.25}
 .t3.rv .mr{display:block;font-style:normal;font-size:8.2px;font-weight:600;
 color:var(--text-3)}
@@ -738,7 +738,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
         html.append(f"""<div class="page">
   {_page_head('별첨' + (f' {"①②"[j]}' if len(annex) > 1 else ''),
               BRAND_LABEL[b], '국가 × 멤버',
-              f'{_f(tot_q)} {QTY_UNIT[b]} · {len(p)}개국')}
+              f'{_f(tot_q)} {QTY_UNIT[b]}')}
   <div class="sec{k_mx}">{b_mx}<h3>멤버별 내역
     <small>{QTY_LABEL[b]} · 아래는 매출(원)</small></h3>
     {_matrix(p, _members(b), rv)}
