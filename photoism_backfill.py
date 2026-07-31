@@ -107,6 +107,10 @@ def print_status():
     print(f" 진행률:      {done}/{total} 청크  ({pct:.1f}%)")
     print(f" 완료 여부:   {status_str}")
     print(f" 마지막 실행: {state.get('last_run', '없음')}")
+    # 조용히 빠진 국가가 있으면 --status 에서 바로 보이게 한다.
+    for f in state.get("failed", []):
+        print(f" ⚠ 미완료:    {f['start']} ~ {f['end']} · "
+              f"{', '.join(f.get('countries', []))} (재시도 {f.get('tries', 0)}/3)")
     print(f"{'='*50}\n")
 
 
@@ -422,9 +426,42 @@ def main():
         print("사용법: python photoism_backfill.py [시작날짜] [종료날짜]")
         sys.exit(1)
 
-    if state.get("completed"):
+    # ★청크 안에서 일부 국가가 실패해도 예전엔 done_chunks·next_date 가 그냥 전진해서
+    #   그 국가의 그 기간은 --reset 없이는 영영 안 채워졌다(파일이 아예 안 생기므로
+    #   '존재+512B' 스킵 판정에도 안 걸린다). 이제 실패를 state 에 적어 두고,
+    #   다음 실행 때 **전진 대신 그 청크를 다시** 돈다 — 회당 청크 수는 그대로라
+    #   CMS 부하는 늘지 않는다. 무한 반복을 막으려고 청크당 3회로 끊는다.
+    #   ★이 검사는 completed 검사보다 **앞**에 있어야 한다. 마지막 청크에서 실패가
+    #     나면 completed 가 먼저 찍히는데, 뒤에 두면 그 실패를 영영 못 줍는다.
+    retry = None
+    for f in state.get("failed", []):
+        if f.get("tries", 0) < 3:
+            retry = f
+            break
+
+    if not retry and state.get("completed"):
         log(f"백필 완료 ({state['start_date']} ~ {state['end_date']}). 할 일 없음.")
         print_status()
+        return
+
+    if retry:
+        chunk_start_str, chunk_end_str = retry["start"], retry["end"]
+        log(f"[재시도 {retry.get('tries', 0) + 1}/3] 실패 청크 {chunk_start_str} ~ "
+            f"{chunk_end_str} (미완료 국가: {', '.join(retry.get('countries', [])) or '?'})")
+        results = crawl_chunk(chunk_start_str, chunk_end_str)
+        bad = sorted(c for c, ok in results.items() if not ok)
+        retry["tries"] = retry.get("tries", 0) + 1
+        if bad:
+            retry["countries"] = bad
+            log(f"[재시도] 아직 남음: {', '.join(bad)}")
+            if retry["tries"] >= 3:
+                log("[재시도] 3회 초과 — 이 청크는 더 시도하지 않는다. "
+                    "--reset 또는 수동 확인 필요.")
+        else:
+            state["failed"] = [x for x in state.get("failed", []) if x is not retry]
+            log("[재시도] 이 청크는 전부 채워졌다.")
+        state["last_run"] = datetime.now().isoformat()
+        save_state(state)
         return
 
     next_date = date.fromisoformat(state["next_date"])
@@ -444,7 +481,16 @@ def main():
     state["last_run"] = datetime.now().isoformat()
     save_state(state)
 
-    crawl_chunk(chunk_start_str, chunk_end_str)
+    results = crawl_chunk(chunk_start_str, chunk_end_str)
+
+    # 실패 국가는 적어 둔다 — 다음 실행이 이 청크를 먼저 다시 돈다(위 재시도 블록).
+    bad = sorted(c for c, ok in (results or {}).items() if not ok)
+    if bad:
+        state.setdefault("failed", []).append(
+            {"start": chunk_start_str, "end": chunk_end_str,
+             "countries": bad, "tries": 0})
+        log(f"[미완료 기록] {chunk_start_str} ~ {chunk_end_str} : {', '.join(bad)} "
+            "→ 다음 실행 때 재시도한다.")
 
     state["done_chunks"] = done + 1
     next_after = chunk_end + timedelta(days=1)
