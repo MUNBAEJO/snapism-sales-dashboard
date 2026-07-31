@@ -392,14 +392,7 @@ border-bottom:1px solid var(--border);border-right:1px solid var(--border);
 color:var(--text-2)}
 .fxgrid div b{color:var(--text)}
 .fxnote{font-size:10.5px;color:var(--text-3);margin-top:6px}
-/* 미고시 통화(라오스·페루) 환산 근거 — 상대가 그대로 검산할 수 있게 적는다 */
-.fxwhy{margin-top:10px;background:var(--surface-2);border:1px solid var(--border);
-border-radius:9px;padding:10px 13px;font-size:10px;color:var(--text-2);line-height:1.65}
-.fxwhy b{color:var(--text)}
-.fxwhy ul{margin:5px 0 5px 14px;padding:0}
-.fxwhy li{margin:2px 0}
-.fxwhy code{font-family:inherit;font-weight:700;color:var(--text);
-background:#eef0fe;border-radius:4px;padding:0 4px}
+.fxnote b{color:var(--text-2);font-weight:700}
 .guide{margin-top:18px;background:var(--surface-2);border-radius:10px;
 padding:12px 16px;font-size:11.5px;color:var(--text-2);line-height:1.85}
 .guide b{color:var(--text)}
@@ -768,42 +761,17 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     price = {bb: ctx["prices"].get(bb) or {} for bb in used}
     items = [(nat, ctx["units"].get(nat, ""),
               {bb: price[bb].get(nat) or {} for bb in used}) for nat in order]
-    # ★미고시 통화 안내 — 라오스·페루만 다른 출처를 쓰므로 **검산 가능한 수준까지**
-    #   적는다. '크로스 환율' 한 마디만 있으면 어디서 온 숫자인지 물어보게 된다.
+    # 미고시 통화 안내 — 출처만 한 줄로. 산식까지 적었더니 과하다는 피드백이 있었다.
     _rt = ctx.get("rates") or {}
     _unl = [c for c in FX_UNLISTED
             if c in {str(it[1]).strip().upper() for it in items} and _rt.get(c)]
-    _cross = ctx.get("fx_cross") or {}
-    _unl_note = ""
-    if _unl:
-        _nm = {"LAK": "라오스", "PEN": "페루"}
-        lines = []
-        for c in _unl:
-            d = _cross.get(c) or {}
-            px, uk = d.get("px"), d.get("usd_krw")
-            v = _rt[c]
-            # 100단위 고시 통화만 '표에는 …' 을 덧붙인다. 아니면 같은 값이 두 번 나온다.
-            tail = (f' (위 표에는 100{c} 기준 <b>{v * 100:,.2f}원</b>으로 표기)'
-                    if c in FX_100 else "")
-            if px and uk:
-                lines.append(
-                    f'<b>{_nm.get(c, c)}({c})</b> — Yahoo Finance <code>{d.get("sym", c + "=X")}</code> '
-                    f'{ctx["rate_date"]} 종가 <b>1 USD = {px:,.2f} {c}</b>, '
-                    f'서울외국환중개 USD 매매기준율 <b>{uk:,.2f}원</b> '
-                    f'→ 1 {c} = {uk:,.2f} ÷ {px:,.2f} = <b>{v:,.4f}원</b>{tail}')
-            else:
-                lines.append(f'<b>{_nm.get(c, c)}({c})</b> — 적용 환율 '
-                             f'<b>{v:,.4f}원</b>{tail} (USD 크로스 환율)')
-        _unl_note = (
-            '<div class="fxwhy"><b>미고시 통화 환산 방법 및 출처</b><br>'
-            f'{" · ".join(_nm.get(c, c) for c in _unl)}는 서울외국환중개 '
-            '<b>매매기준율 고시 대상이 아닙니다.</b> 따라서 이 두 통화만 '
-            '<b>Yahoo Finance(finance.yahoo.com)</b>의 <b>정산 기준일과 같은 날짜의 '
-            '일별 종가</b>를 받아 USD 크로스 환율로 환산했습니다. '
-            'USD 대 원화는 서울외국환중개 매매기준율을 그대로 씁니다.'
-            '<ul><li>' + '</li><li>'.join(lines) + '</li></ul>'
-            '<b>그 밖의 모든 통화</b>는 서울외국환중개 매매기준율을 그대로 적용했습니다 '
-            '— 칠레(CLP)도 고시 통화라 여기에 포함됩니다.</div>')
+    _nm = {"LAK": "라오스", "PEN": "페루"}
+    _unl_note = (
+        '<div class="fxnote">'
+        + " · ".join(f"{_nm.get(c, c)}({c})" for c in _unl)
+        + '는 서울외국환중개 매매기준율 미고시 통화라, 같은 기준일의 '
+          '<b>Yahoo Finance</b> 종가를 기준으로 한 USD 크로스 환율을 적용했습니다.'
+          '</div>') if _unl else ""
     html.append(f"""<div class="page">
   {_page_head('부록', '국가별 적용 환율 · 단가', used_label,
               f'{len(items)}개국 · 기준일 <b>{ctx["rate_date"]}</b>')}

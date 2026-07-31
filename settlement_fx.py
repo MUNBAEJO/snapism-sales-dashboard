@@ -140,13 +140,9 @@ def _backfill(rates: dict, asof: str) -> None:
     # ① 야후 USD 크로스 — **기준일 종가**로. 기존 정산 자동화(Code.gs)와 같은 방식.
     #    오늘 시세에 과거 USD/KRW 를 곱하면 서로 다른 날짜가 섞인다.
     try:
-        det: dict = {}
-        for cur, v in ur.fetch_yahoo_cross(rates.get("USD"), asof, det).items():
+        for cur, v in ur.fetch_yahoo_cross(rates.get("USD"), asof).items():
             if cur in need and v:
                 rates[cur] = v
-                # 산출 근거를 남긴다 — 정산서 부록에 계산식을 그대로 적기 위해서.
-                # (숫자가 아닌 값이라 _rate_case·ctx["rates"] 필터에는 안 걸린다)
-                rates.setdefault("_cross", {})[cur] = det.get(cur, {})
     except Exception:
         pass
     # ② 그래도 없으면 날짜별 참고 환율에서 가져온다
