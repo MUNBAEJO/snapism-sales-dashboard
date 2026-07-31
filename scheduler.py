@@ -44,14 +44,27 @@ def _ensure_single_instance():
         sys.exit(0)
 
 
-def load_schedule_time():
+def load_config() -> dict:
+    """config.json 을 읽어 dict 로. 실패하면 빈 dict.
+
+    ★run_sales_deep_resync() 가 이 이름으로 부르는데 정의가 없어서 NameError 가
+      났고, 그 함수의 광역 except 가 그걸 삼켜 `schedule.sales_deep_days` 설정이
+      항상 무시되고 60일로 고정돼 있었다(2026-07-31 확인).
+    """
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
-            cfg = json.load(f)
-        h = cfg.get("schedule", {}).get("hour", 9)
-        m = cfg.get("schedule", {}).get("minute", 0)
-        return f"{h:02d}:{m:02d}"
+            return json.load(f)
     except Exception:
+        return {}
+
+
+def load_schedule_time():
+    cfg = load_config()
+    h = cfg.get("schedule", {}).get("hour", 9)
+    m = cfg.get("schedule", {}).get("minute", 0)
+    try:
+        return f"{int(h):02d}:{int(m):02d}"
+    except (TypeError, ValueError):
         return "09:00"
 
 

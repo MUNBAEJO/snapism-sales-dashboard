@@ -86,7 +86,10 @@ def _load_users() -> dict:
                 return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
             except Exception:
                 continue
-        return {"approved": {}, "pending": []}
+        # ★위 FileNotFoundError 분기와 **같은 4키**여야 한다. teams/member_team 을
+        #   빼면 list_teams()·allowed_pages() 가 u["teams"] 로 직접 인덱싱하다
+        #   KeyError → 로그인 전원이 에러 화면이 된다(2026-07-31 확인).
+        return {"approved": {}, "pending": [], "teams": {}, "member_team": {}}
 
 
 def _save_users(u: dict) -> None:

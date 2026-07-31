@@ -1,4 +1,10 @@
 {
+  "_README": [
+    "config.json 예제. 이 파일을 config.json 으로 복사한 뒤 값을 채우세요.",
+    "config.json 은 .gitignore 대상입니다 — 절대 커밋하지 마세요.",
+    "쓰지 않는 섹션은 통째로 빼도 됩니다(코드가 .get 으로 읽습니다).",
+    "exchange_rates 는 update_rates.py 가 자동으로 채우고 갱신합니다."
+  ],
   "kr": {
     "url": "https://admin.snapism.co.kr",
     "username": "여기에_아이디_입력",
@@ -9,9 +15,34 @@
     "username": "여기에_아이디_입력",
     "password": "여기에_비밀번호_입력"
   },
+  "photoism": {
+    "_주석": "countries 에 수집 대상 국가를 코드별로 등록. 실제 운영은 30개국이며 아래는 형식 예시.",
+    "username": "여기에_포토이즘_CMS_아이디_입력",
+    "password": "여기에_비밀번호_입력",
+    "countries": {
+      "kr": {
+        "url": "https://여기에_국가별_CMS_주소",
+        "name": "한국",
+        "currency": "KRW",
+        "cmsapi": "여기에_장비관리_API_지역코드"
+      },
+      "us": {
+        "_주석": "timezone_offset·region 은 날짜 경계가 한국과 다른 국가에만 넣습니다.",
+        "url": "https://여기에_국가별_CMS_주소",
+        "name": "미국",
+        "currency": "USD",
+        "cmsapi": "여기에_장비관리_API_지역코드",
+        "timezone_offset": -16,
+        "region": "us"
+      }
+    }
+  },
   "schedule": {
+    "_주석": "hour/minute = 매일 크롤 시각. sales_* 는 없으면 각각 14일·60일 기본값.",
     "hour": 9,
-    "minute": 0
+    "minute": 0,
+    "sales_lookback_days": 14,
+    "sales_deep_days": 60
   },
   "exchange_rates": {
     "KRW": 1,
@@ -24,6 +55,7 @@
     "MYR": 377.75
   },
   "rates_updated": "",
+  "rates_asof": "",
   "jira": {
     "url": "https://seobukcorp.atlassian.net",
     "email": "여기에_이메일_입력",
@@ -33,6 +65,7 @@
     "rs_agency_field": "customfield_11058",
     "rs_mgmt_field": "customfield_11059"
   },
+  "gemini_api_key": "여기에_Gemini_API_키_입력 (주간리포트 AI 요약용 · 비우면 요약만 꺼짐)",
   "mail": {
     "smtp_host": "smtp.gmail.com",
     "smtp_port": 587,
@@ -42,5 +75,15 @@
     "recipients": ["담당부서1@seobuk.kr", "담당부서2@seobuk.kr"],
     "cc": [],
     "weeks": 2
+  },
+  "settlement": {
+    "_주석": "IP 정산서 발행처. 섹션이 없으면 아래 값이 기본값으로 들어갑니다(name·email 만 빈 값).",
+    "issuer": {
+      "company": "㈜서북",
+      "company_en": "SEOBUK CORP.",
+      "team": "콘텐츠운영팀",
+      "name": "여기에_담당자명_입력",
+      "email": "여기에_담당자_이메일_입력"
+    }
   }
 }
