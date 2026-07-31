@@ -568,6 +568,11 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
 
     취소는 음수 거래로 들어온다. 매출액에는 이미 차감돼 있고, 이 값은
     '얼마가 취소됐는지' 를 보여주기 위한 별도 표기다.
+
+    ★분자는 매출액과 **같은 식**이어야 한다 — 실결제 + (지정국 쿠폰) + (지정국 코인).
+      실결제만 세면 쿠폰·코인 가산 국가의 취소가 과소 표기된다. 지금 데이터엔
+      취소가 한국(가산 대상 아님)에만 있어 값이 같지만, 가산국에서 취소가 한 건
+      생기는 순간 어긋난다.
     """
     if not titles:
         return 0
@@ -575,12 +580,18 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
     con = _con()
     try:
         if brand == "photoism":
+            from photoism_rules import COIN_CC, COUPON_CC
             raws = _raw_titles(titles, start, end)
             if not raws:
                 return 0
+            cpn, coin = _sqlist(sorted(COUPON_CC)), _sqlist(sorted(COIN_CC))
+            num = (f'CAST("최종 결제 금액" AS BIGINT)'
+                   f' + CASE WHEN lower(trim("국가코드")) IN ({cpn})'
+                   f'        THEN CAST("쿠폰 할인 금액" AS BIGINT) ELSE 0 END'
+                   f' + CASE WHEN lower(trim("국가코드")) IN ({coin})'
+                   f'        THEN CAST("서비스코인" AS BIGINT) ELSE 0 END')
             q = f"""
-                SELECT CAST(ROUND(SUM(-CAST("최종 결제 금액" AS BIGINT) * {rate}))
-                       AS BIGINT) AS v
+                SELECT CAST(ROUND(SUM(-({num}) * {rate})) AS BIGINT) AS v
                 FROM read_parquet('{PH_RAW.as_posix()}')
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                   AND "타이틀명" IN ({_sqlist(raws)}) {_gubun_filter()}

@@ -211,39 +211,57 @@ def _country_table(rows, qty_label, rate_pct, rs):
     return h, tk, ts, tq
 
 
-def _matrix(piv, members, rev=None):
-    """국가 × 멤버. rev 를 주면 한 칸에 **수량 위 / 매출 아래**로 같이 적는다.
+def _k(n) -> str:
+    """원 → 천원. **내림**(1차 피드백 스펙 · 검증 체크리스트 기준)."""
+    try:
+        return f"{int(float(n)) // 1000:,}"
+    except (TypeError, ValueError):
+        return "—"
 
-    ★수량만 있으면 '이 멤버가 얼마를 벌었나'를 문서에서 알 수 없다는 지적이 있었다.
-      열을 두 배로 늘리면 멤버가 8명만 넘어도 폭이 안 나오므로 한 칸에 겹쳐 쓴다.
+
+# 별첨 한 면에 넣을 국가 수. D-3 는 국가마다 2행이라 27개국이 한 면을 넘긴다
+# (실측 +99px). 시안의 행 간격을 줄이는 대신 스펙이 허용한 면 분할을 택했다.
+ANNEX_PER_PAGE = 22
+
+
+def _matrix(piv, members, rev=None, totals=None, head_only=False):
+    """국가 × 멤버 — D-3 방식. 국가마다 **2행**(위 건수 / 아래 매출).
+
+    ★한 칸에 건수+매출을 겹쳐 쓰던 방식은 1차 피드백에서 반려됐다. 값이 두 개씩
+      들어가 어느 쪽을 읽는지 헷갈린다는 이유. 행을 나누고 매출 행만 보라색·천원
+      단위로 눌러, 한 칸에는 언제나 값이 하나만 있게 한다.
+      정답 시안: dashboard-redesign 레포 settlement/settlement-matrix-d3-final.html
     """
     if piv is None or piv.empty:
         return ""
     has_rev = rev is not None and not rev.empty
-    tot = [0] * len(members)
-    tot_r = [0] * len(members)
 
-    def cell(q, r):
-        if not q and not r:
-            return '<td class="z">—</td>'
-        sub = f'<i class="mr">{_f(r)}</i>' if has_rev else ""
-        return f"<td>{_f(q)}{sub}</td>"
-
-    h = ('<table class="t3 num' + (' rv' if has_rev else '') + '"><tr><th>국가</th>'
+    h = ('<table class="t3 num d3"><tr><th>국가</th>'
          + "".join(f"<th>{m}</th>" for m in members) + "<th>합계</th></tr>")
     for nat, row in piv.iterrows():
         vals = [int(row.get(m, 0) or 0) for m in members]
         rr = rev.loc[nat] if has_rev and nat in rev.index else None
         revs = [int((rr.get(m, 0) if rr is not None else 0) or 0) for m in members]
-        tot = [a + b for a, b in zip(tot, vals)]
-        tot_r = [a + b for a, b in zip(tot_r, revs)]
-        h += (f"<tr><td>{nat}</td>"
-              + "".join(cell(q, r) for q, r in zip(vals, revs))
-              + cell(sum(vals), sum(revs)) + "</tr>")
-    h += ('<tr class="sum"><td>합계</td>'
-          + "".join(cell(q, r) for q, r in zip(tot, tot_r))
-          + cell(sum(tot), sum(tot_r)) + "</tr></table>")
-    return h
+        h += (f'<tr class="r1"><td>{nat}</td>'
+              + "".join(f"<td>{_f(v)}</td>" if v else '<td class="z">—</td>'
+                        for v in vals)
+              + f"<td>{_f(sum(vals))}</td></tr>")
+        if has_rev:
+            h += ('<tr class="r2"><td>매출</td>'
+                  + "".join(f"<td>{_k(v)}</td>" if v else '<td class="z">—</td>'
+                            for v in revs)
+                  + f"<td>{_k(sum(revs))}</td></tr>")
+    # 합계는 **전체 국가 기준**이라 면을 나눠도 마지막 면에만 한 번 붙인다.
+    if totals is not None:
+        tot, tot_r = totals
+        h += ('<tr class="sum"><td>합계 (건수)</td>'
+              + "".join(f"<td>{_f(v)}</td>" for v in tot)
+              + f"<td>{_f(sum(tot))}</td></tr>")
+        if has_rev:
+            h += ('<tr class="sum s2"><td>합계 (매출)</td>'
+                  + "".join(f"<td>{_k(v)}</td>" for v in tot_r)
+                  + f"<td>{_k(sum(tot_r))}</td></tr>")
+    return h + "</table>"
 
 
 def _fx_table(items, rates):
@@ -478,18 +496,28 @@ padding:5px 4px;text-align:right;white-space:nowrap}
 text-align:right;white-space:nowrap}
 .t3 td:first-child{text-align:left;font-weight:700;padding-left:6px}
 .t3 td.z{color:#c3c9d4}
-/* 한 칸에 수량(위) + 매출(아래). 매출은 눌러서 수량이 먼저 읽히게 한다.
-   ★멤버 이름(PARK JEONG WOO 등)이 길어 nowrap 이면 표가 페이지 밖으로 밀려
-   합계 열이 통째로 잘렸다(.page 가 overflow:hidden 이라 조용히 사라진다).
-   머리글만 줄바꿈을 허용해 폭을 되찾는다. */
-.t3.rv th{white-space:normal;padding:5px 3px;line-height:1.2}
-.t3.rv td{padding:3px;line-height:1.25}
-.t3.rv .mr{display:block;font-style:normal;font-size:8.2px;font-weight:600;
-color:var(--text-3)}
-.t3.rv tr.sum .mr{color:var(--text-2)}
 .t3 td:last-child{font-weight:800}
 .t3 tr.sum td{font-weight:800;color:var(--ink);background:var(--surface-2);
 border-bottom:1.5px solid var(--ink)}
+/* ── D-3: 국가마다 2행(위 건수 / 아래 매출). 시안 settlement-matrix-d3-final.html ──
+   ★멤버 이름(PARK JEONG WOO 등)이 길어 nowrap 이면 표가 페이지 밖으로 밀려
+   합계 열이 통째로 잘린다(.page 가 overflow:hidden 이라 조용히 사라진다).
+   머리글만 줄바꿈을 허용해 폭을 되찾는다. */
+.t3.d3 th{white-space:normal;padding:5px 3px;line-height:1.2}
+.t3.d3 td{padding:3.2px 3px;border-bottom:none}
+/* 건수 행 — 연회색 바탕. 건수↔매출 사이엔 선을 두지 않아 한 덩어리로 보인다. */
+.t3.d3 tr.r1 td{background:#f4f5f7}
+.t3.d3 tr.r1 td:last-child{font-weight:800}
+/* 매출 행 — 흰 바탕·보라 글자·천원 단위. 아래에만 구분선. */
+.t3.d3 tr.r2 td{color:var(--brand);border-bottom:1px solid var(--border)}
+.t3.d3 tr.r2 td:first-child{font-weight:500;font-size:8.5px;color:var(--text-3)}
+.t3.d3 tr.r2 td:last-child{font-weight:700}
+.t3.d3 tr.r2 td.z{color:#c3c9d4}
+.t3.d3 tr.sum td{border-bottom:1.5px solid var(--ink)}
+.t3.d3 tr.sum.s2 td{font-size:9px;border-top:1px solid var(--border-2)}
+/* 표 우측 상단 단위 표기 */
+.sechead{display:flex;justify-content:space-between;align-items:baseline}
+.unit{font-size:10px;color:var(--text-2);font-weight:600;white-space:nowrap}
 .pricegrid{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}
 .t4 th{font-size:10px;font-weight:700;color:var(--text-2);background:var(--surface-2);
 border-top:1.5px solid var(--ink);border-bottom:1px solid var(--border-2);
@@ -636,9 +664,12 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
 
     # 장 순서: 표지 → 브랜드 상세 → 별첨(브랜드마다 한 장) → 부록(환율·단가).
     # 멤버별 내역은 상대가 바로 보는 값이라 앞으로, 환율·단가는 참고자료라 맨 뒤로.
-    _n_annex = sum(1 for b in used
-                   if ctx["pivots"].get(b) is not None
-                   and not ctx["pivots"][b].empty)
+    # 별첨은 D-3(국가마다 2행)이라 국가가 많으면 면을 나눈다 → 면 수를 미리 센다.
+    _n_annex = 0
+    for _b in used:
+        _p = ctx["pivots"].get(_b)
+        if _p is not None and not _p.empty:
+            _n_annex += -(-len(_p) // ANNEX_PER_PAGE)
     NPAGES = 2 + len(used) + _n_annex
 
     html = [f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
@@ -680,7 +711,6 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     </table>
   </div>
   <div class="notes">
-    · 매출액은 취소분을 제외한 실판매 금액입니다.<br>
     · 해외 매출은 정산 종료일 기준 매매기준율로 원화 환산하여 합산합니다.<br>
     · {vat_note}
     {'<br>· 본 문서는 레이아웃 검토용 샘플이며 요율·환율 등 일부 수치는 예시값입니다.' if sample else ''}
@@ -706,8 +736,6 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     <h3>국가별 내역<small>단위: 원 · 정산액 = 매출(KRW) × {rate_pct} (원 미만 반올림)
      · 부가세 {vat_word}</small></h3>
     {c['tbl']}
-    <div class="zeroline{k_sub}">{b_sub}소계 정산액 {_f(c['set'])}원 =
-     공급가액 {_f(bs)}원 + 부가세 {_f(bv)}원{'(별도)' if not use_vat else ''}</div>
   </div>
   {foot(2 + i, NPAGES)}
 </div>""")
@@ -727,9 +755,11 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     #   한 장에 넣으면 넘쳐서 잘린다. **브랜드마다 한 장**으로 뺀다.
     annex = [b for b in used
              if ctx["pivots"].get(b) is not None and not ctx["pivots"][b].empty]
+    _pno = 2 + len(used)
     for j, b in enumerate(annex):
         p = ctx["pivots"][b]
         rv = (ctx.get("pivots_rev") or {}).get(b)
+        mem = _members(b)
         tot_q = int(p.values.sum())
         gap = calc[b]["qty"] - tot_q
         # 산출 방식 박스는 뺐다(요청). 다만 별첨 합계가 국가별 소계와 다르면 그 이유는
@@ -738,16 +768,32 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
                 f'단위로 각각 내림하여 산출하므로 국가별 내역 소계보다 '
                 f'{_f(gap)}{QTY_UNIT[b]} 적습니다. 정산액은 국가별 내역 기준입니다.'
                 '</div>' if gap else "")
-        html.append(f"""<div class="page">
+        # 합계는 면을 나눠도 **전체 기준 한 번**만. 여기서 미리 계산해 마지막 면에 넘긴다.
+        tot = [int(p[m].sum()) if m in p.columns else 0 for m in mem]
+        tot_r = ([int(rv[m].sum()) if rv is not None and m in rv.columns else 0
+                  for m in mem] if rv is not None and not rv.empty else [])
+        # 면 수를 먼저 정하고 **균등하게** 쪼갠다 — 22+5 처럼 뒷면이 텅 비면
+        # 잘린 것처럼 보인다(27개국이면 14+13).
+        _np = max(1, -(-len(p) // ANNEX_PER_PAGE))
+        _per = -(-len(p) // _np)
+        chunks = [p.iloc[k:k + _per] for k in range(0, len(p), _per)] or [p]
+        for ci, ch in enumerate(chunks):
+            last = ci == len(chunks) - 1
+            cont = f' <span style="font-weight:500">({ci + 1}/{len(chunks)})</span>' \
+                   if len(chunks) > 1 else ""
+            html.append(f"""<div class="page">
   {_page_head('별첨' + (f' {"①②"[j]}' if len(annex) > 1 else ''),
               BRAND_LABEL[b], '국가 × 멤버', '')}
-  <div class="sec{k_mx}">{b_mx}<h3>멤버별 내역
-    <small>{QTY_LABEL[b]} · 아래는 매출(원)</small></h3>
-    {_matrix(p, _members(b), rv)}
+  <div class="sec{k_mx}">{b_mx}
+    <div class="sechead"><h3>멤버별 내역{cont}
+      <small>국가마다 위 = 건수 · 아래 = 매출</small></h3>
+      <span class="unit num">단위: 건수 = 건 · 매출 = 천원</span></div>
+    {_matrix(ch, mem, rv, totals=(tot, tot_r) if last else None)}
   </div>
-  {note}
-  {foot(2 + len(used) + j, NPAGES)}
+  {note if last else ''}
+  {foot(_pno, NPAGES)}
 </div>""")
+            _pno += 1
 
     # ── 마지막 장: 부록(국가별 적용 환율 · 단가) ─────────────────────────
     # ★단가표를 상세 장 밑에 붙이면 국가가 많을 때 페이지 밖으로 밀려 **조용히
@@ -769,8 +815,8 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     _unl_note = (
         '<div class="fxnote">'
         + " · ".join(f"{_nm.get(c, c)}({c})" for c in _unl)
-        + '는 서울외국환중개 매매기준율 미고시 통화라, 같은 기준일의 '
-          '<b>Yahoo Finance</b> 종가를 기준으로 한 USD 크로스 환율을 적용했습니다.'
+        + '는 매매기준율 미고시로, 같은 기준일의 '
+          '<b>야후 파이낸스(Yahoo Finance)</b> 환율을 기준으로 환산했습니다.'
           '</div>') if _unl else ""
     html.append(f"""<div class="page">
   {_page_head('부록', '국가별 적용 환율 · 단가', used_label,

@@ -31,6 +31,7 @@ from datetime import date
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
+import photoism_rules            # 쿠폰·코인 가산 국가 단일 출처
 
 INK = "#1b2330"; PRIMARY = "#4f46e5"; SECONDARY = "#6366f1"; PINK = "#d24d8b"
 st.markdown("""
@@ -123,8 +124,12 @@ ALIAS_FILE    = BASE_DIR / "data" / "frame_alias.json"
 CONFIG_FILE   = BASE_DIR / "config.json"
 JIRA_CACHE    = BASE_DIR / "data" / "jira_ip_dates_cache.json"   # 타이틀명→종료일(로컬 캐시)
 
-_COUPON_CC = {"la", "gb", "de", "th", "lv", "mx"}
-_COIN_CC   = {"cl", "la", "pe", "gb", "de", "lv", "mx"}
+# ★쿠폰·코인 가산 국가는 photoism_rules 가 단일 출처다. 예전엔 여기에만 같은 목록을
+#   리터럴로 복제해 뒀는데, 규칙이 바뀌면 이 화면만 옛 기준으로 남아 포토이즘 화면·
+#   정산서와 숫자가 어긋난다(교체 시점의 두 집합이 완전히 같은 것을 확인하고 바꿨다).
+#   ※ 같은 파일의 TEAM_GUBUN 은 노출정책과 의도적으로 분리한 것이라 그대로 둔다.
+_COUPON_CC = photoism_rules.COUPON_CC
+_COIN_CC   = photoism_rules.COIN_CC
 
 
 # ══════════════════════════════════════════════════════════════
