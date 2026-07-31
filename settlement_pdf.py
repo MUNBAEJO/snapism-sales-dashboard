@@ -526,11 +526,13 @@ padding:12px 16px;font-size:11px;color:var(--text-2);line-height:1.85}
 """
 
 
+# 비중 그래프 3안 중 **원형(도넛) 채택**(2026-07-31). 가로 막대(_share_chart)와
+# 세로 막대는 그대로 두니 chart= 만 바꾸면 언제든 되돌릴 수 있다.
 CHARTS = {"donut": _chart_donut, "bar": None, "column": _chart_column}
 
 
 def build_html(ctx: dict, kind: str, sample: bool = True,
-               marks: bool = False, chart: str = "bar") -> str:
+               marks: bool = False, chart: str = "donut") -> str:
     """kind='agency'(소속사) | 'mgmt'(대행사). **자기 요율만** 문서에 넣는다."""
     # ★수취처 구분(소속사/대행사)은 **문서에 쓰지 않는다.** 요율이 다른 두 부를
     #   따로 만들지만 그건 내부 사정이고, 받는 쪽은 자기 정산서만 보면 된다.
