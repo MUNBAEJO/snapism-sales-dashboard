@@ -737,8 +737,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
                 '</div>' if gap else "")
         html.append(f"""<div class="page">
   {_page_head('별첨' + (f' {"①②"[j]}' if len(annex) > 1 else ''),
-              BRAND_LABEL[b], '국가 × 멤버',
-              f'{_f(tot_q)} {QTY_UNIT[b]}')}
+              BRAND_LABEL[b], '국가 × 멤버', '')}
   <div class="sec{k_mx}">{b_mx}<h3>멤버별 내역
     <small>{QTY_LABEL[b]} · 아래는 매출(원)</small></h3>
     {_matrix(p, _members(b), rv)}
