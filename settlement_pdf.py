@@ -79,17 +79,16 @@ def rhe(x) -> int:
 
 
 def vat3(amount: int, use_vat: bool) -> tuple[int, int]:
-    """정산액 → (공급가액, 부가세).
+    """정산액 → (공급가액, 부가세). **계산식은 settlement_calc.vat_split 한 곳에만 둔다.**
 
-    ★부가세 **포함**이면 정산액 안에 세금이 들어 있으므로 ÷1.1 로 갈라내고,
-      **별도**면 정산액이 곧 공급가액이고 세금은 그 10% 가 따로 붙는다.
-      두 경우의 부가세를 같은 식으로 구하면 별도 건에서 10% 를 깎아버린다.
+    ★2026-08-03 수정. 예전엔 여기서 use_vat=False 를 '부가세 별도'로 보고 정산액의
+      10% 를 얹었는데, 화면(vat_split)은 같은 플래그를 '부가세 없음'(0원)으로 봤다.
+      같은 파트너 설정을 두 함수가 정반대로 해석해, vat=False 티켓이 생기는 순간
+      화면과 PDF 의 지급액이 10% 갈릴 상태였다.
+      체크박스 도움말이 "해외 파트너면 꺼 주세요"라 **끄면 부가세 자체가 없는 것**이 맞다.
     """
-    a = int(amount or 0)
-    if use_vat:
-        sup = rhe(a / 1.1)
-        return sup, a - sup
-    return a, rhe(a * 0.1)
+    from settlement_calc import vat_split
+    return vat_split(int(amount or 0), bool(use_vat))
 
 
 def _fx_cell(unit: str, local, krw) -> str:
@@ -624,11 +623,10 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     # 표지의 환율 그리드는 뺐다(요청) — 국가별 전체 환율이 부록에 있어 중복이었다.
     # 부가세 — 정산액이 포함인지 별도인지 문서에 못박고, 금액도 함께 적는다.
     sup, vat_amt = vat3(total, use_vat)
-    vat_word = "포함" if use_vat else "별도"
-    vat_note = (f"정산액은 부가세 포함 금액입니다 (공급가액 {_f(sup)}원 · "
-                f"부가세 {_f(vat_amt)}원)." if use_vat
-                else f"정산액은 부가세 별도 금액입니다 (공급가액 {_f(sup)}원 · "
-                     f"부가세 {_f(vat_amt)}원 별도, 합계 {_f(sup + vat_amt)}원).")
+    vat_word = "포함" if use_vat else "없음"
+    # 괄호 안 금액은 바로 위 hero 박스(공급가액·부가세)와 중복이라 뺐다(1차 피드백 v2).
+    vat_note = ("정산액은 부가세 포함 금액입니다." if use_vat
+                else "부가세는 적용하지 않았습니다.")
 
     ver = int(ctx.get("version") or 1)
     badges = f'<span class="badge">{ym} 정산분</span>'
@@ -639,17 +637,19 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     if marks:
         badges += '<span class="badge mkv">변경 표시본</span>'
 
-    # 이번 판에서 바뀐 자리들. marks=False 면 전부 빈 문자열이 된다.
-    k_to, b_to = _mk("변경 · 발행일·발행자 삭제 → To. 수신처", marks)
-    k_in, b_in = _mk("변경 · 정산 브랜드 자동 반영", marks)
-    k_hero, b_hero = _mk("변경 · 취소 금액 삭제 → 매출액", marks)
-    k_sum, b_sum = _mk("변경 · 수량 단위(건·프레임) 삭제", marks)
-    k_sub, b_sub = _mk("소계 = 공급가액 + 부가세", marks)
-    k_ch, b_ch = _mk("변경 · KPI 4칸 삭제 · 그래프 전폭", marks)
-    k_mx, b_mx = _mk("변경 · 멤버별 매출 동시 표기 · 별첨을 앞으로", marks)
-    k_qty, b_qty = _mk("변경 · 프레임수 → 건수 통일", marks)
-    k_fx, b_fx = _mk("변경 · 표지 환율 삭제 · 미고시 통화 안내 추가", marks)
-    k_pr, b_pr = _mk("국가별 단가", marks)
+    # 이번 판(2차 피드백)에서 바뀐 자리들. marks=False 면 전부 빈 문자열이 된다.
+    # 지난 판에서만 바뀐 자리는 False 로 꺼 둔다 — 표시본은 '이번에 뭐가 바뀌었나'만 보여야 한다.
+    k_pd, b_pd = _mk("변경 · 띄어쓰기 '정산 기간'", marks)
+    k_hero, b_hero = _mk("변경 · '부가세(포함)' 붙여쓰기", marks)
+    k_nt, b_nt = _mk("변경 · 각주 괄호 금액 삭제", marks)
+    k_qty, b_qty = _mk("변경 · 캡션(단위·산식·부가세) 삭제", marks)
+    k_mx, b_mx = _mk("변경 · 왼쪽 설명 삭제 · '매출 단위: 천원'", marks)
+    k_fx, b_fx = _mk("변경 · '환산하였습니다'로 통일", marks)
+    k_to, b_to = _mk("", False)
+    k_in, b_in = _mk("", False)
+    k_sum, b_sum = _mk("", False)
+    k_ch, b_ch = _mk("", False)
+    k_pr, b_pr = _mk("", False)
 
     sale = ctx.get("tickets", {}).get(used[0]) if used else None
     sale_txt = ""
@@ -685,7 +685,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
   <div style="margin-top:20px">
     {badges}
     <div class="title">{ip}<span>IP 정산서</span></div>
-    <div class="subtitle num">정산기간 {S} ~ {E}{sale_txt}</div>
+    <div class="subtitle num{k_pd}">{b_pd}정산 기간 {S} ~ {E}{sale_txt}</div>
   </div>
   <div class="intro{k_in}">{b_in}{ip}의 {ym} 정산 내역을 아래와 같이 송부드립니다.
    {prose + ' 두 브랜드의 매출을 합산하였으며' if multi else prose + ' 매출 기준이며'},
@@ -699,7 +699,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
       <div><span>매출액</span><b>{_f(base)}원</b></div>
       <div><span>요율</span><b>{rate_pct}</b></div>
       <div class="vl"><span>공급가액</span><b>{_f(sup)}원</b></div>
-      <div><span>부가세 ({vat_word})</span><b>{_f(vat_amt)}원</b></div>
+      <div><span>부가세({vat_word})</span><b>{_f(vat_amt)}원</b></div>
     </div>
   </div>
   <div class="sec{k_sum}">{b_sum}
@@ -710,7 +710,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
       {brand_rows}
     </table>
   </div>
-  <div class="notes">
+  <div class="notes{k_nt}">{b_nt}
     · 해외 매출은 정산 종료일 기준 매매기준율로 원화 환산하여 합산합니다.<br>
     · {vat_note}
     {'<br>· 본 문서는 레이아웃 검토용 샘플이며 요율·환율 등 일부 수치는 예시값입니다.' if sample else ''}
@@ -733,8 +733,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
               (ctx['titles'].get(b) or [''])[0], '')}
   <div class="chartwide{k_ch}">{b_ch}{bars}</div>
   <div class="sec{k_qty}">{b_qty}
-    <h3>국가별 내역<small>단위: 원 · 정산액 = 매출(KRW) × {rate_pct} (원 미만 반올림)
-     · 부가세 {vat_word}</small></h3>
+    <h3>국가별 내역</h3>
     {c['tbl']}
   </div>
   {foot(2 + i, NPAGES)}
@@ -785,9 +784,8 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
   {_page_head('별첨' + (f' {"①②"[j]}' if len(annex) > 1 else ''),
               BRAND_LABEL[b], '국가 × 멤버', '')}
   <div class="sec{k_mx}">{b_mx}
-    <div class="sechead"><h3>멤버별 내역{cont}
-      <small>국가마다 위 = 건수 · 아래 = 매출</small></h3>
-      <span class="unit num">단위: 건수 = 건 · 매출 = 천원</span></div>
+    <div class="sechead"><h3>멤버별 내역{cont}</h3>
+      <span class="unit num">매출 단위: 천원</span></div>
     {_matrix(ch, mem, rv, totals=(tot, tot_r) if last else None)}
   </div>
   {note if last else ''}
@@ -816,7 +814,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
         '<div class="fxnote">'
         + " · ".join(f"{_nm.get(c, c)}({c})" for c in _unl)
         + '는 매매기준율 미고시로, 같은 기준일의 '
-          '<b>야후 파이낸스(Yahoo Finance)</b> 환율을 기준으로 환산했습니다.'
+          '<b>야후 파이낸스(Yahoo Finance)</b> 환율을 기준으로 환산하였습니다.'
           '</div>') if _unl else ""
     html.append(f"""<div class="page">
   {_page_head('부록', '국가별 적용 환율 · 단가', used_label,

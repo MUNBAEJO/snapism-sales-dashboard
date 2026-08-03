@@ -282,7 +282,7 @@ def make_panel():
         for lab, v in (("소속사", tot_a), ("대행사", tot_m)):
             if not v:
                 continue
-            sup, vat = sc.vat_split(v, True)
+            sup, vat = sc.vat_split(v, _pt["vat"])
             rows.append(f"{lab} {_fmt(v)}원 = 공급가액 {_fmt(sup)} + 부가세 {_fmt(vat)}")
         if rows:
             st.caption("💳 " + " · ".join(rows))
