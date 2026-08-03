@@ -7,9 +7,16 @@ param([switch]$Force)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $proj = $PSScriptRoot
-$py   = 'C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe'
-$pyw  = Join-Path (Split-Path $py) 'pythonw.exe'
-if (-not (Test-Path $pyw)) { $pyw = $py }
+# python 경로는 PC 마다 다르다 -> 하드코딩이 없으면 PATH 에서 찾는다(운영 PC 이전 대비).
+$py = 'C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe'
+if (-not (Test-Path $py)) { $py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source }
+if (-not $py) { $py = 'python.exe' }
+$pyw = $py
+$pydir = Split-Path $py                      # $py 가 'python.exe' 뿐이면 빈 문자열이 된다
+if ($pydir) {
+  $cand = Join-Path $pydir 'pythonw.exe'
+  if (Test-Path $cand) { $pyw = $cand }      # 창 없이 띄우려면 pythonw 가 낫다
+}
 $log  = Join-Path $proj 'logs\scheduler_watchdog.log'
 New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
 function Stamp($m) { Add-Content -Path $log -Value ("{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) }

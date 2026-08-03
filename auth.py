@@ -567,9 +567,22 @@ def log_event(email: str, event: str) -> None:
 
 
 def read_access_log(limit: int = 1000) -> list[dict]:
-    """접속 로그를 최신순으로 파싱해 반환."""
+    """접속 로그를 최신순으로 파싱해 반환.
+
+    ★파일 전체를 read_text 로 읽던 걸 **끝부분만** 읽도록 바꿨다(2026-08-03).
+      로그는 무한 append 라, 관리 콘솔을 열 때마다 커진 파일을 통째로 올리면
+      페이지가 점점 느려진다. 어차피 최신 limit 줄만 쓴다.
+    """
     try:
-        lines = ACCESS_LOG_PATH.read_text(encoding="utf-8").splitlines()
+        size = ACCESS_LOG_PATH.stat().st_size
+        # 한 줄이 100바이트 안팎이라 넉넉히 300바이트로 잡고 끝에서만 읽는다.
+        want = min(size, max(limit, 1) * 300)
+        with ACCESS_LOG_PATH.open("rb") as f:
+            f.seek(size - want)
+            chunk = f.read()
+        if want < size:
+            chunk = chunk.split(b"\n", 1)[-1]      # 잘린 첫 줄은 버린다
+        lines = chunk.decode("utf-8", errors="replace").splitlines()
     except Exception:
         return []
     rows = []

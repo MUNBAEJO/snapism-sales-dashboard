@@ -11,9 +11,9 @@
       "sender_name": "스내피즘 대시보드",
       "app_password": "<Google 앱 비밀번호 16자리>",
       "recipients": ["dept1@seobuk.kr", "dept2@seobuk.kr"],
-      "cc": [],
-      "weeks": 2
+      "cc": []
     }
+  (예전엔 "weeks" 로 기간을 줬는데 지금은 '오픈~어제 누적'이라 아무 데서도 안 읽는다.)
 - 설정(수신자·앱비번)이 비어 있으면 발송하지 않고 로그만 남긴다.
 
 실행:  python sm_mail.py           # 최근 2주 발송

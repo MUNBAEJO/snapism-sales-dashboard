@@ -73,8 +73,7 @@
     "sender_name": "스내피즘 대시보드",
     "app_password": "여기에_Google_앱비밀번호_16자리",
     "recipients": ["담당부서1@seobuk.kr", "담당부서2@seobuk.kr"],
-    "cc": [],
-    "weeks": 2
+    "cc": []
   },
   "settlement": {
     "_주석": "IP 정산서 발행처. 섹션이 없으면 아래 값이 기본값으로 들어갑니다(name·email 만 빈 값).",

@@ -13,8 +13,6 @@ from pathlib import Path
 from datetime import date, timedelta
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -641,51 +639,14 @@ def statrow(items):
     st.markdown(f'<div class="mstrow">{cells}</div>', unsafe_allow_html=True)
 
 
-def style_fig(fig, height, legend=False):
-    """시안 Plotly 스타일 — 회색 격자 없음·투명 배경·여백 최소·y축 눈금 숨김."""
-    fig.update_layout(
-        height=height,
-        font=dict(family="Pretendard, Malgun Gothic, sans-serif", size=12, color="#5b6573"),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(t=26 if legend else 10, b=6, l=8, r=8),
-        showlegend=legend,
-        hoverlabel=dict(font_size=12, font_family="Pretendard, Malgun Gothic, sans-serif"),
-    )
-    if legend:
-        fig.update_layout(legend=dict(orientation="h", y=1.16, x=0, bgcolor="rgba(0,0,0,0)", font_size=11))
-    fig.update_xaxes(showgrid=False, zeroline=False, showline=False, ticks="",
-                     tickfont=dict(size=11, color="#98a0af"), title=None)
-    fig.update_yaxes(showgrid=False, zeroline=False, showline=False, ticks="",
-                     showticklabels=False, title=None)
-    return fig
-
-
 def cat3(series):
     s = series.astype(str).str.strip()
     return s.where(s.isin(["아티스트", "캐릭터"]), "기타")
 
 
-def donut(dfg, names, values, height=250, showlegend=True):
-    fig = px.pie(dfg, names=names, values=values, hole=0.62, color_discrete_sequence=PAL)
-    fig.update_traces(sort=False, textinfo="none",
-                      marker=dict(line=dict(color="#fff", width=2)),
-                      hovertemplate="%{label}<br>%{value:,}원 (%{percent})<extra></extra>")
-    style_fig(fig, height, legend=showlegend)
-    if showlegend:
-        fig.update_layout(legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center", font_size=10))
-    return fig
-
-
-def legend_list(dframe, name_col):
-    """도넛 오른쪽 범례(이름 + %). 도넛 슬라이스 색(PAL)과 순서 일치."""
-    d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
-    tot = d["매출"].sum()
-    html = '<div class="lgd-wrap">'
-    for i, r in d.iterrows():
-        pct = (r["매출"] / tot * 100) if tot else 0
-        html += (f'<div class="lgd"><span class="lgd-dot" style="background:{PAL[i % len(PAL)]}"></span>'
-                 f'<span class="lgd-n">{r[name_col]}</span><span class="lgd-p">{pct:.1f}%</span></div>')
-    st.markdown(html + "</div>", unsafe_allow_html=True)
+# ※ Plotly 헬퍼 style_fig/donut/legend_list 는 2026-08-03 에 지웠다.
+#   차트가 CSS(css_donut 등)로 전부 넘어가면서 셋 다 호출처가 0이 됐고,
+#   plotly import 2줄도 같이 나갔다(포토이즘 페이지엔 애초에 plotly 가 없다).
 
 
 def hbar_list(dframe, name_col, top=None, collapse_after=None):
@@ -717,8 +678,8 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None):
         st.markdown(_rows(d), unsafe_allow_html=True)
 
 
-_STAT_CLS = {"🔚": "end", "🔴": "warn", "⚠️": "post", "🆕": "new",
-             "⏳": "soon", "🟢": "live", "⚪": "unk"}
+# ※ _STAT_CLS(상태 배지 색 매핑)는 배지 자체를 걷어내면서 참조가 0이 됐다 — 2026-08-03 삭제.
+#   포토이즘 쪽은 같은 상수를 _STAT_CLS_UNUSED 로 이름만 바꿔 두었다.
 
 
 def _md(dt):
@@ -854,6 +815,9 @@ ex_rates = load_exchange_rates()
 
 st.title("📊 스내피즘 매출 대시보드")
 st.caption("기간·국가·매장·상품·IP를 골라 매출을 봐요. 매출 = 실결제(쿠폰 제외) 기준이에요.")
+# guide_content 에 'snapism' 가이드가 있는데 호출이 빠져 있어 메인 화면에만 설명서가
+# 안 뜨고 있었다(포토이즘은 1_📸_포토이즘.py:1125 에서 부른다) — 2026-08-03 추가.
+render_guide("snapism")
 
 if df_all.empty:
     st.warning("아직 불러온 매출 데이터가 없어요. `raw` 폴더에 CSV를 넣고 `데이터추가.bat`을 실행한 뒤 새로고침해 주세요.")

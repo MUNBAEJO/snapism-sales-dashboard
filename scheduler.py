@@ -376,6 +376,42 @@ def run_sm_backfill_once():
         log(f"SM PICK 백필 오류: {e}")
 
 
+LOG_MAX_MB = 5      # 이보다 커지면 넘긴다
+LOG_KEEP = 3        # 보관 세대 수 (.1 ~ .3)
+
+
+def run_log_rotation():
+    """logs/*.log 가 커지면 세대별로 넘긴다.
+
+    ★모듈마다 log() 가 따로 있고 전부 open(...,"a") 라 무한히 쌓인다. 실제로
+      photoism_crawler.log 2.7MB / backfill.log 2.67MB / scheduler.log 1MB 까지
+      갔다. 9개 log() 를 다 뜯는 대신 여기서 한 번에 넘긴다 — 수집 경로를
+      건드리지 않는 게 안전하다.
+
+    쓰는 쪽이 open→write→close 라 파일을 계속 잡고 있지 않지만, 하필 그 순간이면
+    rename 이 실패할 수 있다. 그건 그냥 넘기고 다음 날 다시 시도한다.
+    """
+    rotated = []
+    for fp in sorted(LOG_DIR.glob("*.log")):
+        try:
+            mb = fp.stat().st_size / 1024 / 1024
+            if mb < LOG_MAX_MB:
+                continue
+            oldest = fp.with_suffix(f".log.{LOG_KEEP}")
+            if oldest.exists():
+                oldest.unlink()
+            for i in range(LOG_KEEP - 1, 0, -1):
+                src = fp.with_suffix(f".log.{i}")
+                if src.exists():
+                    src.replace(fp.with_suffix(f".log.{i + 1}"))
+            fp.replace(fp.with_suffix(".log.1"))     # 이 뒤로 fp 는 없다
+            rotated.append(f"{fp.name}({mb:.1f}MB)")
+        except Exception as e:
+            log(f"[경고] 로그 회전 실패 {fp.name}: {type(e).__name__}")
+    if rotated:
+        log(f"로그 회전: {', '.join(rotated)}")
+
+
 def run_coverage_audit():
     """수집이 끝난 뒤 커버리지 점검 — '조용한 결손'을 하루 안에 잡는다.
 
@@ -413,6 +449,7 @@ def main():
     schedule.every().day.at("20:40").do(run_jira_cache_warm)
     # 커버리지 점검 — 포토이즘 크롤(09:00~09:15)과 재시도(+1h)까지 끝난 뒤에 본다.
     schedule.every().day.at("11:00").do(run_coverage_audit)
+    schedule.every().day.at("04:30").do(run_log_rotation)   # 수집이 안 도는 시간대
     if not SM_BACKFILL_FLAG.exists():                              # [1회성] SM PICK 백필
         schedule.every().day.at("00:00").do(run_sm_backfill_once)
         log("→ [1회성] SM PICK 백필 예약됨: 오늘 자정 00:00 (완료 후 자동 비활성)")

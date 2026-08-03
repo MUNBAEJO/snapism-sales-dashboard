@@ -8,7 +8,11 @@ param([switch]$Force)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $proj = $PSScriptRoot
-$py   = 'C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe'
+# python.exe 경로는 PC 마다 다르다(WindowsApps 스토어판 vs 일반 설치). 하드코딩만
+# 두면 운영 PC 를 옮기는 순간 워치독이 조용히 죽는다 -> 있으면 쓰고 없으면 PATH 조회.
+$py = 'C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps\python.exe'
+if (-not (Test-Path $py)) { $py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source }
+if (-not $py) { $py = 'python.exe' }
 $log  = Join-Path $proj 'logs\watchdog.log'
 New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
 function Stamp($m) { Add-Content -Path $log -Value ("{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) }

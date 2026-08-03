@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.express as px
 from pathlib import Path
 from datetime import date
-import json, sys, re
+import json, sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from jira_ip_dates import fetch_ip_dates
@@ -48,10 +48,11 @@ hr { margin: 1.4rem 0 1.2rem; border: none; border-top: 1px solid #e9edf5; }
 
 BASE_DIR      = Path(__file__).parent.parent
 SNAP_MASTER   = BASE_DIR / "data" / "master.csv"
-PHOTO_MASTER  = BASE_DIR / "data" / "master_photoism.csv"          # 1,970 MB (최종 fallback)
-PHOTO_PARQUET = BASE_DIR / "data" / "master_photoism.parquet"      # 116 MB (중간 fallback)
-PHOTO_AGG     = BASE_DIR / "data" / "master_photoism_agg.parquet"  # 7.3 MB (우선 사용)
-_DATE_RE      = re.compile(r"^\s*\d{6,8}\s*")
+PHOTO_MASTER  = BASE_DIR / "data" / "master_photoism.csv"          # 레거시 (최종 fallback)
+PHOTO_PARQUET = BASE_DIR / "data" / "master_photoism.parquet"      # 401 MB (중간 fallback)
+PHOTO_AGG     = BASE_DIR / "data" / "master_photoism_agg.parquet"  # 53 MB (우선 사용)
+# ※ _DATE_RE 는 참조가 0이라 지웠다(2026-08-03). title_runs.py:26 의 동명 상수는
+#   현역이니 헷갈리지 말 것 — 그쪽을 지우면 타이틀 정규화가 깨진다.
 
 
 # ── 데이터 로더 ────────────────────────────────────────────────
