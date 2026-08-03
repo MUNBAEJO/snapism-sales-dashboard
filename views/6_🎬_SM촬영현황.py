@@ -42,7 +42,20 @@ st.markdown(f"""
 
 st.title("🎬 SM 촬영 현황")
 st.caption("CMS **매출정보(Artist별 촬영수)** 기준이에요. 이름에 **'SM ent'** 들어간 타이틀의 "
-           "**테마 · 프레임(멤버) · 국가별 일일 촬영수**로, **CMS 화면값과 일치**해요. (매일 자동 갱신)")
+           "**테마 · 프레임(멤버) · 국가별 일일 촬영수**예요. (매일 자동 갱신)")
+
+# ★쿠폰·코인 전액결제 촬영이 CMS 촬영수에서 빠지는 문제 안내(2026-08-03).
+#   안 적으면 "영국은 데이터가 없다"로 오해한다 — 실제로는 빠져 있던 것이다.
+_nm = sm_report.country_name_map()
+_st = " · ".join(_nm.get(c, c.upper()) for c in sorted(sm_report.SETTLED_CC))
+_zero = sorted(sm_report.broken_countries())
+_msg = (f"ℹ️ CMS 촬영수는 **실결제 건만** 세서, 쿠폰·서비스코인으로 전액 결제된 촬영이 빠져요. "
+        f"쿠폰·코인을 **정산하는 국가**(**{_st}**)만 주문수와 비교해 큰 값을 써요. "
+        "그 밖의 국가는 CMS 값 그대로예요.")
+if _zero:
+    _msg += ("  특히 **" + " · ".join(f"{_nm.get(c, c.upper())}({c.upper()})" for c in _zero)
+             + "** 는 쿠폰·코인 결제가 100%라 CMS 값이 0이었어요.")
+st.caption(_msg)
 
 if not DAILY_PARQUET.exists():
     st.warning("아직 CMS 수집 데이터가 없어요. 터미널에서 `python sm_collect.py 시작일 종료일` 로 먼저 수집해 주세요.")

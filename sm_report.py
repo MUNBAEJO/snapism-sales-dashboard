@@ -127,6 +127,95 @@ def country_name_map() -> dict:
         return {}
 
 
+# CMS 가 촬영수를 0 으로만 주는 국가 — 주문수로 메운 뒤 이 표식을 남긴다.
+SHOOT_FILLED_COL = "촬영수보정"
+_BROKEN_CACHE: dict = {}
+
+
+def _settled_cc() -> frozenset:
+    """쿠폰·서비스코인을 **정산하는** 국가(소문자 코드). 정의는 photoism_rules 한 곳.
+
+    그 밖의 국가는 쿠폰·코인을 정산하지 않으므로 촬영수 보정 대상도 아니다.
+    """
+    try:
+        from photoism_rules import COIN_CC, COUPON_CC
+        return frozenset(COUPON_CC) | frozenset(COIN_CC)
+    except Exception:
+        return frozenset()
+
+
+SETTLED_CC = _settled_cc()
+
+
+def broken_countries() -> set:
+    """전 기간을 통틀어 CMS 가 촬영수를 **한 번도 안 주는** 국가코드 집합.
+
+    ★조회 기간이 아니라 **파일 전체**로 판정한다. 좁은 기간만 보면 그 주에
+      우연히 촬영이 없던 정상 국가까지 '고장'으로 몰려 값이 부풀 수 있다.
+    """
+    try:
+        mt = DAILY_PARQUET.stat().st_mtime
+    except OSError:
+        return set()
+    if _BROKEN_CACHE.get("mtime") == mt:
+        return _BROKEN_CACHE["set"]
+    try:
+        d = pd.read_parquet(DAILY_PARQUET, columns=["국가코드", "촬영수", "주문수"])
+        g = d.groupby("국가코드").agg(s=("촬영수", "sum"), o=("주문수", "sum"))
+        s = set(g[(g["s"] <= 0) & (g["o"] > 0)].index)
+    except Exception:
+        s = set()
+    _BROKEN_CACHE.update(mtime=mt, set=s)
+    return s
+
+
+def fill_zero_shoot(df: pd.DataFrame) -> pd.DataFrame:
+    """촬영수 = max(CMS 촬영수, CMS 주문수). 빠진 '무료 결제 촬영'을 되살린다.
+
+    ★★규명된 원인 (2026-08-03)
+      CMS `totalShootCount` 는 **실결제 건만 센다.** 쿠폰·서비스코인으로 전액
+      결제된 촬영은 촬영수에서 빠지고 `totalOrderCount` 에만 남는다.
+
+      국가별로 검증했다 — '촬영수/주문수' 가 '1 − 무결제비율' 과 거의 같다.
+      상관계수 0.87, 30개국 중 29개국이 오차 0.15 이내.
+
+        영국·페루·라트비아  무결제 100%  → 촬영수 0      (통째로 누락)
+        라오스              무결제  97%  → 촬영/주문 0.042
+        프랑스              무결제  42%  → 0.639
+        태국                무결제  15%  → 0.877  (물량이 커서 절대량이 크다)
+        한국·중국·일본       무결제 1% 미만 → 0.99x
+
+      즉 누락은 3개국이 아니라 **쿠폰 비중이 있는 모든 국가**에 걸쳐 있었다.
+
+    ★왜 주문수를 쓰나
+      주문수는 무결제 건까지 포함한 전체 건수다. 실제로 **촬영수가 주문수를
+      넘는 행은 23,342행 중 단 1건**이라 주문수가 상한이고, max() 로 잡으면
+      어떤 국가의 값도 **줄어들지 않는다**(늘거나 그대로).
+
+    ★★대상은 '쿠폰·코인을 정산하는 국가' 뿐이다 (SETTLED_CC).
+      쿠폰·서비스코인을 매출로 인정하는 국가는 photoism_rules 에 지정돼 있고,
+      **그 밖의 국가는 쿠폰·코인을 정산하지 않는다.** 정산하지 않는 촬영을
+      촬영수에만 더하면 리포트가 정산 기준과 어긋난다. 그래서 지정 국가만 메운다.
+      (한국·중국·일본·프랑스 등에도 코인 결제 행이 있지만 정산 대상이 아니라 둔다)
+
+    ★유일한 예외: 칠레(CL)
+      우리 거래로는 코인 100% 인데 CMS 는 촬영/주문 1.000 을 준다. 이미
+      촬영수 = 주문수라 max 를 걸어도 값이 그대로다.
+    """
+    if df.empty or "촬영수" not in df.columns or "주문수" not in df.columns:
+        df = df.copy()
+        df[SHOOT_FILLED_COL] = False
+        return df
+    out = df.copy()
+    shoot = pd.to_numeric(out["촬영수"], errors="coerce").fillna(0)
+    order = pd.to_numeric(out["주문수"], errors="coerce").fillna(0)
+    cc = out["국가코드"].astype(str).str.lower().str.strip()
+    m = (order > shoot) & cc.isin(SETTLED_CC)
+    out["촬영수"] = shoot.where(~m, order)
+    out[SHOOT_FILLED_COL] = m
+    return out
+
+
 def load_daily(start=None, end=None) -> pd.DataFrame:
     df = pd.read_parquet(DAILY_PARQUET)
     if start:
@@ -136,7 +225,9 @@ def load_daily(start=None, end=None) -> pd.DataFrame:
     nm = country_name_map()
     df = df.copy()
     df["국가"] = df["국가코드"].map(lambda c: nm.get(c, c.upper()))
-    return df
+    # ★원본 parquet 은 CMS 값 그대로 두고, **읽는 시점에만** 보정한다.
+    #   나중에 CMS 가 정상화되면 촬영수가 0 이 아니게 되므로 보정이 저절로 안 걸린다.
+    return fill_zero_shoot(df)
 
 
 def _match_artist(theme: str, cc: str):
@@ -579,6 +670,10 @@ def _write_info_sheet(wb, df: pd.DataFrame, a: pd.DataFrame):
         ("집계 시각", "각 국가 현지 표준시 00:00~23:59 기준. 시차 국가는 KST와 다릅니다."),
         ("갱신·변동", "최근 2주를 매주 다시 받습니다. 시차로 확정 전 값은 이후 바뀔 수 있어 덮어쓰며, 변동분은 [변경내역] 시트와 셀의 빨간 글씨·메모(이전→현재)로 표시합니다."),
         ("포함 범위", "전 세계 30개국 자체 운영 포토부스."),
+        ("촬영수 기준", "CMS 촬영수는 실결제 건만 세어, 쿠폰·서비스코인으로 전액 결제된 촬영이 빠집니다. "
+                     "쿠폰·코인을 정산하는 국가(영국·독일·라오스·라트비아·멕시코·태국·칠레·페루)에 한해 "
+                     "CMS의 촬영수와 주문수 중 큰 값을 촬영수로 씁니다. 그 밖의 국가는 CMS 값 그대로입니다. "
+                     "(영국·페루·라트비아는 쿠폰·코인 결제가 100%라 보정 전 값이 0이었습니다.)"),
         ("오픈 IP", "  ·  ".join(artists)),
     ]
     r = 3
