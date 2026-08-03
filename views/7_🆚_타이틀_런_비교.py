@@ -133,8 +133,10 @@ def _rates():
         return {"KRW": 1}
 
 
+# ★인자에 밑줄을 붙이면 st.cache_data 가 해시에서 빼버려 파일 버전이 캐시 키로 안 먹는다
+#   (2026-07-28 포토이즘에서 같은 사고). 여기도 `_v` 였다 — 2026-08-03 수정.
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
-def _load_snapism(_v):
+def _load_snapism(v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
     df = data_io.read_master(MASTER_FILE)
@@ -151,7 +153,7 @@ def _load_snapism(_v):
 
 
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
-def _load_photoism(_v):
+def _load_photoism(v):
     """포토이즘 집계본 — 런 계산에 필요한 컬럼만 읽는다(전체를 들면 메모리가 터진다)."""
     if not PH_FILE.exists():
         return pd.DataFrame()
@@ -173,14 +175,14 @@ def _load_photoism(_v):
     return df[df["매출액"] != 0].reset_index(drop=True)
 
 
-def _load(brand, _v):
-    return _load_snapism(_v) if brand == "스내피즘" else _load_photoism(_v)
+def _load(brand, v):
+    return _load_snapism(v) if brand == "스내피즘" else _load_photoism(v)
 
 
 @st.cache_data(ttl=900, max_entries=2)   # 브랜드 2개 → 상한 2
-def _runs(brand, _v):
+def _runs(brand, v):
     cfg = BRANDS[brand]
-    df = _load(brand, _v)
+    df = _load(brand, v)
     if df.empty:
         return pd.DataFrame()
     try:
@@ -202,13 +204,13 @@ brand = st.radio("브랜드", list(BRANDS), horizontal=True, key="runs_brand",
                  label_visibility="collapsed")
 CFG = BRANDS[brand]
 
-_v = data_io.file_version(CFG["file"])
-df = _load(brand, _v)
+ver = data_io.file_version(CFG["file"])
+df = _load(brand, ver)
 if df.empty:
     st.warning(f"{brand} 매출 데이터가 없어요.")
     st.stop()
 
-runs = _runs(brand, _v)
+runs = _runs(brand, ver)
 if runs.empty:
     st.warning(f"런을 만들 수 없어요. `{CFG['title_label']}`이(가) 있는 거래가 필요해요.")
     st.stop()

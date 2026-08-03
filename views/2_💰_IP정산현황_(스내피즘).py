@@ -109,7 +109,7 @@ def save_mapping(ip_name: str, frames: list):
 
 
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
-def _load_sales(_v):
+def _load_sales(v):       # ★밑줄 금지 — 밑줄이면 파일 버전이 캐시 키에서 빠진다(2026-08-03 수정)
     if not MASTER.exists():
         return pd.DataFrame()
     df = data_io.read_master(MASTER)  # parquet 우선(없으면 csv)

@@ -194,6 +194,85 @@ def alert_new_groups(groups) -> list:
     return keys
 
 
+FAILED_FILE = BASE_DIR / "data" / "alerted_failures.json"
+
+
+def _load_failed() -> set:
+    try:
+        return set(json.load(open(FAILED_FILE, encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def _save_failed(keys):
+    FAILED_FILE.parent.mkdir(exist_ok=True)
+    # 무한히 쌓이지 않게 최근 400건만 남긴다(키에 날짜가 들어 있어 정렬이 곧 시간순).
+    json.dump(sorted(keys)[-400:], open(FAILED_FILE, "w", encoding="utf-8"),
+              ensure_ascii=False, indent=2)
+
+
+def alert_failure(job: str, detail: str = "", once_per_day: bool = True) -> bool:
+    """수집·집계 실패를 관리자(발신자)에게 메일로 알린다. 실제로 보냈으면 True.
+
+    ★왜 필요한가 — 지금까지 scheduler 의 모든 실패 경로는 logs/scheduler.log 에
+      한 줄 남기고 끝이었다. 아무도 로그를 안 보므로 데이터가 며칠 끊겨도 모른다.
+
+    ★이 함수는 **절대 예외를 밖으로 던지지 않는다.** 알림이 실패했다고 해서
+      호출한 수집 작업까지 죽으면 배보다 배꼽이 크다.
+
+    once_per_day: 같은 작업은 하루 한 번만. 20분마다 재시도하는 작업이
+                  받은편지함을 채우는 걸 막는다.
+    """
+    try:
+        key = f"{job}|{date.today().isoformat()}"
+        if once_per_day:
+            done = _load_failed()
+            if key in done:
+                log(f"실패 알림 생략(오늘 이미 보냄): {job}")
+                return False
+
+        m = _load_mail_cfg()
+        sender = (m.get("sender") or "").strip()
+        app_pw = (m.get("app_password") or "").strip()
+        if not (sender and app_pw):
+            log(f"실패 알림: 메일 설정 미완료 — 생략 ({job})")
+            return False
+
+        body = (
+            f"자동 수집 작업이 실패했어요.\n\n"
+            f"  작업   : {job}\n"
+            f"  시각   : {datetime.now():%Y-%m-%d %H:%M:%S}\n"
+            f"  내용   : {detail or '(상세 없음)'}\n\n"
+            "확인 순서\n"
+            "  1) logs/scheduler.log 끝부분에서 같은 시각의 로그를 봐 주세요.\n"
+            "  2) python coverage_audit.py 로 실제로 데이터가 빈 날이 생겼는지 확인해 주세요.\n"
+            "  3) 데이터가 비었으면 그 날짜로 재수집이 필요해요.\n\n"
+            "(같은 작업은 하루 한 번만 알려요.)"
+        )
+        admin = [sender]          # 관리자(발신자 본인)에게만 — 담당부서에는 안 감
+        msg = EmailMessage()
+        msg["Subject"] = f"[대시보드] 수집 실패 — {job}"
+        msg["From"] = formataddr((m.get("sender_name", "스내피즘 대시보드"), sender))
+        msg["To"] = ", ".join(admin)
+        msg.set_content(body)
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(m.get("smtp_host", "smtp.gmail.com"),
+                          int(m.get("smtp_port", 587)), timeout=60) as s:
+            s.ehlo()
+            s.starttls(context=ctx)
+            s.login(sender, app_pw)
+            s.send_message(msg, to_addrs=admin)
+
+        if once_per_day:
+            done.add(key)
+            _save_failed(done)
+        log(f"실패 알림 발송: {job}")
+        return True
+    except Exception as e:                       # 알림 실패가 수집을 죽이면 안 된다
+        log(f"[경고] 실패 알림 자체가 실패: {type(e).__name__}: {str(e)[:120]}")
+        return False
+
+
 def main():
     dry = "--dry" in sys.argv[1:]
     try:

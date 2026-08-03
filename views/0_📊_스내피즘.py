@@ -480,8 +480,12 @@ def load_exchange_rates():
     return load_config().get("exchange_rates", {"KRW": 1})
 
 
+# ★ 인자 이름에 밑줄(_)을 붙이면 안 된다 — st.cache_data 는 **밑줄로 시작하는 인자를
+#   해시에서 제외**한다. `_v` 라 파일 버전이 캐시 키에 안 들어갔고, 그래서 09:00 수집
+#   이후에도 ttl(15분)이 지나야 새 데이터가 보였다. 포토이즘은 2026-07-28 에 고쳤는데
+#   여기만 남아 있었다(2026-08-03 수정).
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효(옛 항목은 메모리만 차지)
-def _load_data(_v):
+def _load_data(v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
     df = data_io.read_master(MASTER_FILE)
@@ -878,7 +882,7 @@ _ip_opts = _uniq("프레임 이름")
 
 
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
-def _stores_by_country(_v):
+def _stores_by_country(v):               # ★밑줄 금지 — 위 _load_data 주석 참고
     """국가 → 매장 목록 (매장 필터를 선택 국가로 좁히기용)."""
     if "국가" not in df_all.columns or "매장 이름" not in df_all.columns:
         return {}
@@ -994,7 +998,12 @@ rev = revenue_txns(df)          # ★모든 카드의 공통 기준 (정산금�
 # 매출이 빠졌을 때 '끝나서'인지 '안 끝났는데'인지 가르려고 Jira 종료일을 함께 본다.
 # ★ 기간으로 자르지 않은 df_all 을 넘긴다 — 기간으로 자르면 첫 거래일이
 #   전부 기간 시작일이 돼서 죄다 '신규'로 나온다.
-# max_entries=16 — 기간·국가·매장 조합마다 항목이 생긴다(반환값은 작은 dict).
+# ★인자가 전부 밑줄이라 **캐시 키가 비어 있다** — 기간·국가·매장을 바꿔도 첫 결과가
+#   그대로 재사용된다(max_entries=16 도 무의미). 지금 화면이 읽는 값은 지라의
+#   오픈일·종료일뿐이고 그건 필터와 무관해서 증상이 안 보이지만, 반환 dict 의
+#   첫거래일·마지막거래일을 쓰기 시작하면 그 순간 남의 필터 결과가 섞인다.
+#   ⚠️밑줄을 떼면 필터 조합마다 재계산이라 비용이 크다(5.75MB 지라 캐시 파싱 +
+#     41만 행 to_datetime). 로딩 개선 작업에서 같이 판단할 것 — 2026-08-03.
 @st.cache_data(ttl=900, show_spinner=False, max_entries=16)
 def _title_status(_v, _p0, _p1, _countries, _stores):
     from title_runs import title_status

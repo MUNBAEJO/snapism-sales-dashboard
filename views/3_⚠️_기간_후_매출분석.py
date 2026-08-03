@@ -61,7 +61,7 @@ def load_jira():
 
 
 @st.cache_data(ttl=900, max_entries=1)
-def _load_snap(_v):
+def _load_snap(v):        # ★밑줄 금지 — 밑줄이면 파일 버전이 캐시 키에서 빠진다(2026-08-03 수정)
     if not SNAP_MASTER.exists():
         return pd.DataFrame()
     df = data_io.read_master(SNAP_MASTER)  # parquet 우선(없으면 csv)

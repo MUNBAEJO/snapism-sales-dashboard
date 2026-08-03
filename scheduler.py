@@ -77,6 +77,22 @@ def log(msg):
         f.write(line + "\n")
 
 
+def fail(job: str, detail: str = ""):
+    """로그를 남기고 **관리자에게 메일로도 알린다**.
+
+    ★2026-08-03 추가. 그전까지 모든 실패는 로그 한 줄로 끝나서, 데이터가 며칠
+      끊겨도 아무도 몰랐다. 되돌릴 수 없는 지점(재시도까지 소진했거나 재시도를
+      예약하지 않는 경로)에서만 부른다 — 곧 재시도할 실패까지 알리면 소음이 된다.
+      sm_mail 은 pandas 를 끌고 오므로 **필요할 때만** import 한다.
+    """
+    log(f"{job} 실패: {detail}" if detail else f"{job} 실패")
+    try:
+        import sm_mail
+        sm_mail.alert_failure(job, detail)
+    except Exception as e:
+        log(f"[경고] 실패 알림 호출 불가: {type(e).__name__}: {str(e)[:120]}")
+
+
 def already_ran_today():
     if not STATE_FILE.exists():
         return False
@@ -125,13 +141,13 @@ def run_retry():
             mark_ran_today()
             log("재시도 완료.")
         else:
-            log(f"재시도도 실패 (exit {result.returncode}). 오늘 수집 종료.")
+            fail("스내피즘 수집", f"재시도도 실패 (exit {result.returncode}). 오늘 수집 종료.")
             mark_ran_today()
     except subprocess.TimeoutExpired:
-        log("재시도 타임아웃. 오늘 수집 종료.")
+        fail("스내피즘 수집", "재시도 타임아웃. 오늘 수집 종료.")
         mark_ran_today()
     except Exception as e:
-        log(f"재시도 오류: {e}")
+        fail("스내피즘 수집", f"재시도 오류: {e}")
         mark_ran_today()
 
 
@@ -181,7 +197,8 @@ def run_crawler():
         log("크롤러 타임아웃 (10분 초과)")
         _schedule_retry()
     except Exception as e:
-        log(f"실행 오류: {e}")
+        # 여기는 재시도를 예약하지 않는 경로다 → 알리지 않으면 그대로 묻힌다.
+        fail("스내피즘 수집", f"실행 오류: {e}")
 
 
 def _schedule_retry():
@@ -229,12 +246,16 @@ def run_photoism_retry():
         )
         log(result.stdout.strip() if result.stdout else "(출력 없음)")
         mark_photoism_ran()
-        log("포토이즘 재시도 완료." if result.returncode == 0 else "포토이즘 재시도도 일부 실패.")
+        if result.returncode == 0:
+            log("포토이즘 재시도 완료.")
+        else:
+            fail("포토이즘 수집", f"재시도도 일부 실패 (exit {result.returncode}). "
+                                  "일부 국가 데이터가 빠졌을 수 있습니다.")
     except subprocess.TimeoutExpired:
-        log("포토이즘 재시도 타임아웃.")
+        fail("포토이즘 수집", "재시도 타임아웃(1시간 초과).")
         mark_photoism_ran()
     except Exception as e:
-        log(f"포토이즘 재시도 오류: {e}")
+        fail("포토이즘 수집", f"재시도 오류: {e}")
         mark_photoism_ran()
 
 def run_photoism_crawler():
@@ -355,6 +376,27 @@ def run_sm_backfill_once():
         log(f"SM PICK 백필 오류: {e}")
 
 
+def run_coverage_audit():
+    """수집이 끝난 뒤 커버리지 점검 — '조용한 결손'을 하루 안에 잡는다.
+
+    ★2026-08-03 추가. 포토이즘 2025년 7일이 ~99% 비어 있었는데 1년 반 동안
+      아무도 몰랐다. 최종일만 보는 신선도 체크로는 못 잡는 종류였다.
+      비교 기준은 전 기간을 쓰고 **보고만 최근 14일**로 좁힌다 — 안 그러면
+      옛날 결손을 매일 다시 알린다.
+    """
+    log("커버리지 점검 시작...")
+    try:
+        import coverage_audit
+        res = coverage_audit.audit(report_days=14)
+        txt = coverage_audit.summary_text(res)
+        if txt:
+            fail("커버리지 점검", "최근 14일에서 수집 이상이 보입니다.\n\n" + txt)
+        else:
+            log("커버리지 점검: 이상 없음")
+    except Exception as e:
+        log(f"[경고] 커버리지 점검 실패: {type(e).__name__}: {str(e)[:200]}")
+
+
 def main():
     _ensure_single_instance()   # 이중 실행 방지(이미 돌면 여기서 종료)
     run_time = load_schedule_time()
@@ -369,6 +411,8 @@ def main():
     # 안 해두면 캐시 만료 후 첫 접속자가 20초쯤 기다린다.
     schedule.every().day.at("08:40").do(run_jira_cache_warm)
     schedule.every().day.at("20:40").do(run_jira_cache_warm)
+    # 커버리지 점검 — 포토이즘 크롤(09:00~09:15)과 재시도(+1h)까지 끝난 뒤에 본다.
+    schedule.every().day.at("11:00").do(run_coverage_audit)
     if not SM_BACKFILL_FLAG.exists():                              # [1회성] SM PICK 백필
         schedule.every().day.at("00:00").do(run_sm_backfill_once)
         log("→ [1회성] SM PICK 백필 예약됨: 오늘 자정 00:00 (완료 후 자동 비활성)")
