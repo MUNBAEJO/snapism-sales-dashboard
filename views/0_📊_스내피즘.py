@@ -482,7 +482,10 @@ def load_exchange_rates():
 #   해시에서 제외**한다. `_v` 라 파일 버전이 캐시 키에 안 들어갔고, 그래서 09:00 수집
 #   이후에도 ttl(15분)이 지나야 새 데이터가 보였다. 포토이즘은 2026-07-28 에 고쳤는데
 #   여기만 남아 있었다(2026-08-03 수정).
-@st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효(옛 항목은 메모리만 차지)
+# ★★cache_resource 다 — 반환 프레임을 **절대 in-place 로 수정하지 말 것**.
+#   같은 객체가 전 사용자에게 공유되므로 한 곳에서 열을 붙이면 모두에게 번진다.
+#   '필터 적용' 절 첫 줄의 `df = df_all.copy()` 가 유일한 격리막이니 지우지 말 것.
+@st.cache_resource(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
 def _load_data(v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
@@ -940,6 +943,8 @@ sel_ip = [o for o in _ip_opts if st.session_state.get(f"f_ip__cb__{o}", False)]
 _cfg = load_config()
 
 # ── 필터 적용 ──
+# ★이 .copy() 는 낭비가 아니다. df_all 은 cache_resource 로 전 사용자가 공유하는
+#   객체라, 이 한 줄이 없으면 아래 가공이 남의 화면까지 오염시킨다. 지우지 말 것.
 df = df_all.copy()
 if len(date_range) == 2:
     df = df[(df["날짜"] >= date_range[0]) & (df["날짜"] <= date_range[1])]

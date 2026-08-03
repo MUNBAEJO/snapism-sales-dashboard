@@ -7,6 +7,7 @@
 """
 import re
 import json
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -169,6 +170,54 @@ def _token_prefix_index(jira_map):
     return out
 
 
+def _entry_raw(e):
+    """엔트리의 (startdate, duedate)를 **한 번만** 파싱해 캐시한다. 없으면 None.
+
+    ★보정 없이 '있는 그대로' 돌려준다 — _entry_span 은 한쪽이 비면 반대쪽으로
+      메우지만, 회차 판정(title_status)은 startdate 가 실제로 있는 것만 써야 한다.
+      둘을 섞으면 duedate 만 있는 티켓이 '시작일'로 둔갑한다.
+    """
+    if "_raw" in e:
+        return e["_raw"]
+
+    def _p(v):
+        if not v:
+            return None
+        if isinstance(v, str):
+            try:
+                return date.fromisoformat(v[:10])
+            except ValueError:
+                pass
+        t = pd.to_datetime(v, errors="coerce")
+        return None if pd.isna(t) else t.date()
+
+    e["_raw"] = (_p(e.get("startdate")), _p(e.get("duedate")))
+    return e["_raw"]
+
+
+def _entry_span(e):
+    """엔트리의 (시작일, 종료일)을 **한 번만** 파싱해 엔트리에 캐시한다.
+
+    ★2026-08-03 최적화. 예전엔 _pick_ticket 이 엔트리를 볼 때마다
+      pd.to_datetime(...) 을 **스칼라로** 불렀다. 스칼라 to_datetime 은 1건당
+      100µs 수준이라, 타이틀 수천 개 × 후보 엔트리만큼 반복되면서 포토이즘
+      페이지 콜드 로딩의 최대 병목이 됐다(프로파일 실측 _pick_ticket 4.9초).
+      Jira 날짜는 'YYYY-MM-DD' 라 fromisoformat 으로 끝난다 — 안 되는 값만
+      pd.to_datetime 으로 흘린다.
+    """
+    if "_span" in e:
+        return e["_span"]
+    s, d = _entry_raw(e)
+    if s is None and d is None:
+        span = None
+    else:
+        s = s or d
+        d = d or s
+        span = (d, s) if d < s else (s, d)
+    e["_span"] = span
+    return span
+
+
 def _pick_ticket(entries, first_day, last_day, prefer_brand="snapism"):
     """
     런 기간과 실제로 겹치는 Jira 티켓 중 가장 많이 겹치는 걸 고른다.
@@ -181,14 +230,10 @@ def _pick_ticket(entries, first_day, last_day, prefer_brand="snapism"):
     """
     best, best_key = None, None
     for e in entries:
-        s = pd.to_datetime(e.get("startdate"), errors="coerce")
-        d = pd.to_datetime(e.get("duedate"),   errors="coerce")
-        if pd.isna(s) and pd.isna(d):
+        span = _entry_span(e)          # 파싱은 엔트리당 한 번만(위 주석 참고)
+        if span is None:
             continue
-        s = s.date() if not pd.isna(s) else d.date()
-        d = d.date() if not pd.isna(d) else s
-        if d < s:
-            s, d = d, s
+        s, d = span
         ov = (min(d, last_day) - max(s, first_day)).days + 1   # 겹치는 일수
         if ov <= 0:
             continue
@@ -325,32 +370,46 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
     tok_idx = _token_prefix_index(jira_map)
     out = {}
 
+    # ── '가장 최근 런'의 날짜들을 타이틀별로 한 번에 구한다 ────────────────
+    # ★예전엔 타이틀마다 루프 안에서 pd.Series(sorted(...)) → to_datetime → diff →
+    #   cumsum 을 돌렸다. 한 번은 싸지만 타이틀이 3천 개면 pandas 호출 오버헤드만
+    #   수 초가 된다(프로파일에서 자체시간이 넓게 퍼져 보이던 정체).
+    #   전체를 한 번에 정렬·groupby 로 계산하면 같은 결과가 나온다.
+    _u = d[[title_col, "_날짜"]].drop_duplicates()
+    _u["_dt"] = pd.to_datetime(_u["_날짜"], errors="coerce")
+    _u = _u.sort_values([title_col, "_dt"], kind="stable")
+    _grp = _u.groupby(title_col, sort=False, observed=True)["_dt"]
+    _gap = _grp.diff().dt.days.fillna(0)
+    _run = (_gap >= gap_days).groupby(_u[title_col], sort=False, observed=True).cumsum()
+    _last = _run == _run.groupby(_u[title_col], sort=False, observed=True).transform("max")
+    # {타이틀: [최근 런의 날짜들(오름차순)]}
+    _cur_days = {k: list(v) for k, v in
+                 _u.loc[_last].groupby(title_col, sort=False, observed=True)["_날짜"]}
+
     for title, g in d.groupby(title_col, sort=False, observed=True):
         # ★'가장 최근 런'만 본다. 타이틀 전체(first~last)로 보면 같은 이름으로
         #  두 번 출시된 게 한 덩어리가 된다 — 스내피즘 '허성범'은 2025-08~2026-07로
         #  11개월이 붙어 2025년 티켓이 매칭되고 2026년 거래가 '기간후판매'로 오탐났다.
         entries = _entries_for(jira_keyed, title, tok_idx)
 
-        days = pd.Series(sorted(g["_날짜"].unique()))
-        gaps = pd.to_datetime(days).diff().dt.days.fillna(0)
-        run_no = (gaps >= gap_days).cumsum()
-        cur = days[run_no == run_no.max()]
+        cur = _cur_days.get(title) or sorted(g["_날짜"].unique())   # 위에서 미리 계산
 
         # ★판매가 끊기지 않아도 회차가 바뀔 수 있다. Jira 에 이름이 같은 티켓이
         #  여러 개면 '가장 늦은 시작일'부터를 현재 회차로 본다.
         #  (로이킴: 05-09~06-30 티켓과 07-14~08-13 티켓이 있는데 거래는 연속이라
         #   공백 기준으로는 안 갈린다 → 07-14 부터가 새 회차)
-        starts = []
-        for e in entries:
-            sd = pd.to_datetime(e.get("startdate"), errors="coerce")
-            if not pd.isna(sd):
-                starts.append(sd.date())
+        # 파싱은 _entry_raw 가 엔트리당 한 번만 한다(예전엔 타이틀 3천 개 루프 안에서
+        # 엔트리마다 스칼라 pd.to_datetime 을 불러 이 줄이 병목이었다).
+        starts = [sd for sd, _ in map(_entry_raw, entries) if sd is not None]
         if starts:
-            cut = max(s for s in starts if s <= cur.max()) if any(s <= cur.max() for s in starts) else None
-            if cut and cut > cur.min() and (cur >= cut).any():
-                cur = cur[cur >= cut]
+            # cur 는 오름차순 리스트라 [0]=최소 · [-1]=최대
+            _lo, _hi = cur[0], cur[-1]
+            _cands = [s for s in starts if s <= _hi]
+            cut = max(_cands) if _cands else None
+            if cut and cut > _lo and any(x >= cut for x in cur):
+                cur = [x for x in cur if x >= cut]
 
-        first, last = cur.min(), cur.max()
+        first, last = cur[0], cur[-1]
 
         # 이 타이틀의 Jira 티켓 중 '실제 판매 기간과 겹치는' 것을 고른다.
         # ★기준일에 가장 가까운 종료일을 고르면 안 된다 — 정규화가 날짜를 떼기 때문에

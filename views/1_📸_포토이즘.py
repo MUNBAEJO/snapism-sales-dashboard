@@ -490,7 +490,15 @@ def _file_mtime(p):
 # ★ 인자 이름에 밑줄(_)을 붙이면 안 된다 — st.cache_data 는 **밑줄로 시작하는 인자를
 #   해시에서 제외**한다. 예전엔 `_agg_mtime` 이라 mtime 이 캐시 키에 아예 안 들어갔고,
 #   그래서 재집계해도 화면이 안 바뀌어 매번 서버를 재시작해야 했다(2026-07-28 수정).
-@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
+# ★★cache_data 가 아니라 cache_resource 다 — 반환 프레임을 **절대 수정하지 말 것**.
+#   cache_data 는 히트마다 피클을 다시 풀어 복사본을 주지만 cache_resource 는
+#   같은 객체를 그대로 준다. 즉 여기 나온 df 를 in-place 로 고치면 그 오염이
+#   모든 사용자·모든 rerun 에 영구히 남는다. 파생 컬럼은 이 함수 안에서 만들고,
+#   밖에서 꼭 고쳐야 하면 .copy() 부터 해라.
+#   (전환 근거: 이 프레임이 713MB 라 cache_data 의 피클 직렬화에만 7.3초가 들었고
+#    — 실측 — 히트마다 역직렬화로 복사본을 또 만들어 메모리도 배로 썼다.
+#    사용처를 전수 감사해 in-place 수정이 0건임을 확인하고 바꿨다. 2026-08-03)
+@st.cache_resource(ttl=1800, show_spinner=False, max_entries=1)
 def _load_data(agg_mtime, cfg_mtime):
     """집계 parquet 로드 (category 인코딩). 캐시 키 = 집계·환율 파일 mtime →
     파일이 바뀔 때만 재계산(매일 ingest/환율 갱신 시). 평소엔 즉시 캐시 히트."""
