@@ -72,7 +72,12 @@ def build_cumulative_xlsx():
     return data, start, end, fname
 
 
-def send(dry: bool = False):
+def send(dry: bool = False, note: str | None = None):
+    """주간 리포트 발송. note 를 주면 본문 맨 앞에 한 문단으로 붙는다.
+
+    ★정정 재발송처럼 '이번만' 사유를 알려야 할 때 쓴다. 기본값이 None 이라
+      매주 도는 자동 발송(main)의 본문은 그대로다.
+    """
     m = _load_mail_cfg()
 
     data, start, end, fname = build_cumulative_xlsx()
@@ -105,7 +110,8 @@ def send(dry: bool = False):
         msg["Cc"] = ", ".join(cc)
     msg.set_content(
         "안녕하세요 :)\n\n"
-        f"SM 촬영현황 누적 리포트 보내드려요. 각 IP 오픈(첫 판매) 시점부터 현재까지 "
+        + (note.strip() + "\n\n" if note else "")
+        + f"SM 촬영현황 누적 리포트 보내드려요. 각 IP 오픈(첫 판매) 시점부터 현재까지 "
         f"누적한 자료예요. (집계 기간: {period})\n\n"
         "아티스트별·국가별로 정리돼 있고, 시차 있는 국가는 최근 1~2일 수치가 나중에 "
         "조금 바뀔 수 있으니 참고만 해주세요!\n\n"
