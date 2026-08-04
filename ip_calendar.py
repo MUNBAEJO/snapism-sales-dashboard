@@ -18,14 +18,13 @@ import pandas as pd
 
 import jira_ip_dates
 
-# 브랜드 색 — 사이드바 점과 달력 칩에 같은 값을 쓴다.
+# 달력 칩 색.
 BRAND_COLOR = {
     "포토이즘": "#2563eb",
     "스내피즘": "#7c3aed",
-    "공통":     "#0d9488",
     "기타":     "#94a3b8",
 }
-BRAND_ORDER = ["포토이즘", "스내피즘", "공통", "기타"]
+BRAND_ORDER = ["포토이즘", "스내피즘", "기타"]
 
 # 이름 앞 날짜 접두어: '260803 ', '26.07 ', '20260803 '
 _PREFIX_RE = re.compile(r"^\s*(?:\d{8}|\d{6}|\d{2}\.\d{2})\s+")
@@ -66,15 +65,22 @@ def _name_of(item: dict) -> str:
 
 
 def _brand_of(raw: str) -> str:
-    """브랜드 필드는 다중 선택이라 'Photoism, 사용 X (구 POP-UP)' 처럼 온다."""
+    """브랜드 필드는 다중 선택이라 'Photoism, Snapism' 처럼 여러 개가 온다.
+
+    ★'공통' 칸은 두지 않는다(2026-08-04 사용자 지정). 두 브랜드가 같이 걸린 티켓은
+      3,327건 중 8건뿐인데, 그것 때문에 범례에 색이 하나 더 늘면 읽기만 나빠진다.
+      8건 **전부 Photoism 이 들어 있어** 포토이즘으로 본다.
+    ★'사용 X (구 Sticker)' 는 폐기된 값이라 **마지막 단서로만** 쓴다.
+      · 브랜드 판정에 같이 쓰면 포토이즘 단독 상품이 '공통'으로 잡힌다
+        (CANDIP-20397 변우석 · 22421 LE SSERAFIM).
+      · 그렇다고 아예 무시하면 이 값만 달린 스내피즘 스티커 상품 4건이
+        '기타'로 빠진다(비아이 스내피즘 · 쇼미더머니12 스티커프레임 등).
+      그래서 Photoism/Snapism 이 **둘 다 없을 때만** 스내피즘으로 본다.
+    """
     s = str(raw or "")
-    photo = "Photoism" in s
-    snap = "Snapism" in s or "Sticker" in s
-    if photo and snap:
-        return "공통"
-    if photo:
+    if "Photoism" in s:
         return "포토이즘"
-    if snap:
+    if "Snapism" in s or "Sticker" in s:
         return "스내피즘"
     return "기타"
 
