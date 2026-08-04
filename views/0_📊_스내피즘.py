@@ -509,6 +509,39 @@ def load_data():
     return _load_data(data_io.file_version(MASTER_FILE))
 
 
+YTD_YEAR = 2026          # 그래프 하단에 고정으로 보여줄 연도
+
+
+def ytd_total(scope_df, amount_col, year=YTD_YEAR):
+    """그 해 누적 매출·건수. **조회기간은 무시하고** 나머지 필터만 반영한다.
+
+    scope_df 는 '날짜 외 모든 필터'가 걸린 프레임이어야 한다.
+    반환 (매출, 건수, 마지막 날짜) — 데이터가 없으면 (0, 0, None).
+    """
+    if scope_df is None or scope_df.empty or "날짜" not in scope_df.columns:
+        return 0, 0, None
+    m = scope_df["날짜"].map(lambda d: getattr(d, "year", None) == year)
+    y = scope_df[m]
+    if y.empty:
+        return 0, 0, None
+    y = y[~y["취소 여부"].astype(bool)] if "취소 여부" in y.columns else y
+    y = y[y[amount_col] != 0]
+    return int(y[amount_col].sum()), int(len(y)), y["날짜"].max()
+
+
+def _ytd_line(scope_df, amount_col, year=YTD_YEAR):
+    """'2026년 누적' 한 줄. 조회기간을 바꿔도 이 숫자는 안 변한다."""
+    _v, _n, _last = ytd_total(scope_df, amount_col, year)
+    if not _v:
+        return
+    st.markdown(
+        f'<div class="strip">📅 <b>{year}년 누적</b> '
+        f'<b style="color:var(--brand)">{fmt_krw(_v)}</b> · {_n:,}건 '
+        f'<span style="color:var(--text-3)">— 조회기간과 무관하게 '
+        f'{year}-01-01 ~ {_last} 전체예요 (위 필터는 그대로 적용돼요)</span></div>',
+        unsafe_allow_html=True)
+
+
 def paid_sales(df):
     return df[~df["취소 여부"] & (df["최종 결제 금액"] > 0)]
 
@@ -946,8 +979,9 @@ _cfg = load_config()
 # ★이 .copy() 는 낭비가 아니다. df_all 은 cache_resource 로 전 사용자가 공유하는
 #   객체라, 이 한 줄이 없으면 아래 가공이 남의 화면까지 오염시킨다. 지우지 말 것.
 df = df_all.copy()
-if len(date_range) == 2:
-    df = df[(df["날짜"] >= date_range[0]) & (df["날짜"] <= date_range[1])]
+# ★날짜 외 필터를 먼저 걸어 scope 를 만든다(포토이즘 views/1 과 같은 구조).
+#   '조회기간과 무관한 26년 누적' 같은 숫자를 뽑으려면 날짜만 안 걸린 프레임이 필요하다.
+#   필터는 전부 행 마스크라 순서를 바꿔도 결과는 같다.
 if sel_country and "국가" in df.columns:
     df = df[df["국가"].isin(sel_country)]
 if sel_store:
@@ -956,6 +990,9 @@ if sel_prod:
     df = df[df["상품 카테고리"].isin(sel_prod)]
 if sel_ip:
     df = df[df["프레임 이름"].isin(sel_ip)]
+scope = df                      # 날짜 외 모든 필터
+if len(date_range) == 2:
+    df = df[(df["날짜"] >= date_range[0]) & (df["날짜"] <= date_range[1])]
 
 sales = paid_sales(df)          # 실결제(카드·현금) 거래 — KPI '실결제' 카드 전용
 coupons = coupon_txns(df)       # 전액 쿠폰 결제 거래
@@ -1181,6 +1218,7 @@ with tab_home:
                     if _partial and _cv < _pv:
                         _txt += ", 월초라 낮아요" if _end.day <= 12 else " (진행 중이에요)"
                     st.caption(_txt)
+                _ytd_line(scope, "정산금액")
             helpbox("""
     **매출 추이 (실결제 + 쿠폰, 월/주/일)**
     - **실결제 막대** = `실결제` 거래를 기간(월=`to_period('M')`, 주=`to_period('W')`, 일=날짜)으로 묶어 `KRW환산금액` 합.
