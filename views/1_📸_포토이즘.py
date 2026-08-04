@@ -132,6 +132,8 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .ntr.nth .vs{ border-left-color:var(--border-strong); }
 .tper{ font-size:11.5px; color:var(--text-2); white-space:nowrap; }
 .cur{ font-size:11px; font-weight:700; color:var(--text-2); background:var(--surface-3); padding:2px 8px; border-radius:6px; }
+/* 값이 0이라 굳이 읽을 필요 없는 칸 — 숫자 대신 흐린 대시 */
+.dash{ color:#c8cdd6; }
 .rk{ font-weight:800; color:var(--text-3); font-variant-numeric:tabular-nums; }
 .rk.top{ color:var(--brand); }
 .npct{ display:flex; align-items:center; gap:9px; }
@@ -141,6 +143,9 @@ h2, h3{ letter-spacing:-0.02em !important; }
 
 /* 가로 막대 순위 (시안 .hbar) */
 .hb-wrap{ display:flex; flex-direction:column; gap:5px; padding:4px 0; height:100%; justify-content:center; }
+/* .pct = 매장 전체순위처럼 비중까지 보여주는 변형(칸 하나 더) */
+.hb.pct{ grid-template-columns:150px 1fr 118px 60px !important; }
+.hb-p{ text-align:right; font-weight:700; color:var(--text-3); font-variant-numeric:tabular-nums; font-size:12px; }
 .hb{ display:grid; grid-template-columns:150px 1fr 118px; align-items:center; gap:12px; font-size:13px; padding:8px 0; }
 .hb-n{ font-weight:600; color:var(--text-2); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
 .hb-track{ height:22px; background:var(--surface-3); border-radius:6px; overflow:hidden; }
@@ -367,6 +372,7 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
   [data-testid="stMarkdownContainer"]:has(.ntbl){ overflow-x:auto; -webkit-overflow-scrolling:touch; }
   .ntbl{ min-width:640px; }
   .hb{ grid-template-columns:92px 1fr 82px !important; gap:8px !important; }
+  .hb.pct{ grid-template-columns:92px 1fr 82px 44px !important; }
   .hb-n, .hb-v{ font-size:12px !important; }
   .donut-wrap{ flex-direction:column; align-items:flex-start; gap:12px; }
   .leg2{ width:100%; }
@@ -708,8 +714,10 @@ def _load_devices(mtime):
     if not DEVICE_FILE.exists():
         return pd.DataFrame()
     try:
+        # 매출매장명 = 거래 데이터의 '매장 이름' 과 맞춰볼 유일한 열.
+        # 거래 쪽에 장비 번호가 없어서 '매출 발생 대수'는 이 이름으로만 이을 수 있다.
         d = pd.read_parquet(DEVICE_FILE, columns=["국가코드", "가동중", "테스트장비", "렌탈",
-                                                  "설치일", "지점명", "부스번호"])
+                                                  "설치일", "지점명", "부스번호", "매출매장명"])
         # 가동중은 남겨둔다 — 대당 매출 분모엔 가동 장비만 쓰지만, 이력 표에는
         # '중지 N대'도 같이 보여줘야 숫자를 읽는 사람이 배경을 알 수 있다.
         d = d[~d["테스트장비"] & ~d["렌탈"]].copy()
@@ -724,23 +732,38 @@ def load_devices():
     return _load_devices(_file_mtime(DEVICE_FILE))
 
 
-def device_days(dev, p0, p1):
+def device_days(dev, p0, p1, sold=None):
     """국가코드별 '대·일'(가동 키오스크 × 가동일수)과 대수를 구한다.
 
     한 대가 기간 내내 있었으면 기간 전체 일수, 중간에 설치됐으면 설치일부터만 센다.
     ★설치일을 무시하고 대수로만 나누면, 최근 증설한 국가가 실제보다 낮게 나온다.
-    설치일 미상(19대)은 기간 시작 전부터 있던 것으로 본다."""
+    설치일 미상(19대)은 기간 시작 전부터 있던 것으로 본다.
+
+    sold: {(국가코드, 매장이름)} — 조회기간에 매출이 난 매장 집합. 주면 '매출대수'
+          컬럼을 함께 낸다. ★거래 데이터에 **장비 번호가 없어서** 매장 단위로만
+          이을 수 있다 — 한 매장에 2대가 있고 1대만 돌았어도 2대로 잡힌다.
+          그래서 이 값은 '매출이 난 매장에 있는 장비 수'이지 '실제로 찍은 장비 수'가
+          아니다. 화면 문구도 그렇게 적어 둘 것.
+    """
+    _cols = ["국가코드", "대수", "대일", "신규", "중지", "매출대수"]
     if dev.empty or not p0 or not p1:
-        return pd.DataFrame(columns=["국가코드", "대수", "대일", "신규", "중지"])
+        return pd.DataFrame(columns=_cols)
     s0, s1 = pd.Timestamp(p0), pd.Timestamp(p1)
     act = dev[dev["가동중"]]
     inst = act["설치일"].fillna(s0).clip(lower=s0)
     days = (s1 - inst).dt.days + 1
     t = pd.DataFrame({"국가코드": act["국가코드"], "대일": days.clip(lower=0),
                       "신규": act["설치일"].between(s0, s1).astype(int)})
+    if sold is not None and "매출매장명" in act.columns:
+        _m = act["매출매장명"].astype(str).str.strip()
+        t["매출대수"] = [1 if (c, s) in sold else 0
+                         for c, s in zip(act["국가코드"], _m)]
+    else:
+        t["매출대수"] = 0
     t = t[t["대일"] > 0]
     g = (t.groupby("국가코드").agg(대수=("대일", "size"), 대일=("대일", "sum"),
-                                   신규=("신규", "sum")).reset_index())
+                                   신규=("신규", "sum"),
+                                   매출대수=("매출대수", "sum")).reset_index())
     stop = (dev[~dev["가동중"]].groupby("국가코드").size().rename("중지").reset_index())
     return g.merge(stop, on="국가코드", how="left").fillna({"중지": 0})
 
@@ -1039,12 +1062,15 @@ def css_hours(vals):
     st.markdown(f'<div class="hours">{cols}</div>', unsafe_allow_html=True)
 
 
-def hbar_list(dframe, name_col, top=None, collapse_after=None):
+def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False):
     """시안 TOP 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
     mx = d["매출"].max() or 1
+    # show_pct: 전체 대비 비중을 오른쪽에 덧붙인다. **전체 목록일 때만 켤 것** —
+    # TOP 5 같은 부분집합에 켜면 분모가 5개가 돼 "1위 60%" 같은 오해를 부른다.
+    _tot = d["매출"].sum() if show_pct else 0
 
     def _rows(sub):
         h = '<div class="hb-wrap">'
@@ -1054,9 +1080,12 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None):
             _t = f'{r[name_col]} · {fmt_krw(r["매출"])}'
             if "건수" in sub.columns:
                 _t += f' · {int(r["건수"]):,}건'
-            h += (f'<div class="hb tip" data-tip="{_t}"><span class="hb-n">{r[name_col]}</span>'
+            _p = (f'<span class="hb-p">{r["매출"] / _tot * 100:.1f}%</span>'
+                  if show_pct and _tot else '')
+            h += (f'<div class="hb tip{" pct" if show_pct else ""}" data-tip="{_t}">'
+                  f'<span class="hb-n">{r[name_col]}</span>'
                   f'<span class="hb-track"><i style="width:{w:.0f}%;background:{col}"></i></span>'
-                  f'<span class="hb-v">{fmt_krw(r["매출"])}</span></div>')
+                  f'<span class="hb-v">{fmt_krw(r["매출"])}</span>{_p}</div>')
         return h + '</div>'
 
     if collapse_after and len(d) > collapse_after:
@@ -1784,28 +1813,44 @@ with tab_nat:
 """)
 
         with card("🌏 국가별 매출"):
-            grid = "grid-template-columns:1.4fr .6fr .7fr 1.2fr 1.2fr .8fr 1.4fr"
+            # ★'쿠폰·코인'과 '비중'이 둘 다 %라 나란히 두면 같은 값의 다른 표현처럼 읽힌다
+            #   (실사용자 지적). 셋으로 갈라 놓는다:
+            #   ⑴ 머리글에 무엇의 비율인지 명시 + 툴팁  ⑵ 사이에 세로 구분선
+            #   ⑶ 쿠폰·코인이 0인 나라(대부분)는 '—' 로 죽여 눈에 안 띄게.
+            grid = "grid-template-columns:1.4fr .6fr .7fr 1.2fr 1.2fr .9fr 1.4fr"
+            _sepc = "border-left:1px solid var(--border);padding-left:10px"
             html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
                     '<span>국가</span><span class="c">통화</span><span class="r">건수</span>'
                     '<span class="r">현지 매출</span><span class="r">KRW 매출</span>'
-                    '<span class="r">쿠폰·코인</span><span>비중</span></div>')
+                    f'<span class="r tip dn" style="{_sepc}" data-tip="그 나라 매출 중 '
+                    '쿠폰·서비스코인 정산분이 차지하는 몫이에요. 나라끼리 비교하는 값이 아니에요">'
+                    '쿠폰·코인 <span style="font-weight:600">(그 나라 안)</span> ⓘ</span>'
+                    f'<span class="tip dn" style="{_sepc}" data-tip="전체 매출에서 이 나라가 '
+                    '차지하는 몫이에요. 다 더하면 100% 가 돼요">'
+                    '전체 대비 비중 ⓘ</span></div>')
             for _, r in nat.iterrows():
                 frac = (r["매출"] / tot) if tot else 0
                 _cc = ((r["_쿠폰"] + r["_코인"]) / r["매출"]) if r["매출"] else 0
+                _cctxt = (f'{_cc * 100:.0f}%' if _cc > 0.005
+                          else '<span class="dash">—</span>')
                 html += (f'<div class="ntr" style="{grid}">'
                          f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
                          f'<span class="c"><span class="cur">{r["결제 단위"]}</span></span>'
                          f'<span class="r num">{int(r["건수"]):,}</span>'
                          f'<span class="r num">{fmt_orig(r["현지"], r["결제 단위"])}</span>'
                          f'<span class="r num">{fmt_krw(r["매출"])}</span>'
-                         f'<span class="r num">{_cc * 100:.0f}%</span>{pct_bar(frac, mx)}</div>')
+                         f'<span class="r num" style="{_sepc}">{_cctxt}</span>'
+                         f'<span style="{_sepc}">{pct_bar(frac, mx)}</span></div>')
             st.markdown(html + "</div>", unsafe_allow_html=True)
             st.caption(f"전체 {len(nat)}개국 · 매출 내림차순. "
-                       "'쿠폰·코인'이 높은 국가는 매출 대부분이 쿠폰·코인 정산분이에요.")
+                       "**두 %는 서로 다른 값이에요** — '쿠폰·코인'은 그 나라 매출 안에서의 "
+                       "비율이고, '전체 대비 비중'은 전 세계 매출에서 그 나라가 차지하는 몫이에요.")
             helpbox("""
 **국가별 매출 표**
-- `국가`·`결제 단위`(통화)로 묶어: **건수**, **현지 매출**(`최종 결제 금액` 합, 현지통화), **KRW 매출**(매출액 합), **쿠폰·코인**(=(쿠폰기여+코인기여)/매출액 비율), **비중**(전체 KRW 대비).
-- '쿠폰·코인'이 높은 국가(예: 라오스)는 매출 대부분이 쿠폰·코인 정산분이에요.
+- `국가`·`결제 단위`(통화)로 묶어: **건수**, **현지 매출**(`최종 결제 금액` 합, 현지통화), **KRW 매출**(매출액 합), **쿠폰·코인**, **전체 대비 비중**.
+- ★**끝의 두 %를 헷갈리지 마세요.**
+  - **쿠폰·코인 (그 나라 안)** = (쿠폰기여 + 코인기여) ÷ 그 나라 매출액. **분모가 그 나라**예요. 라오스처럼 높은 곳은 매출 대부분이 쿠폰·코인 정산분이에요. 쿠폰·코인을 정산하지 않는 나라는 `—` 로 나와요.
+  - **전체 대비 비중** = 그 나라 매출액 ÷ 전체 매출액. **분모가 전체**예요. 다 더하면 100%가 돼요. 막대 길이는 1위 국가를 꽉 찬 것으로 둔 상대 길이예요.
 """)
 
         # ── 키오스크 1대당 매출 ────────────────────────────────
@@ -1813,7 +1858,6 @@ with tab_nat:
         # 분모가 계속 살아 있는 것으로 잡혀 대당 매출이 실제보다 낮게 나온다.
         _dev = load_devices()
         if not _dev.empty and len(date_range) == 2 and "국가코드" in sales.columns:
-            _dd = device_days(_dev, date_range[0], date_range[1])
             _pkd = (date_range[1] - date_range[0]).days + 1
             # ★렌탈 제외는 **IP구분 기준**이다. 브랜드로만 거르면 IP구분='렌탈'인데
             #   브랜드가 Box(5,654건)·Colored(13건)인 행이 새어 들어온다(2026년 실측).
@@ -1825,6 +1869,12 @@ with tab_nat:
             if "브랜드" in sales.columns:
                 _keep &= sales["브랜드"] != "Rentals and pop-ups"
             _box = sales[_keep]
+            # 조회기간에 매출이 난 (국가, 매장) — '매출 발생 대수'의 근거.
+            # 먼저 중복을 지우고 문자열로 바꾼다(350만행을 그대로 astype(str) 하면 느리다).
+            _sp = _box[["국가코드", "매장 이름"]].drop_duplicates()
+            _sold = set(zip(_sp["국가코드"].astype(str).str.lower().str.strip(),
+                            _sp["매장 이름"].astype(str).str.strip()))
+            _dd = device_days(_dev, date_range[0], date_range[1], sold=_sold)
             _rev = (_box.groupby("국가코드", observed=True)
                     .agg(매출=("매출액", "sum"), 건수=("건수", "sum"), 국가=("국가", "first"))
                     .reset_index())
@@ -1853,10 +1903,14 @@ with tab_nat:
                     # 100%·헤더 이름은 기준을 넘긴 국가에서만 잡는다.
                     _mx   = _big["대당월"].max()
                     _lead = str(_big.iloc[0]["국가"])
-                    grid = ("grid-template-columns:1.4fr .7fr .95fr 1.2fr "
-                            ".9fr 1.15fr")
+                    grid = ("grid-template-columns:1.3fr .62fr .78fr .9fr 1.15fr "
+                            ".85fr 1.05fr")
                     html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
                             '<span>국가</span><span class="r">가동 대수</span>'
+                            '<span class="r tip dn" data-tip="조회기간에 매출이 난 매장에 '
+                            '있는 장비 수예요. 거래 데이터에 장비 번호가 없어 매장 단위로 세요 — '
+                            '한 매장에 2대가 있고 1대만 돌았어도 2대로 잡혀요">'
+                            '매출 발생 ⓘ</span>'
                             '<span class="r">기간 내 변동</span>'
                             '<span class="r">1대당 월매출</span>'
                             '<span class="r">1대당 월건수</span>'
@@ -1872,46 +1926,25 @@ with tab_nat:
                         # '표본 적음' 배지 제거(요청). 정렬(기준 미달 국가는 아래쪽)은
                         # 그대로 둔다 — 4대짜리 나라가 1위로 튀는 걸 막는 장치라서,
                         # 빼면 순위 자체가 못 믿을 값이 된다. 이유는 캡션에 남긴다.
+                        # 매출 발생 대수 — 놀고 있는 장비가 많으면 눈에 띄게 색을 준다.
+                        _act, _all = int(r.get("매출대수", 0)), int(r["대수"])
+                        _ratio = (_act / _all) if _all else 0
+                        _acol = ("var(--text-2)" if _ratio >= 0.9 else
+                                 "var(--amber)" if _ratio >= 0.7 else "var(--red)")
                         html += (f'<div class="ntr" style="{grid}">'
                                  f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
-                                 f'<span class="r num">{int(r["대수"]):,}대</span>'
+                                 f'<span class="r num">{_all:,}대</span>'
+                                 f'<span class="r num" style="color:{_acol}">{_act:,}대'
+                                 f'<span style="font-size:11px;opacity:.75"> '
+                                 f'{_ratio * 100:.0f}%</span></span>'
                                  f'<span class="r num" style="font-size:12px">{_chg}</span>'
                                  f'<span class="r num">{fmt_krw(int(r["대당월"]))}</span>'
                                  f'<span class="r num">{r["대당건"]:,.1f}건</span>'
                                  f'{pct_bar(r["대당월"] / _mx if _mx else 0)}</div>')
                     st.markdown(html + "</div>", unsafe_allow_html=True)
 
-                    # 총매출 1위와 대당 효율 1위가 갈리는 게 이 카드의 핵심이다.
-                    # (물량은 한국이 압도적인데 1대당으로는 하위 — 이걸 놓치면 카드를 봐도 남는 게 없다)
-                    _cand = _big          # 표본 하한을 넘긴 국가끼리만 비교
-                    _top_rev = per.loc[per["매출"].idxmax()]
-                    _top_eff = _cand.iloc[0]
-                    if _top_rev["국가"] != _top_eff["국가"] and _top_rev["대당월"]:
-                        _x  = _top_eff["대당월"] / _top_rev["대당월"]
-                        _rk = list(_cand["국가"]).index(_top_rev["국가"]) + 1                             if _top_rev["국가"] in list(_cand["국가"]) else None
-                        _rev_n, _eff_n = _top_rev["국가"], _top_eff["국가"]
-                        _tail = (f'{_rev_n}{josa(_rev_n, "은", "는")} {len(_cand)}개국 중 '
-                                 f'<b>{_rk}위</b>{josa("위", "이에요", "예요")}.'
-                                 if _rk else f'{_rev_n}{josa(_rev_n, "은", "는")} 표본이 작아 순위에서 빠졌어요.')
-                        _note = (f' <span style="color:var(--text-3)">({_MIN_DEV}대 이상인 국가끼리 비교)</span>'
-                                 if len(_cand) < len(per) else '')
-                        st.markdown(
-                            '<div class="strip">💡 총매출 1위는 '
-                            f'<b>{_rev_n}</b>({fmt_krw(int(_top_rev["매출"]))}){josa(_rev_n, "인데", "인데")}, '
-                            f'1대당 효율 1위는 <b>{_eff_n}</b>{josa(_eff_n, "이에요", "예요")} — '
-                            f'1대당으로는 {_eff_n}{josa(_eff_n, "이", "가")} <b>{_x:.1f}배</b>, '
-                            f'{_tail}{_note}</div>',
-                            unsafe_allow_html=True)
-
-                    _cap = (f"조회기간({_pkd}일) **실제 매출**을 장비 1대·30일 기준으로 환산한 값이에요"
-                            "(예상치가 아니에요). "
-                            f"'{_lead} 대비'는 1대당 매출 1위인 **{_lead}**{josa(_lead, '을', '를')} 100%로 둔 비율이에요 — "
-                            "총매출 1위와는 다른 나라일 수 있고, 위 국가별 매출표의 "
-                            "'비중'(전체 대비 점유율)과도 다른 값이에요.")
-                    if not _small.empty:
-                        _cap += (f" 가동 대수가 **{_MIN_DEV}대 미만**인 {len(_small)}개국은 "
-                                 "매장 한 곳 성적이 국가 대표값이 돼 버려서 표 아래쪽에 따로 모았어요.")
-                    st.caption(_cap)
+                    # 표 아래 '💡 총매출 1위 vs 1대당 1위' 안내와 긴 설명 캡션은 뺐다(요청).
+                    # 같은 내용은 아래 helpbox(계산 방식 설명)에 그대로 남아 있다.
 
                     # 숫자 배경이 되는 설치 이력 — 매출이 오르내린 이유를 같이 보게 한다.
                     with st.expander("📜 장비 설치 이력 (최근 12개월, 월별 신규 설치 대수)"):
@@ -2030,7 +2063,8 @@ def _store_tab(sales, date_range, sel_countries):
         if ss.empty:
             st.info("해당 조건에 맞는 매장이 없어요. 위 전용 필터를 넓혀 보세요.")
         else:
-            hbar_list(ss, "매장 이름", collapse_after=10)
+            # 매장 전체 순위 = 전체 목록이라 비중을 켜도 분모가 맞다.
+            hbar_list(ss, "매장 이름", collapse_after=10, show_pct=True)
         helpbox("""
 **매장 전체 순위**
 - 전용 필터를 적용한 뒤 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).

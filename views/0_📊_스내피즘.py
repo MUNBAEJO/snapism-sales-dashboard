@@ -144,6 +144,9 @@ h2, h3{ letter-spacing:-0.02em !important; }
 
 /* 가로 막대 순위 (시안 .hbar 그대로) */
 .hb-wrap{ display:flex; flex-direction:column; gap:5px; padding:4px 0; height:100%; justify-content:center; }
+/* .pct = 매장 전체순위처럼 비중까지 보여주는 변형(칸 하나 더) */
+.hb.pct{ grid-template-columns:140px 1fr 112px 60px !important; }
+.hb-p{ text-align:right; font-weight:700; color:var(--text-3); font-variant-numeric:tabular-nums; font-size:12px; }
 .hb{ display:grid; grid-template-columns:140px 1fr 112px; align-items:center; gap:12px; font-size:13px; padding:8px 0; }
 .hb-n{ font-weight:600; color:var(--text-2); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
 .hb-track{ height:22px; background:var(--surface-3); border-radius:6px; overflow:hidden; }
@@ -420,6 +423,7 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
   .ntbl{ min-width:620px; }
   /* 가로막대 순위 — 이름·금액칸 축소 */
   .hb{ grid-template-columns:92px 1fr 82px !important; gap:8px !important; }
+  .hb.pct{ grid-template-columns:92px 1fr 82px 44px !important; }
   .hb-n, .hb-v{ font-size:12px !important; }
   /* 도넛 + 범례 세로 스택 */
   .donut-wrap{ flex-direction:column; align-items:flex-start; gap:12px; }
@@ -685,13 +689,16 @@ def cat3(series):
 #   plotly import 2줄도 같이 나갔다(포토이즘 페이지엔 애초에 plotly 가 없다).
 
 
-def hbar_list(dframe, name_col, top=None, collapse_after=None):
+def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False):
     """시안 TOP 스타일 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루.
     collapse_after=N 이면 상위 N개만 보이고 나머지는 '더보기' 접기."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
     mx = d["매출"].max() or 1
+    # show_pct: 전체 대비 비중을 오른쪽에 덧붙인다. **전체 목록일 때만 켤 것** —
+    # TOP 5 같은 부분집합에 켜면 분모가 5개가 돼 "1위 60%" 같은 오해를 부른다.
+    _tot = d["매출"].sum() if show_pct else 0
 
     def _rows(sub):
         h = '<div class="hb-wrap">'
@@ -701,9 +708,12 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None):
             _t = f'{r[name_col]} · {fmt_krw(r["매출"])}'
             if "건수" in sub.columns:
                 _t += f' · {int(r["건수"]):,}건'
-            h += (f'<div class="hb tip" data-tip="{_t}"><span class="hb-n">{r[name_col]}</span>'
+            _p = (f'<span class="hb-p">{r["매출"] / _tot * 100:.1f}%</span>'
+                  if show_pct and _tot else '')
+            h += (f'<div class="hb tip{" pct" if show_pct else ""}" data-tip="{_t}">'
+                  f'<span class="hb-n">{r[name_col]}</span>'
                   f'<span class="hb-track"><i style="width:{w:.0f}%;background:{col}"></i></span>'
-                  f'<span class="hb-v">{fmt_krw(r["매출"])}</span></div>')
+                  f'<span class="hb-v">{fmt_krw(r["매출"])}</span>{_p}</div>')
         return h + '</div>'
 
     if collapse_after and len(d) > collapse_after:
@@ -1732,7 +1742,8 @@ def _store_tab():
         if ss.empty:
             st.info("해당 조건에 맞는 매장이 없어요. 위 전용 필터를 넓혀 보세요.")
         else:
-            hbar_list(ss, "매장 이름", collapse_after=10)   # 시안: 가로 막대
+            # 매장 전체 순위 = 전체 목록이라 비중을 켜도 분모가 맞다.
+            hbar_list(ss, "매장 이름", collapse_after=10, show_pct=True)
         helpbox("""
 **매장 전체 순위**
 - 전용 필터를 적용한 뒤 `매장 이름`별 `정산금액`(실결제+쿠폰) 합·건수 → 순위(TOP10 + 나머지 접기).
