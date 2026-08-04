@@ -451,6 +451,31 @@ def josa(word, with_jong, without_jong):
     return with_jong if (ord(ch) - 0xAC00) % 28 else without_jong
 
 
+YTD_YEAR = 2026          # 그래프 하단에 고정으로 보여줄 연도
+
+
+def _ytd_line(scope_df, amount_col, year=YTD_YEAR):
+    """'2026년 누적' 한 줄. **조회기간은 무시하고** 나머지 필터만 반영한다.
+    scope_df 는 '날짜 외 모든 필터'가 걸린 프레임이어야 한다(views/1 의 `scope`).
+    스내피즘 views/0 에도 같은 함수가 있다 — 한쪽을 고치면 다른 쪽도 볼 것.
+    """
+    if scope_df is None or scope_df.empty or "날짜" not in scope_df.columns:
+        return
+    y = scope_df[scope_df["날짜"].map(lambda d: getattr(d, "year", None) == year)]
+    if "취소 여부" in y.columns:
+        y = y[~y["취소 여부"].astype(bool)]
+    y = y[y[amount_col] != 0]
+    if y.empty:
+        return
+    _v, _n = int(y[amount_col].sum()), int(y["건수"].sum()) if "건수" in y.columns else len(y)
+    st.markdown(
+        f'<div class="strip">📅 <b>{year}년 누적</b> '
+        f'<b style="color:var(--brand)">{fmt_krw(_v)}</b> · {_n:,}건 '
+        f'<span style="color:var(--text-3)">— 조회기간과 무관하게 '
+        f'{year}-01-01 ~ {y["날짜"].max()} 전체예요 (위 필터는 그대로 적용돼요)</span></div>',
+        unsafe_allow_html=True)
+
+
 def fmt_krw(n):
     return f"₩{int(n):,}"
 
@@ -590,7 +615,8 @@ def _sidebar_options(agg_mtime):
         vals = sorted(str(v) for v in d[col].dropna().unique())
         return [v for v in vals if v not in ("", "nan")] if drop_empty else vals
 
-    # 노출 대상 구분만 — 기획(P)·렌탈·제외의 IP명이 필터 목록에 남지 않게.
+    # 노출 대상 구분만 — '제외'·스티커머신의 IP명이 필터 목록에 남지 않게.
+    # (렌탈은 2026-08-04 부터 노출 대상이라 여기 포함된다)
     nonex = d[d["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
 
     def ip_list(frame):
@@ -1411,9 +1437,10 @@ if "IP구분" in sales.columns:
         gub["_o"] = gub["IP구분"].astype(str).map(
             {g: i for i, g in enumerate(ip_classify.IP_GUBUN_ORDER)}).fillna(99)
         gub = gub.sort_values("_o")
-        # 데이터는 _load_data 에서 이미 IP_GUBUN_SHOWN 으로 걸러져 있다(렌탈·제외는 안 들어옴).
+        # 데이터는 _load_data 에서 이미 IP_GUBUN_SHOWN 으로 걸러져 있다
+        # (2026-08-04 부터 렌탈 포함 · '제외'와 스티커머신은 여전히 안 들어옴).
         # 예전엔 추이용 present_all(기획P 포함)을 따로 뒀는데, 기획P가 오리지널(포토이즘)로
-        # 바뀌고 렌탈이 빠지면서 present 와 완전히 같아져서 하나로 합쳤다.
+        # 바뀌면서 present 와 완전히 같아져서 하나로 합쳤다.
         _gset = set(gub["IP구분"].astype(str))
         present = [g for g in IP_GUBUN_VIEW if g in _gset]
 
@@ -1498,13 +1525,15 @@ with tab_home:
                 if _g in data:
                     data[_g][pidx[r["_p"]]] = int(r["매출"])
             css_stack(labels, data, present, gran)
-            st.caption("막대는 IP구분(아티스트·캐릭터·PICK·오리지널)별로 쌓았어요. "
-                       "렌탈·팝업은 빠져 있어요. 전체 순위는 '구좌타입 분석' 탭에서 봐요.")
+            st.caption("막대는 IP구분(아티스트·캐릭터·PICK·오리지널·렌탈)별로 쌓았어요. "
+                       "전체 순위는 '구좌타입 분석' 탭에서 봐요.")
+        _ytd_line(scope, "매출액")
         helpbox("""
 **매출 추이 (IP구분별 스택)**
 - 매출액(실결제 + 쿠폰기여 + 코인기여)을 기간(월/주/일)·`IP구분`으로 묶어 쌓은 막대.
-- IP구분 = **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본)** (`IP_GUBUN_SHOWN`).
-  - **렌탈·팝업은 제외**돼요 — 행사용이라 상시 매출 흐름을 왜곡해요. 되살리려면 `ip_classify.IP_GUBUN_SHOWN` 에 '렌탈'을 넣고 서버를 재시작하면 돼요(재집계 불필요).
+- IP구분 = **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본) · 렌탈** (`IP_GUBUN_SHOWN`).
+  - **렌탈·팝업도 2026-08-04 부터 포함**돼요. 다만 **'키오스크 1대당 매출' 카드에서만 빠져요** — 행사 기간만 도는 장비라 분모에 남으면 대당 매출이 실제보다 낮게 나와요.
+  - 목록을 바꾸려면 `ip_classify.IP_GUBUN_SHOWN` 만 고치고 서버를 재시작하면 돼요(재집계 불필요).
   - 이 화면의 모든 카드가 같은 목록을 써요(추이·비중·상세 전부 동일 기준).
 - ※ 공통 기준(원본·환율·매출액 정의)은 상단 'KPI 카드' 설명 참고.
 """)
@@ -1786,7 +1815,16 @@ with tab_nat:
         if not _dev.empty and len(date_range) == 2 and "국가코드" in sales.columns:
             _dd = device_days(_dev, date_range[0], date_range[1])
             _pkd = (date_range[1] - date_range[0]).days + 1
-            _box = sales[sales["브랜드"].astype(str) != "Rentals and pop-ups"]
+            # ★렌탈 제외는 **IP구분 기준**이다. 브랜드로만 거르면 IP구분='렌탈'인데
+            #   브랜드가 Box(5,654건)·Colored(13건)인 행이 새어 들어온다(2026년 실측).
+            #   화면 전체는 렌탈을 살리되(IP_GUBUN_SHOWN) 이 카드만 계속 뺀다.
+            #   ※ categorical 은 astype(str) 없이 그대로 비교한다(350만행 문자열 변환 회피).
+            _keep = pd.Series(True, index=sales.index)
+            if "IP구분" in sales.columns:
+                _keep &= sales["IP구분"] != "렌탈"
+            if "브랜드" in sales.columns:
+                _keep &= sales["브랜드"] != "Rentals and pop-ups"
+            _box = sales[_keep]
             _rev = (_box.groupby("국가코드", observed=True)
                     .agg(매출=("매출액", "sum"), 건수=("건수", "sum"), 국가=("국가", "first"))
                     .reset_index())
