@@ -5,6 +5,7 @@ WBS 필드의 타이틀명을 키로 {startdate, duedate, ticket_key, brand, sta
 import json
 import os
 import re
+import time
 import base64
 import urllib.request
 from pathlib import Path
@@ -93,7 +94,14 @@ def _headers(cfg):
     }
 
 
-def _search_all(cfg, jql, fields, page_size=100):
+def _search_all(cfg, jql, fields, page_size=100, timeout=45, retries=3):
+    """nextPageToken 페이지네이션으로 전체 수집.
+
+    ★페이지 하나가 끊겼다고 통째로 실패시키면 안 된다. 포토이즘은 결과가 수천 건이라
+      페이지가 수십 장인데, 그중 한 장만 실패해도 일정이 통째로 빈다. 실제로
+      2026-08-04 에 WinError 10054(연결 재설정)로 조회 전체가 죽었다.
+      jira_client._search_all 과 같은 방식 — 페이지 단위 재시도 + 요청 사이 짧은 휴식.
+    """
     all_issues, next_token = [], None
     url = f"{cfg['url']}/rest/api/3/search/jql"
     headers = _headers(cfg)
@@ -102,14 +110,27 @@ def _search_all(cfg, jql, fields, page_size=100):
         if next_token:
             payload["nextPageToken"] = next_token
         body = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as r:
-            res = json.loads(r.read())
+
+        res, last_err = None, None
+        for attempt in range(retries):
+            try:
+                req = urllib.request.Request(url, data=body, headers=headers,
+                                             method="POST")
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    res = json.loads(r.read())
+                break
+            except Exception as e:          # 타임아웃 · 연결 재설정 · 일시적 5xx
+                last_err = e
+                time.sleep(1.5 * (attempt + 1))
+        if res is None:
+            raise RuntimeError(f"Jira 페이지 조회 실패({retries}회 시도): {last_err}")
+
         batch = res.get("issues", [])
         all_issues.extend(batch)
         next_token = res.get("nextPageToken")
         if not next_token or not batch:
             break
+        time.sleep(0.15)                    # 서버 부담을 줄인다
     return all_issues
 
 
