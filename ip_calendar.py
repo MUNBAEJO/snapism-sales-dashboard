@@ -99,20 +99,81 @@ def _country_names() -> dict:
 
 
 CC_NAME = _country_names()
+# config 의 포토이즘 국가 목록에 없는 나라. Jira Country 선택지가 더 넓다.
+CC_NAME.setdefault("AR", "아르헨티나")
+CC_NAME.setdefault("CO", "콜롬비아")
 # Jira Country 선택지가 30개국이라, 그만큼 다 고른 건 사실상 '전 국가'다.
 ALL_COUNTRY_N = 28
 
 
-def country_label(codes, limit: int = 6) -> str:
-    """표에 넣을 짧은 국가 문구. '전 국가(30)' 또는 '한국 · 일본 · 베트남 외 3'."""
+def cc_name(code: str) -> str:
+    """국가코드 → 한글 이름. 모르면 코드를 그대로."""
+    return CC_NAME.get(str(code).upper(), str(code))
+
+
+# ── 권역 ──────────────────────────────────────────────────────────────────
+# 왜 묶는가: 오픈 국가가 **1개국(44%) 아니면 30개국 안팎(26%)** 으로 완전히 갈린다.
+# 30개 나라 이름을 한 줄로 늘어놓으면 아무도 안 읽는다. 권역 다섯 덩어리로 접으면
+# '아시아 15 · 유럽 7 · 미주 7' 한 줄로 규모가 잡히고, 궁금하면 펼쳐 보면 된다.
+# 순서가 곧 화면에 나오는 순서다(가까운 데부터).
+REGION_ORDER = ["아시아", "중동", "유럽", "미주", "오세아니아"]
+REGION_COLOR = {
+    "아시아": "#6366f1", "중동": "#d97706", "유럽": "#0ea5e9",
+    "미주": "#10b981", "오세아니아": "#ec4899", "기타": "#94a3b8",
+}
+_REGION_MEMBERS = {
+    "아시아": ["KR", "JP", "CN", "TW", "HK", "MO", "MN",
+               "TH", "VN", "MY", "SG", "ID", "PH", "BN", "LA"],
+    "중동": ["AE"],
+    "유럽": ["GB", "FR", "DE", "ES", "NL", "LU", "LV"],
+    "미주": ["US", "CA", "MX", "CL", "PE", "AR", "CO"],
+    # 괌은 미국령이지만 지도상 오세아니아다. 대시보드 다른 화면과 같은 감각으로 둔다.
+    "오세아니아": ["AU", "GU"],
+}
+REGION_OF = {c: r for r, cs in _REGION_MEMBERS.items() for c in cs}
+# 권역 안에서도 이 순서로 보여준다(위 목록 순서 = 우리 매출 큰 순서).
+_CC_RANK = {c: i for i, c in enumerate(sum(_REGION_MEMBERS.values(), []))}
+
+
+def region_of(code: str) -> str:
+    return REGION_OF.get(str(code).upper(), "기타")
+
+
+def group_by_region(codes) -> list:
+    """[(권역, [국가코드…])] — REGION_ORDER 순, 권역 안은 _CC_RANK 순.
+
+    새 나라가 Jira 에 추가되면 '기타'로 떨어져 화면에는 나오되 눈에 띈다
+    (조용히 사라지지 않게 하려고 일부러 버리지 않는다).
+    """
+    buckets: dict = {}
+    for c in (codes or []):
+        buckets.setdefault(region_of(c), []).append(str(c).upper())
+    out = []
+    for r in REGION_ORDER + ["기타"]:
+        if buckets.get(r):
+            out.append((r, sorted(buckets[r], key=lambda c: _CC_RANK.get(c, 999))))
+    return out
+
+
+def country_label(codes, limit: int = 4) -> str:
+    """표 한 칸에 들어갈 짧은 문구.
+
+    ★나라 이름을 줄줄이 쓰던 걸 그만뒀다. '한국 · 중국 · 일본 · 대만 · 태국 · 홍콩 외 16'
+      은 폭에 잘려 결국 아무 정보도 안 준다. 대신 규모를 먼저 준다.
+      '전 국가 30개국' / '한국' / '아시아 8 · 유럽 2'
+    """
     codes = list(codes or [])
     if not codes:
         return ""
     if len(codes) >= ALL_COUNTRY_N:
-        return f"전 국가({len(codes)})"
-    names = [CC_NAME.get(c, c) for c in codes]
-    head = " · ".join(names[:limit])
-    return head if len(names) <= limit else f"{head} 외 {len(names) - limit}"
+        return f"전 국가 {len(codes)}개국"
+    if len(codes) <= limit:
+        return " · ".join(cc_name(c) for c in codes)
+    # ★권역을 전부 쓰면 '아시아 11 · 중동 1 · 유럽 3 · 미주 3 · 오세아니아 2' 처럼 길어져
+    #   열 폭에 잘린다. 큰 권역 3개까지만 쓰고 나머지는 개수로 접는다.
+    gs = sorted(group_by_region(codes), key=lambda x: -len(x[1]))
+    head = " · ".join(f"{r} {len(cs)}" for r, cs in gs[:3])
+    return head if len(gs) <= 3 else f"{head} 외 {len(gs) - 3}권역"
 
 
 def _to_date(v):

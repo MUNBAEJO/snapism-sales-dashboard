@@ -136,7 +136,10 @@ def _table(d: pd.DataFrame):
                      "IP": st.column_config.TextColumn(width="large"),
                      "국가수": st.column_config.NumberColumn("국가", width="small",
                                                           help="이 상품을 여는 나라 수"),
-                     "오픈 국가": st.column_config.TextColumn(width="medium")})
+                     "오픈 국가": st.column_config.TextColumn(
+                         width="medium",
+                         help="4개국 이하면 나라 이름을, 그보다 많으면 권역별 개수를 "
+                              "보여드려요. 날짜를 누르면 나라 이름까지 볼 수 있어요.")})
 
 
 with st.expander(f"📋 목록으로 보기 — {m}월 {len(month_df):,}건 · 필터가 그대로 적용돼요"):
