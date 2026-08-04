@@ -85,7 +85,18 @@ _CSS = """
   border-radius:999px;padding:3px 9px 3px 5px;white-space:nowrap;}
 .ccp img{height:11px;border:1px solid #eceff4;border-radius:2px;display:block;}
 .ccp b{font-weight:800;color:var(--brand);}
-.ccp.more{color:var(--text-3);background:transparent;border-style:dashed;}
+.ccp.more{color:var(--brand);background:var(--brand-soft);border-color:#d5d9fb;
+  border-style:dashed;cursor:pointer;font-weight:800;}
+.ccp.more::after{content:" ▾";font-size:10px;}
+/* 넘치는 나라 접기 — 순수 HTML 이라 클릭해도 서버를 안 거친다 */
+.ccx{margin:2px 0 12px;}
+.ccx > summary{list-style:none;cursor:pointer;margin:0;}
+.ccx > summary::-webkit-details-marker{display:none;}
+.ccx > summary .ccrow, .ccx > summary{margin:0;}
+.ccx[open] > summary .ccp.more::after{content:" ▴";}
+.ccx[open] > summary .ccp.more{background:var(--brand);color:#fff;border-color:var(--brand);}
+.ccsub{margin:6px 0 0;padding-left:2px;}
+.ccx summary:hover .ccp.more{background:var(--brand);color:#fff;}
 /* 칸 전체를 누를 수 있게 — 보이지 않는 버튼을 칸 위에 겹친다.
    CSS 가 안 먹어도 버튼은 남으니 기능이 죽지는 않는다(모양만 투박해진다). */
 .st-key-calgrid [data-testid="stColumn"]{position:relative;min-height:var(--cdh);}
@@ -209,6 +220,9 @@ def _country_strip(g: pd.DataFrame, top: int = 14) -> None:
 
     표 안에는 국기 이미지를 못 넣어서(st.dataframe 은 HTML 을 안 그린다) 표 위에 따로 둔다.
     '한국 12건'처럼 나라별 건수를 세 놔야 '30개국 오픈'이 몇 건짜리인지 감이 온다.
+
+    ★넘치는 나라는 <details> 로 접는다. st.button 으로 하면 서버를 한 번 갔다 와야 해서
+      달력 전체가 다시 그려진다 — 순수 HTML 이라 클릭 즉시 펴지고 선택 상태도 안 흔들린다.
     """
     cnt = {}
     for codes in g["국가"]:
@@ -217,14 +231,24 @@ def _country_strip(g: pd.DataFrame, top: int = 14) -> None:
     if not cnt:
         return
     items = sorted(cnt.items(), key=lambda x: (-x[1], x[0]))
-    chips = "".join(
-        f'<span class="ccp"><img src="{_FLAG.format(cc=c.lower())}" alt="">'
-        f'{escape(ipc.CC_NAME.get(c, c))}<b>{n}</b></span>'
-        for c, n in items[:top])
-    more = (f'<span class="ccp more">외 {len(items) - top}개국</span>'
-            if len(items) > top else "")
-    st.markdown(f'<div class="ccrow"><span class="cclab">오픈 국가 '
-                f'{len(items)}개국</span>{chips}{more}</div>', unsafe_allow_html=True)
+
+    def _chip(c, n):
+        return (f'<span class="ccp"><img src="{_FLAG.format(cc=c.lower())}" alt="">'
+                f'{escape(ipc.CC_NAME.get(c, c))}<b>{n}</b></span>')
+
+    lab = f'<span class="cclab">오픈 국가 {len(items)}개국</span>'
+    if len(items) <= top:
+        st.markdown(f'<div class="ccrow">{lab}'
+                    + "".join(_chip(c, n) for c, n in items) + "</div>",
+                    unsafe_allow_html=True)
+        return
+    head = "".join(_chip(c, n) for c, n in items[:top])
+    rest = "".join(_chip(c, n) for c, n in items[top:])
+    st.markdown(
+        f'<details class="ccx"><summary class="ccrow">{lab}{head}'
+        f'<span class="ccp more">외 {len(items) - top}개국</span></summary>'
+        f'<div class="ccrow ccsub">{rest}</div></details>',
+        unsafe_allow_html=True)
 
 
 def render_day_detail(df: pd.DataFrame, d: date, sel_key: str = "ipcal_day") -> None:
