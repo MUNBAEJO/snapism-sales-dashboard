@@ -171,6 +171,7 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .stack{ width:58%; max-width:70px; display:flex; flex-direction:column; justify-content:flex-end;
         border-radius:5px 5px 0 0; overflow:hidden; }
 .xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
+.vlab{ font-size:10.5px; color:var(--text-2); font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .hours{ display:flex; align-items:flex-end; gap:5px; height:180px; border-bottom:1px solid var(--border); padding-top:8px; }
 .hours .hc{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
 .hours .hb2{ width:70%; border-radius:3px 3px 0 0; }
@@ -455,31 +456,6 @@ def josa(word, with_jong, without_jong):
     if not ("가" <= ch <= "힣"):
         return without_jong          # 영문·숫자로 끝나면 받침 없는 쪽이 대체로 자연스럽다
     return with_jong if (ord(ch) - 0xAC00) % 28 else without_jong
-
-
-YTD_YEAR = 2026          # 그래프 하단에 고정으로 보여줄 연도
-
-
-def _ytd_line(scope_df, amount_col, year=YTD_YEAR):
-    """'2026년 누적' 한 줄. **조회기간은 무시하고** 나머지 필터만 반영한다.
-    scope_df 는 '날짜 외 모든 필터'가 걸린 프레임이어야 한다(views/1 의 `scope`).
-    스내피즘 views/0 에도 같은 함수가 있다 — 한쪽을 고치면 다른 쪽도 볼 것.
-    """
-    if scope_df is None or scope_df.empty or "날짜" not in scope_df.columns:
-        return
-    y = scope_df[scope_df["날짜"].map(lambda d: getattr(d, "year", None) == year)]
-    if "취소 여부" in y.columns:
-        y = y[~y["취소 여부"].astype(bool)]
-    y = y[y[amount_col] != 0]
-    if y.empty:
-        return
-    _v, _n = int(y[amount_col].sum()), int(y["건수"].sum()) if "건수" in y.columns else len(y)
-    st.markdown(
-        f'<div class="strip">📅 <b>{year}년 누적</b> '
-        f'<b style="color:var(--brand)">{fmt_krw(_v)}</b> · {_n:,}건 '
-        f'<span style="color:var(--text-3)">— 조회기간과 무관하게 '
-        f'{year}-01-01 ~ {y["날짜"].max()} 전체예요 (위 필터는 그대로 적용돼요)</span></div>',
-        unsafe_allow_html=True)
 
 
 def fmt_krw(n):
@@ -997,6 +973,16 @@ def css_donut(pairs, colors, size=128, hole=38, legend_fs=13, sub=None):
         unsafe_allow_html=True)
 
 
+def fmt_short(n):
+    """막대 밑에 붙일 짧은 금액. 일 단위면 막대가 30개가 넘어 원 단위는 안 들어간다."""
+    n = int(n or 0)
+    if abs(n) >= 100_000_000:
+        return f"₩{n / 100_000_000:,.1f}억"
+    if abs(n) >= 10_000:
+        return f"₩{n / 10_000:,.0f}만"
+    return f"₩{n:,}"
+
+
 def css_stack(labels, data, series, gran):
     """시안 CSS 스택 막대 추이 (IP구분별 다중 시리즈).
     labels=x축, data={시리즈:[값...]} labels 순서, series=그릴 순서."""
@@ -1025,7 +1011,8 @@ def css_stack(labels, data, series, gran):
         _tip = f'{lab} · 합계 {fmt_krw(tot)}' + (f' · {_parts}' if _parts else '')
         cols += (f'<div class="col"><div class="vtip" style="bottom:{_tb}%">{_tip}</div>'
                  f'<div class="stack" style="height:{h}%">{seg}</div>'
-                 f'<div class="xlab" style="font-size:{fs}">{lab}</div></div>')
+                 f'<div class="xlab" style="font-size:{fs}">{lab}</div>'
+                 f'<div class="vlab">{fmt_short(tot)}</div></div>')
     st.markdown(f'<div class="legend">{leg}</div><div class="chart" style="gap:{gap}">{cols}</div>',
                 unsafe_allow_html=True)
 
@@ -1556,7 +1543,6 @@ with tab_home:
             css_stack(labels, data, present, gran)
             st.caption("막대는 IP구분(아티스트·캐릭터·PICK·오리지널·렌탈)별로 쌓았어요. "
                        "전체 순위는 '구좌타입 분석' 탭에서 봐요.")
-        _ytd_line(scope, "매출액")
         helpbox("""
 **매출 추이 (IP구분별 스택)**
 - 매출액(실결제 + 쿠폰기여 + 코인기여)을 기간(월/주/일)·`IP구분`으로 묶어 쌓은 막대.

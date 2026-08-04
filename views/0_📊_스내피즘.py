@@ -176,6 +176,7 @@ h2, h3{ letter-spacing:-0.02em !important; }
         border-radius:5px 5px 0 0; overflow:hidden; }
 .seg-real{ background:var(--brand-2); } .seg-cp{ background:var(--sky); }
 .xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
+.vlab{ font-size:10.5px; color:var(--text-2); font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* 시간대 막대 */
 .hours{ display:flex; align-items:flex-end; gap:5px; height:180px; border-bottom:1px solid var(--border); padding-top:8px; }
 .hours .hc{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
@@ -513,39 +514,6 @@ def load_data():
     return _load_data(data_io.file_version(MASTER_FILE))
 
 
-YTD_YEAR = 2026          # 그래프 하단에 고정으로 보여줄 연도
-
-
-def ytd_total(scope_df, amount_col, year=YTD_YEAR):
-    """그 해 누적 매출·건수. **조회기간은 무시하고** 나머지 필터만 반영한다.
-
-    scope_df 는 '날짜 외 모든 필터'가 걸린 프레임이어야 한다.
-    반환 (매출, 건수, 마지막 날짜) — 데이터가 없으면 (0, 0, None).
-    """
-    if scope_df is None or scope_df.empty or "날짜" not in scope_df.columns:
-        return 0, 0, None
-    m = scope_df["날짜"].map(lambda d: getattr(d, "year", None) == year)
-    y = scope_df[m]
-    if y.empty:
-        return 0, 0, None
-    y = y[~y["취소 여부"].astype(bool)] if "취소 여부" in y.columns else y
-    y = y[y[amount_col] != 0]
-    return int(y[amount_col].sum()), int(len(y)), y["날짜"].max()
-
-
-def _ytd_line(scope_df, amount_col, year=YTD_YEAR):
-    """'2026년 누적' 한 줄. 조회기간을 바꿔도 이 숫자는 안 변한다."""
-    _v, _n, _last = ytd_total(scope_df, amount_col, year)
-    if not _v:
-        return
-    st.markdown(
-        f'<div class="strip">📅 <b>{year}년 누적</b> '
-        f'<b style="color:var(--brand)">{fmt_krw(_v)}</b> · {_n:,}건 '
-        f'<span style="color:var(--text-3)">— 조회기간과 무관하게 '
-        f'{year}-01-01 ~ {_last} 전체예요 (위 필터는 그대로 적용돼요)</span></div>',
-        unsafe_allow_html=True)
-
-
 def paid_sales(df):
     return df[~df["취소 여부"] & (df["최종 결제 금액"] > 0)]
 
@@ -594,12 +562,17 @@ def load_devices():
     return _load_devices(_m)
 
 
-def device_days(dev, p0, p1):
+def device_days(dev, p0, p1, sold=None):
     """국가코드별 '대·일'(가동 키오스크 × 실가동일수)·대수·기간 내 신규/종료.
 
     계약 [시작일, 종료일] 과 조회기간의 겹치는 날짜만 센다. 포토이즘은 철거일이 없어
-    중지 장비를 통째로 뺐지만, 스내피즘은 계약 종료일이 있어 그럴 필요가 없다."""
-    empty = pd.DataFrame(columns=["국가코드", "대수", "대일", "신규", "종료"])
+    중지 장비를 통째로 뺐지만, 스내피즘은 계약 종료일이 있어 그럴 필요가 없다.
+
+    sold: {(국가코드, 매장이름)} — 조회기간에 매출이 난 매장 집합. 주면 '매출대수'를
+          함께 낸다. ★거래 데이터에 **장비 번호가 없어서** 매장 단위로만 이을 수 있다 —
+          한 매장에 2대가 있고 1대만 돌았어도 2대로 잡힌다. 포토이즘 views/1 도 같다.
+    """
+    empty = pd.DataFrame(columns=["국가코드", "대수", "대일", "신규", "종료", "매출대수"])
     if dev.empty or not p0 or not p1:
         return empty
     s0, s1 = pd.Timestamp(p0), pd.Timestamp(p1)
@@ -614,11 +587,20 @@ def device_days(dev, p0, p1):
     t = pd.DataFrame({"국가코드": d["국가코드"], "대일": days,
                       "신규": d["시작일"].between(s0, s1).astype(int),
                       "종료": (closed & d["종료일"].between(s0, s1)).astype(int)})
+    if sold is not None and "매출매장명" in d.columns:
+        # ★스내피즘 거래 데이터엔 국가코드가 없다(국가 이름만) → 장비쪽 코드를 이름으로 바꿔 맞춘다.
+        _m = d["매출매장명"].astype(str).str.strip()
+        _n = d["국가코드"].map(CC_TO_NAT)
+        t["매출대수"] = [1 if (n, s) in sold else 0
+                         for n, s in zip(_n, _m)]
+    else:
+        t["매출대수"] = 0
     t = t[t["대일"] > 0]
     if t.empty:
         return empty
     return (t.groupby("국가코드").agg(대수=("대일", "size"), 대일=("대일", "sum"),
-                                      신규=("신규", "sum"), 종료=("종료", "sum"))
+                                      신규=("신규", "sum"), 종료=("종료", "sum"),
+                                      매출대수=("매출대수", "sum"))
             .reset_index())
 
 
@@ -813,6 +795,16 @@ def css_donut(pairs, colors, size=128, hole=38, legend_fs=13, sub=None):
         unsafe_allow_html=True)
 
 
+def fmt_short(n):
+    """막대 밑에 붙일 짧은 금액. 일 단위면 막대가 30개가 넘어 원 단위는 안 들어간다."""
+    n = int(n or 0)
+    if abs(n) >= 100_000_000:
+        return f"₩{n / 100_000_000:,.1f}억"
+    if abs(n) >= 10_000:
+        return f"₩{n / 10_000:,.0f}만"
+    return f"₩{n:,}"
+
+
 def css_trend(rows, gran):
     """시안과 동일한 CSS 스택 막대 추이. rows=[(label, 실결제, 쿠폰)]."""
     if not rows:
@@ -832,7 +824,8 @@ def css_trend(rows, gran):
                  f'<div class="stack" style="height:{h}%">'
                  f'<div class="seg-cp" style="height:{cpp}%"></div>'
                  f'<div class="seg-real" style="height:{100 - cpp}%"></div></div>'
-                 f'<div class="xlab" style="font-size:{fs}">{label}</div></div>')
+                 f'<div class="xlab" style="font-size:{fs}">{label}</div>'
+                 f'<div class="vlab">{fmt_short(tot)}</div></div>')
     st.markdown(
         '<div class="legend"><span><i class="dot" style="background:var(--brand-2)"></i>실결제</span>'
         '<span><i class="dot" style="background:var(--sky)"></i>쿠폰 할인</span></div>'
@@ -1228,7 +1221,6 @@ with tab_home:
                     if _partial and _cv < _pv:
                         _txt += ", 월초라 낮아요" if _end.day <= 12 else " (진행 중이에요)"
                     st.caption(_txt)
-                _ytd_line(scope, "정산금액")
             helpbox("""
     **매출 추이 (실결제 + 쿠폰, 월/주/일)**
     - **실결제 막대** = `실결제` 거래를 기간(월=`to_period('M')`, 주=`to_period('W')`, 일=날짜)으로 묶어 `KRW환산금액` 합.
@@ -1517,7 +1509,11 @@ with tab_nat:
         # ── 키오스크 1대당 매출 ────────────────────────────────
         _dev = load_devices()
         if not _dev.empty and len(date_range) == 2:
-            _dd = device_days(_dev[~_dev["렌탈"]], date_range[0], date_range[1])
+            # 조회기간에 매출이 난 (국가, 매장) — '매출 발생 대수'의 근거.
+            _sp = rev[["국가", "매장 이름"]].drop_duplicates()
+            _sold = set(zip(_sp["국가"].astype(str).str.strip(),
+                            _sp["매장 이름"].astype(str).str.strip()))
+            _dd = device_days(_dev[~_dev["렌탈"]], date_range[0], date_range[1], sold=_sold)
             _pkd = (date_range[1] - date_range[0]).days + 1
             per = pd.DataFrame()
             if not _dd.empty:
@@ -1550,10 +1546,14 @@ with tab_nat:
                     # 100%·헤더 이름은 기준을 넘긴 국가에서만 잡는다.
                     _mx   = _big["대당월"].max()
                     _lead = str(_big.iloc[0]["국가"])
-                    grid = ("grid-template-columns:1.4fr .7fr 1.0fr 1.2fr "
-                            ".9fr 1.1fr")
+                    grid = ("grid-template-columns:1.3fr .62fr .78fr .85fr 1.15fr "
+                            ".85fr 1.0fr")
                     html = (f'<div class="ntbl"><div class="ntr nth" style="{grid}">'
                             '<span>국가</span><span class="r">가동 대수</span>'
+                            '<span class="r tip dn" data-tip="조회기간에 매출이 난 매장에 '
+                            '있는 장비 수예요. 거래 데이터에 장비 번호가 없어 매장 단위로 세요 — '
+                            '한 매장에 2대가 있고 1대만 돌았어도 2대로 잡혀요">'
+                            '매출 발생 ⓘ</span>'
                             '<span class="r">기간 내 변동</span>'
                             '<span class="r">1대당 월매출</span>'
                             '<span class="r">1대당 월건수</span>'
@@ -1569,46 +1569,25 @@ with tab_nat:
                         # '표본 적음' 배지 제거(요청). 정렬(기준 미달 국가는 아래쪽)은
                         # 그대로 둔다 — 몇 대뿐인 나라가 1위로 튀는 걸 막는 장치라서,
                         # 빼면 순위 자체가 못 믿을 값이 된다. 이유는 캡션에 남긴다.
+                        # 매출 발생 대수 — 놀고 있는 장비가 많으면 눈에 띄게 색을 준다.
+                        _act, _all = int(r.get("매출대수", 0)), int(r["대수"])
+                        _ratio = (_act / _all) if _all else 0
+                        _acol = ("var(--text-2)" if _ratio >= 0.9 else
+                                 "var(--amber)" if _ratio >= 0.7 else "var(--red)")
                         html += (f'<div class="ntr" style="{grid}">'
                                  f'<span class="nname">{flag_img(r["국가"])}{r["국가"]}</span>'
-                                 f'<span class="r num">{int(r["대수"]):,}대</span>'
+                                 f'<span class="r num">{_all:,}대</span>'
+                                 f'<span class="r num" style="color:{_acol}">{_act:,}대'
+                                 f'<span style="font-size:11px;opacity:.75"> '
+                                 f'{_ratio * 100:.0f}%</span></span>'
                                  f'<span class="r num" style="font-size:12px">{_chg}</span>'
                                  f'<span class="r num">{fmt_krw(int(r["대당월"]))}</span>'
                                  f'<span class="r num">{r["대당건"]:,.1f}건</span>'
                                  f'{pct_bar(r["대당월"] / _mx if _mx else 0, 1.0)}</div>')
                     st.markdown(html + "</div>", unsafe_allow_html=True)
 
-                    # 총매출 1위와 대당 효율 1위가 갈리는 게 이 카드의 핵심이다.
-                    # (물량은 한국이 압도적인데 1대당으로는 하위 — 이걸 놓치면 카드를 봐도 남는 게 없다)
-                    _cand = _big          # 표본 하한을 넘긴 국가끼리만 비교
-                    _top_rev = per.loc[per["매출"].idxmax()]
-                    _top_eff = _cand.iloc[0]
-                    if _top_rev["국가"] != _top_eff["국가"] and _top_rev["대당월"]:
-                        _x  = _top_eff["대당월"] / _top_rev["대당월"]
-                        _rk = list(_cand["국가"]).index(_top_rev["국가"]) + 1                             if _top_rev["국가"] in list(_cand["국가"]) else None
-                        _rev_n, _eff_n = _top_rev["국가"], _top_eff["국가"]
-                        _tail = (f'{_rev_n}{josa(_rev_n, "은", "는")} {len(_cand)}개국 중 '
-                                 f'<b>{_rk}위</b>{josa("위", "이에요", "예요")}.'
-                                 if _rk else f'{_rev_n}{josa(_rev_n, "은", "는")} 표본이 작아 순위에서 빠졌어요.')
-                        _note = (f' <span style="color:var(--text-3)">({_MIN_DEV}대 이상인 국가끼리 비교)</span>'
-                                 if len(_cand) < len(per) else '')
-                        st.markdown(
-                            '<div class="strip">💡 총매출 1위는 '
-                            f'<b>{_rev_n}</b>({fmt_krw(int(_top_rev["매출"]))}){josa(_rev_n, "인데", "인데")}, '
-                            f'1대당 효율 1위는 <b>{_eff_n}</b>{josa(_eff_n, "이에요", "예요")} — '
-                            f'1대당으로는 {_eff_n}{josa(_eff_n, "이", "가")} <b>{_x:.1f}배</b>, '
-                            f'{_tail}{_note}</div>',
-                            unsafe_allow_html=True)
-
-                    _cap = (f"조회기간({_pkd}일) **실제 매출**을 키오스크 1대·30일 기준으로 환산한 값이에요"
-                            "(예상치가 아니에요). "
-                            f"'{_lead} 대비'는 1대당 매출 1위인 **{_lead}**{josa(_lead, '을', '를')} 100%로 둔 비율이에요 — "
-                            "총매출 1위와는 다른 나라일 수 있고, 위 국가별 매출표의 "
-                            "'실결제 비중'(전체 대비 점유율)과도 다른 값이에요.")
-                    if not _small.empty:
-                        _cap += (f" 가동 대수가 **{_MIN_DEV}대 미만**인 {len(_small)}개국은 "
-                                 "매장 한 곳 성적이 국가 대표값이 돼 버려서 표 아래쪽에 따로 모았어요.")
-                    st.caption(_cap)
+                    # 표 아래 '💡 총매출 1위 vs 1대당 1위' 안내와 긴 설명 캡션은 뺐다(요청).
+                    # 포토이즘 쪽도 같이 뺐다 — 같은 내용은 helpbox(계산 방식 설명)에 남아 있다.
 
                     with st.expander("📜 키오스크 계약 이력 (최근 12개월, 월별 신규·종료)"):
                         _h = _dev[~_dev["렌탈"]].copy()
