@@ -166,6 +166,19 @@ def audit_brand(name: str, parq: Path, nat: str, days: int | None = None,
             v = sorted(vol.get(g, []))
             return v[len(v) // 2] if v else 0
 
+        # ★규모도 **요일별로** 본다. 등장률만 요일별로 보면 아직 오탐이 난다.
+        #   독일은 월~토 112~368행인데 일요일만 5행이다(거의 안 판다). 전체 중앙값
+        #   109행으로 '상시 국가' 문턱(30행)을 넘겨 버리니, 일요일에 0행이면
+        #   "평소 109건이 빠졌다"고 알림이 뜬다 — 2026-08-02 에 실제로 그랬다.
+        #   요일별 중앙값(일요일 5행)으로 재면 문턱 아래라 애초에 대상이 아니다.
+        vol_wd: dict[tuple, list] = {}
+        for d, g, n in nat_rows:
+            vol_wd.setdefault((g, d.weekday()), []).append(n)
+
+        def _typical_on(g: str, w: int) -> int:
+            v = sorted(vol_wd.get((g, w), []))
+            return v[len(v) // 2] if v else 0
+
         # ★요일별 등장률로 본다. 룩셈부르크는 일요일 0/9 로 아예 안 파는데,
         #   요일을 안 보면 일요일마다 '국가 이탈'로 잡혀 알림이 못 쓰게 된다.
         wk_days: dict[int, list] = {}
@@ -182,16 +195,18 @@ def audit_brand(name: str, parq: Path, nat: str, days: int | None = None,
                 for g in by_day[d]:
                     seen[g] = seen.get(g, 0) + 1
             return {g for g, c in seen.items()
-                    if c >= len(ds) * 0.8 and _typical(g) >= NAT_MIN_ROWS}
+                    if c >= len(ds) * 0.8 and _typical_on(g, w) >= NAT_MIN_ROWS}
 
         for d in recent:
-            gone = sorted(_regular_on(d.weekday()) - by_day[d], key=lambda g: -_typical(g))
+            w = d.weekday()
+            gone = sorted(_regular_on(w) - by_day[d], key=lambda g: -_typical_on(g, w))
             # 부분·완전 결손으로 이미 잡힌 날은 중복 보고하지 않는다
             if gone and not any(p["date"] == str(d) for p in problems):
                 problems.append({
                     "kind": "국가이탈", "date": str(d),
                     "detail": f"평소 있던 {len(gone)}개국 빠짐: "
-                              + ", ".join(f"{g}(평소 {_typical(g):,}건)" for g in gone[:6])})
+                              + ", ".join(f"{g}({'월화수목금토일'[w]}요일 평소 "
+                                          f"{_typical_on(g, w):,}건)" for g in gone[:6])})
 
     # ── 4) 신선도 ─────────────────────────────────────────────────────
     lag = (date.today() - last).days
@@ -228,6 +243,12 @@ def summary_text(results: list[dict]) -> str:
 
 
 def main() -> int:
+    # 콘솔이 cp949 라 '—' 같은 글자에서 UnicodeEncodeError 로 죽는다(실제로 죽었다).
+    # 알림은 이미 나간 뒤라 조용히 지나갔지만, 사람이 직접 돌리면 마지막에 터진다.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     args = sys.argv[1:]
     as_json = "--json" in args
     days = report_days = None
