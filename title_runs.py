@@ -341,6 +341,24 @@ STATUS_ORDER = ["🔴 확인필요", "⚠️ 기간후판매", "🔚 종료", "�
                 "🆕 신규", "🟢 판매중", "⚪ 미확인"]
 
 
+def _as_dates(s):
+    """날짜열 → date 객체 시리즈. **이미 date 면 손대지 않는다.**
+
+    화면 쪽(_load_data)이 `.dt.date` 로 만들어 넘기는데 여기서 to_datetime → .dt.date
+    를 또 하면 667만 건을 왕복 변환하느라 0.8초를 버린다(포토이즘 실측).
+    판정은 pandas 의 infer_dtype 으로 한다 — C 레벨이라 전수 검사인데도 싸고,
+    '전부 date 일 때만' date 를 돌려주므로 섞인 열은 예전 경로로 간다.
+    """
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return s.dt.date
+    try:
+        if pd.api.types.infer_dtype(s, skipna=True) == "date":
+            return s
+    except Exception:
+        pass
+    return pd.to_datetime(s, errors="coerce").dt.date
+
+
 def title_status(df, jira_map=None, period_start=None, period_end=None,
                  title_col="프레임 이름", date_col="날짜", idle_days=IDLE_DAYS,
                  prefer_brand="snapism", gap_days=GAP_DAYS):
@@ -359,13 +377,16 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
     if df is None or df.empty or title_col not in df.columns:
         return {}
 
-    d = df[df[title_col].notna()].copy()
-    d["_날짜"] = pd.to_datetime(d[date_col], errors="coerce").dt.date
+    # ★큰 프레임을 통째로 copy() 하지 않는다. 이 함수가 쓰는 건 타이틀·날짜 두 열뿐인데
+    #   667만행 전 열을 복사하면 그것만으로 0.7초가 든다(포토이즘 실측).
+    d = df.loc[df[title_col].notna(), [title_col, date_col]]
+    if d.empty:
+        return {}
+    d = d.assign(_날짜=_as_dates(d[date_col]))
     d = d[d["_날짜"].notna()]
     if d.empty:
         return {}
 
-    ref = period_end or d["_날짜"].max()          # 판정 기준일 = 조회 기간 끝
     jira_keyed = _jira_by_key(jira_map)
     tok_idx = _token_prefix_index(jira_map)
     out = {}
@@ -375,8 +396,11 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
     #   cumsum 을 돌렸다. 한 번은 싸지만 타이틀이 3천 개면 pandas 호출 오버헤드만
     #   수 초가 된다(프로파일에서 자체시간이 넓게 퍼져 보이던 정체).
     #   전체를 한 번에 정렬·groupby 로 계산하면 같은 결과가 나온다.
-    _u = d[[title_col, "_날짜"]].drop_duplicates()
-    _u["_dt"] = pd.to_datetime(_u["_날짜"], errors="coerce")
+    _pairs = d[[title_col, "_날짜"]].drop_duplicates()
+    # 타이틀 등장 순서 — 반환 dict 의 키 순서를 예전과 똑같이 유지하려고 미리 뽑는다.
+    _order = _pairs[title_col].drop_duplicates().tolist()
+    ref = period_end or _pairs["_날짜"].max()      # 판정 기준일 = 조회 기간 끝
+    _u = _pairs.assign(_dt=pd.to_datetime(_pairs["_날짜"], errors="coerce"))
     _u = _u.sort_values([title_col, "_dt"], kind="stable")
     _grp = _u.groupby(title_col, sort=False, observed=True)["_dt"]
     _gap = _grp.diff().dt.days.fillna(0)
@@ -386,13 +410,19 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
     _cur_days = {k: list(v) for k, v in
                  _u.loc[_last].groupby(title_col, sort=False, observed=True)["_날짜"]}
 
-    for title, g in d.groupby(title_col, sort=False, observed=True):
+    # ★예전엔 여기서 d.groupby(title_col) 를 돌렸다. 그런데 루프가 그룹 프레임 g 를
+    #   쓰는 곳은 아래 fallback 한 줄뿐인데, 667만행을 타이틀별로 쪼개느라 2초를 썼다
+    #   (프로파일: get_iterator 1.23s + _sorted_data 0.82s). 필요한 날짜 목록은
+    #   위 _cur_days 에 이미 다 들어 있어서 타이틀 이름만 돌면 된다.
+    for title in _order:
         # ★'가장 최근 런'만 본다. 타이틀 전체(first~last)로 보면 같은 이름으로
         #  두 번 출시된 게 한 덩어리가 된다 — 스내피즘 '허성범'은 2025-08~2026-07로
         #  11개월이 붙어 2025년 티켓이 매칭되고 2026년 거래가 '기간후판매'로 오탐났다.
         entries = _entries_for(jira_keyed, title, tok_idx)
 
-        cur = _cur_days.get(title) or sorted(g["_날짜"].unique())   # 위에서 미리 계산
+        cur = _cur_days.get(title)      # 위에서 미리 계산 — 모든 타이틀에 반드시 있다
+        if not cur:
+            continue
 
         # ★판매가 끊기지 않아도 회차가 바뀔 수 있다. Jira 에 이름이 같은 티켓이
         #  여러 개면 '가장 늦은 시작일'부터를 현재 회차로 본다.
@@ -417,10 +447,10 @@ def title_status(df, jira_map=None, period_start=None, period_end=None,
         #  '260701 다마고치'가 같은 '다마고치'). 그러면 2025년 출시분에 2026년
         #  종료일이 붙는다. _pick_ticket 은 기간이 겹칠 때만 연결한다.
         ticket, _ = _pick_ticket(entries, first, last, prefer_brand)
-        due = pd.to_datetime((ticket or {}).get("duedate"), errors="coerce")
-        due = due.date() if not pd.isna(due) else None
-        opn = pd.to_datetime((ticket or {}).get("startdate"), errors="coerce")
-        opn = opn.date() if not pd.isna(opn) else None
+        # ★_entry_raw 가 이미 파싱해 둔 값을 그대로 쓴다. 예전엔 여기서 티켓마다
+        #   스칼라 pd.to_datetime 을 두 번 불렀는데, 타이틀 3천 개면 6천 번이라
+        #   포맷 추측 오버헤드만 1.9초였다(프로파일 최상위). 결과는 같다.
+        opn, due = _entry_raw(ticket) if ticket else (None, None)
 
         # 조회 기간 뒤로도 팔리고 있으면(last > ref) 유휴 아님 → 0
         idle = max(0, (ref - last).days)
