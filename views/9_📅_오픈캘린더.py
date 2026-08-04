@@ -101,6 +101,14 @@ ui_theme.kpis([
 
 # ── 달력 ──
 ui_theme.sec(2, "달력", "날짜를 누르면 그날 오픈하는 IP 를 전부 펼쳐 보여드려요")
+
+# 선택한 날 상세는 **달력 위**에 그린다 — 아래에 두면 볼 때마다 스크롤을 내려야 한다.
+# 칸 클릭은 on_click 콜백이라 rerun 전에 session_state 가 이미 갱신돼 있다.
+# 그래서 달력을 그리기 전에 읽어도 방금 누른 날짜가 그대로 나온다.
+_picked = st.session_state.get(SEL)
+if _picked is not None:
+    ipu.render_day_detail(f, _picked, sel_key=SEL)
+
 with ui_theme.card():
     # 달 이동 · 제목 · 범례를 한 줄로 — 버튼만 따로 떠 있으면 급조한 화면처럼 보인다.
     nav = st.columns([0.7, 0.7, 0.7, 8], vertical_alignment="center")
@@ -111,10 +119,7 @@ with ui_theme.card():
                   help="다음 달")
     with nav[3]:
         ipu.header(y, m, len(month_df), brands_all)
-    picked = ipu.render_month(month_df, y, m, TODAY, sel_key=SEL)
-
-if picked is not None:
-    ipu.render_day_detail(f, picked, sel_key=SEL)
+    ipu.render_month(month_df, y, m, TODAY, sel_key=SEL)
 
 # ── 목록 ──
 # 달력이 주인공이라 목록은 접어 둔다 — 펼쳐 두면 스크롤이 길어져 달력이 밀린다.
