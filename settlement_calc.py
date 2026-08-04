@@ -53,6 +53,22 @@ def _gubun_filter() -> str:
     return f"AND ({ip_classify.IP_GUBUN_SQL}) IN ({g})"
 
 
+def _sn_gubun() -> str:
+    """스내피즘 원거래에도 **카테고리 필터**를 건다.
+
+    ★2026-08-04 추가. 같은 IP(=프레임 이름)라도 **카테고리가 다르면 정산 조건이 다르다**
+      (사용자 확정). 그런데 후보 목록(settlement_map.title_revenue)은
+      `카테고리 IN SETTLE_GUBUN` 으로 거르는데 **정산 집계만 안 걸러서**,
+      화면에서 본 적 없는 매출이 정산액에 조용히 더해지고 있었다.
+      예: 이민혁(HUTA)·로이킴 의 'DIVE IN PHOTOISM', 루네이트의 '폴라릿'.
+
+    포토이즘은 _gubun_filter() 로 이미 같은 취지의 필터를 걸고 있었다(IP구분 기준).
+    스내피즘은 원본에 '카테고리' 열이 그대로 있어 그걸 쓴다.
+    """
+    g = ",".join(f"'{x}'" for x in smap.SETTLE_GUBUN)
+    return f'AND "카테고리" IN ({g})'
+
+
 def _sqlist(vals) -> str:
     """문자열 리스트 → SQL IN 절. 작은따옴표는 두 번 써서 이스케이프."""
     esc = [str(v).replace("'", "''") for v in vals]
@@ -202,7 +218,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{SN_MASTER.as_posix()}')
                   WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                    AND "프레임 이름" IN ({_sqlist(titles)})
+                    AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
                     AND NOT COALESCE("취소 여부", FALSE)
                 )
                 SELECT "국가", any_value(unit) AS unit,
@@ -426,7 +442,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                                 THEN 1 ELSE 0 END) AS up_cnt
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "프레임 이름" IN ({_sqlist(titles)})
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
                   AND NOT COALESCE("취소 여부", FALSE)
                   AND CAST("최종 결제 금액" AS BIGINT)
                       + CAST("쿠폰 할인 금액" AS BIGINT) <> 0
@@ -483,7 +499,7 @@ def price_table(brand: str, titles: list[str], start: str, end: str) -> pd.DataF
                        AVG(NULLIF(TRY_CAST("상품 단가" AS DOUBLE), 0)) AS 단가
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "프레임 이름" IN ({_sqlist(titles)})
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
                   AND NOT COALESCE("취소 여부", FALSE)
                 GROUP BY 1,3
             """).df()
@@ -602,7 +618,7 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
                        + CAST("쿠폰 할인 금액" AS BIGINT)) * {rate})) AS BIGINT) AS v
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "프레임 이름" IN ({_sqlist(titles)})
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
                   AND CAST("최종 결제 금액" AS BIGINT)
                       + CAST("쿠폰 할인 금액" AS BIGINT) < 0"""
         v = con.execute(q).fetchone()[0]
