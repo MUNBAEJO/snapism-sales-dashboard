@@ -137,9 +137,9 @@ def _table(d: pd.DataFrame):
                      "국가수": st.column_config.NumberColumn("국가", width="small",
                                                           help="이 상품을 여는 나라 수"),
                      "오픈 국가": st.column_config.TextColumn(
-                         width="medium",
-                         help="4개국 이하면 나라 이름을, 그보다 많으면 권역별 개수를 "
-                              "보여드려요. 날짜를 누르면 나라 이름까지 볼 수 있어요.")})
+                         width="large",
+                         help="가까운 권역부터 순서대로 적었어요. 28개국 이상은 "
+                              "'전 국가'로 묶었어요. 국기까지 보려면 달력에서 날짜를 눌러 주세요.")})
 
 
 with st.expander(f"📋 목록으로 보기 — {m}월 {len(month_df):,}건 · 필터가 그대로 적용돼요"):

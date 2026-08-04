@@ -112,15 +112,14 @@ def cc_name(code: str) -> str:
 
 
 # ── 권역 ──────────────────────────────────────────────────────────────────
-# 왜 묶는가: 오픈 국가가 **1개국(44%) 아니면 30개국 안팎(26%)** 으로 완전히 갈린다.
-# 30개 나라 이름을 한 줄로 늘어놓으면 아무도 안 읽는다. 권역 다섯 덩어리로 접으면
-# '아시아 15 · 유럽 7 · 미주 7' 한 줄로 규모가 잡히고, 궁금하면 펼쳐 보면 된다.
-# 순서가 곧 화면에 나오는 순서다(가까운 데부터).
+# **나열 순서를 잡는 데만 쓴다.** 나라 이름 20개가 아무 순서 없이 늘어서 있으면
+# 눈이 못 따라가는데, 권역별로 뭉쳐 놓으면 '아시아 덩어리 | 유럽 덩어리 | 미주 덩어리'
+# 로 보여서 훑기가 된다.
+#
+# ★한때 '아시아 8' 처럼 권역 이름으로 **줄여서** 보여줬는데(2026-08-04 1차),
+#   그게 어느 나라인지 알 수가 없다는 지적을 받고 되돌렸다. 개수는 국가수 열이
+#   이미 주고 있으니 국가 열은 이름을 줘야 한다. 요약 용도로 다시 쓰지 말 것.
 REGION_ORDER = ["아시아", "중동", "유럽", "미주", "오세아니아"]
-REGION_COLOR = {
-    "아시아": "#6366f1", "중동": "#d97706", "유럽": "#0ea5e9",
-    "미주": "#10b981", "오세아니아": "#ec4899", "기타": "#94a3b8",
-}
 _REGION_MEMBERS = {
     "아시아": ["KR", "JP", "CN", "TW", "HK", "MO", "MN",
                "TH", "VN", "MY", "SG", "ID", "PH", "BN", "LA"],
@@ -155,25 +154,31 @@ def group_by_region(codes) -> list:
     return out
 
 
-def country_label(codes, limit: int = 4) -> str:
-    """표 한 칸에 들어갈 짧은 문구.
+def sort_countries(codes) -> list:
+    """권역 순으로 정렬한 국가코드. 아시아 → 중동 → 유럽 → 미주 → 오세아니아.
 
-    ★나라 이름을 줄줄이 쓰던 걸 그만뒀다. '한국 · 중국 · 일본 · 대만 · 태국 · 홍콩 외 16'
-      은 폭에 잘려 결국 아무 정보도 안 준다. 대신 규모를 먼저 준다.
-      '전 국가 30개국' / '한국' / '아시아 8 · 유럽 2'
+    이름을 늘어놓을 때 순서가 없으면 눈이 못 따라간다. 권역별로 뭉쳐 놓으면
+    '한국 일본 중국 대만 … | 영국 프랑스 독일 … | 미국 캐나다 …' 로 덩어리가 보인다.
+    """
+    return [c for _, cs in group_by_region(codes) for c in cs]
+
+
+def country_label(codes, limit: int = 12) -> str:
+    """표 한 칸에 넣을 국가 문구. **실제 나라 이름을 쓴다.**
+
+    ★'아시아 8' 같은 권역 요약으로 줄여 봤더니(2026-08-04 1차) 그게 어느 나라인지
+      알 수가 없다는 지적을 받았다. 규모만 알아서는 쓸모가 없다 — 국가수 열이
+      이미 숫자를 주고 있으니 이 열은 **이름**을 줘야 한다.
+    ★단, 28개국 이상은 사실상 전 국가라 이름을 다 쓰는 게 오히려 방해다.
     """
     codes = list(codes or [])
     if not codes:
         return ""
     if len(codes) >= ALL_COUNTRY_N:
         return f"전 국가 {len(codes)}개국"
-    if len(codes) <= limit:
-        return " · ".join(cc_name(c) for c in codes)
-    # ★권역을 전부 쓰면 '아시아 11 · 중동 1 · 유럽 3 · 미주 3 · 오세아니아 2' 처럼 길어져
-    #   열 폭에 잘린다. 큰 권역 3개까지만 쓰고 나머지는 개수로 접는다.
-    gs = sorted(group_by_region(codes), key=lambda x: -len(x[1]))
-    head = " · ".join(f"{r} {len(cs)}" for r, cs in gs[:3])
-    return head if len(gs) <= 3 else f"{head} 외 {len(gs) - 3}권역"
+    names = [cc_name(c) for c in sort_countries(codes)]
+    head = " · ".join(names[:limit])
+    return head if len(names) <= limit else f"{head} 외 {len(names) - limit}"
 
 
 def _to_date(v):
