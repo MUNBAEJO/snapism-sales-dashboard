@@ -117,9 +117,7 @@ if picked is not None:
     ipu.render_day_detail(f, picked, sel_key=SEL)
 
 # ── 목록 ──
-ui_theme.sec(3, "목록으로 보기", "필터가 그대로 적용돼요")
-
-
+# 달력이 주인공이라 목록은 접어 둔다 — 펼쳐 두면 스크롤이 길어져 달력이 밀린다.
 def _table(d: pd.DataFrame):
     if d.empty:
         st.info("해당하는 오픈 일정이 없어요. 필터를 넓혀 보세요.")
@@ -131,14 +129,15 @@ def _table(d: pd.DataFrame):
                  column_config={"IP": st.column_config.TextColumn(width="large")})
 
 
-tab_month, tab_up = st.tabs([f"📋 {m}월 전체 ({len(month_df)}건)", "⏭️ 다가오는 60일"])
-with tab_month:
-    _table(month_df)
-    st.download_button("📥 이 달 일정 CSV",
-                       data=month_df.to_csv(index=False).encode("utf-8-sig"),
-                       file_name=f"IP오픈일정_{y}-{m:02d}.csv", mime="text/csv")
-with tab_up:
-    _table(ipc.upcoming(f, TODAY, 60))
+with st.expander(f"📋 목록으로 보기 — {m}월 {len(month_df):,}건 · 필터가 그대로 적용돼요"):
+    tab_month, tab_up = st.tabs([f"{m}월 전체 ({len(month_df)}건)", "⏭️ 다가오는 60일"])
+    with tab_month:
+        _table(month_df)
+        st.download_button("📥 이 달 일정 CSV",
+                           data=month_df.to_csv(index=False).encode("utf-8-sig"),
+                           file_name=f"IP오픈일정_{y}-{m:02d}.csv", mime="text/csv")
+    with tab_up:
+        _table(ipc.upcoming(f, TODAY, 60))
 
 # ── 안내 ──
 st.markdown("")

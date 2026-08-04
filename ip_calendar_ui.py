@@ -45,38 +45,43 @@ _CSS = """
   color:var(--text-2);}
 .callg i{width:8px;height:8px;border-radius:3px;display:inline-block;margin-right:6px;
   vertical-align:middle;}
-.calwd{font-size:11px;font-weight:800;color:var(--text-3);letter-spacing:.06em;
-  text-align:center;padding:0 0 8px;}
+.calwd{font-size:12px;font-weight:800;color:var(--text-3);letter-spacing:.06em;
+  text-align:center;padding:0 0 9px;}
 .calwd.sat{color:#3b82f6;} .calwd.sun{color:#e11d48;}
-/* 날짜 칸 */
+/* 날짜 칸 — 한 칸에 4개까지 보이게 넉넉히 잡는다(3개면 '+N건 더'가 너무 자주 뜬다).
+   ★높이는 --cdh 한 곳에서만 정한다. 칸·컬럼·클릭영역 셋이 같은 값을 써야
+   칸이 컬럼 밖으로 넘쳐 아래쪽이 안 눌리는 일이 없다(실제로 16px 이 죽어 있었다). */
+.st-key-calgrid{--cdh:158px;}
 .cd{border:1px solid var(--border);border-radius:11px;background:var(--surface);
-  padding:8px 9px 9px;min-height:122px;transition:box-shadow .12s,border-color .12s;}
+  padding:9px 10px 10px;min-height:var(--cdh);box-sizing:border-box;
+  transition:box-shadow .12s,border-color .12s;}
 .cd.off{background:var(--surface-2);border-color:transparent;}
 .cd.empty{background:#fcfcfe;}
 .cd.today{border-color:#c7d2fe;box-shadow:0 0 0 1px #c7d2fe inset;}
 .cd.sel{border-color:var(--brand);background:var(--brand-soft);
   box-shadow:0 2px 10px rgba(79,70,229,.16);}
-.cd-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;
-  min-height:20px;}
-.cd-n{font-size:13px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;
-  line-height:20px;}
+.cd-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;
+  min-height:22px;}
+.cd-n{font-size:14.5px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;
+  line-height:22px;}
 .cd-n.sat{color:#3b82f6;} .cd-n.sun{color:#e11d48;} .cd-n.dim{color:#c9cfd9;}
-.cd-n.td{background:var(--brand);color:#fff;border-radius:7px;padding:0 7px;
-  min-width:20px;text-align:center;display:inline-block;}
-.cd-c{font-size:10.5px;font-weight:800;color:var(--brand);background:var(--brand-soft);
-  border-radius:6px;padding:2px 6px;line-height:1.25;}
+.cd-n.td{background:var(--brand);color:#fff;border-radius:7px;padding:0 8px;
+  min-width:22px;text-align:center;display:inline-block;}
+.cd-c{font-size:11px;font-weight:800;color:var(--brand);background:var(--brand-soft);
+  border-radius:6px;padding:2px 7px;line-height:1.25;}
 .cd.sel .cd-c{background:var(--brand);color:#fff;}
-.cc{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2);
-  line-height:1.62;font-weight:600;}
-.cc b{width:3px;height:11px;border-radius:2px;flex:0 0 3px;display:inline-block;}
+.cc{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-2);
+  line-height:1.72;font-weight:600;}
+.cc b{width:3px;height:12px;border-radius:2px;flex:0 0 3px;display:inline-block;}
 .cc span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.cd-more{font-size:10.5px;font-weight:800;color:var(--brand);margin-top:3px;
+.cd-more{font-size:11.5px;font-weight:800;color:var(--brand);margin-top:4px;
   padding-left:9px;}
 /* 칸 전체를 누를 수 있게 — 보이지 않는 버튼을 칸 위에 겹친다.
    CSS 가 안 먹어도 버튼은 남으니 기능이 죽지는 않는다(모양만 투박해진다). */
-.st-key-calgrid [data-testid="stColumn"]{position:relative;}
+.st-key-calgrid [data-testid="stColumn"]{position:relative;min-height:var(--cdh);}
 .st-key-calgrid [data-testid="stColumn"]>div{gap:0 !important;}
-.st-key-calgrid div[class*="st-key-cd_"]{position:absolute;inset:0;z-index:5;}
+.st-key-calgrid div[class*="st-key-cd_"]{position:absolute;left:0;right:0;top:0;
+  height:var(--cdh);z-index:5;}
 /* ★버튼과 래퍼 사이에 div 가 4겹(툴팁 래퍼 포함) 끼어 있다. 하나라도 높이가
    안 늘어나면 버튼이 26px 로 쪼그라들어 칸의 위쪽만 눌린다 — 전부 100% 로 편다. */
 .st-key-calgrid div[class*="st-key-cd_"] div{height:100% !important;}
@@ -144,7 +149,7 @@ def _cell_html(d: date, g, today: date, in_month: bool, selected: bool,
 
 
 def render_month(df: pd.DataFrame, y: int, m: int, today: date,
-                 sel_key: str = "ipcal_day", per_cell: int = 3) -> date | None:
+                 sel_key: str = "ipcal_day", per_cell: int = 4) -> date | None:
     """월간 격자를 그리고 **선택된 날짜**를 돌려준다. df 는 필터가 끝난 상태로 넘긴다.
 
     ★HTML 표 대신 컬럼 격자로 그린다. 표는 예쁘지만 칸을 누를 수가 없어서
