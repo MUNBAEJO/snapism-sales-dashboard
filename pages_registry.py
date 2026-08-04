@@ -14,6 +14,7 @@ PAGES = [
     ("snapism",    "views/0_📊_스내피즘.py",                 "스내피즘",          "📊", "snapism",     True),
     ("photoism",   "views/1_📸_포토이즘.py",                 "포토이즘",          "📸", "photoism",    True),
     ("weekly",     "views/4_📋_주간리포트.py",                "주간리포트",        "📋", "weekly",      True),
+    ("ipcal",      "views/9_📅_오픈캘린더.py",                "IP 오픈 캘린더",    "📅", "calendar",    True),
     ("runs",       "views/7_🆚_타이틀_런_비교.py",            "타이틀 런 비교",     "🆚", "runs",        False),
     ("settledoc",  "views/8_🧾_IP정산서.py",                 "IP정산서",         "🧾", "settlement-doc", False),
     # ↓ settledoc 으로 대체 예정. 2026-06 정산을 새 페이지로 끝내고 숫자를 대조한 뒤 제거한다.

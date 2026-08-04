@@ -3,6 +3,7 @@ Jira CANDIP에서 IP별 오픈일(시작 날짜)·종료일(duedate) 수집
 WBS 필드의 타이틀명을 키로 {startdate, duedate, ticket_key, brand, status} 매핑
 """
 import json
+import os
 import re
 import base64
 import urllib.request
@@ -235,6 +236,108 @@ def fetch_ip_dates(brand: str = "all", force_refresh: bool = False) -> dict:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
     return mapping
+
+
+def _brand_jql(brand: str) -> str:
+    """브랜드 조건 JQL. fetch_ip_dates 안에도 같은 문자열이 인라인으로 있다 —
+    거긴 정산이 걸린 경로라 일부러 안 건드렸다. **한쪽을 고치면 다른 쪽도 고칠 것.**"""
+    if brand == "snapism":
+        return '"브랜드[select list (multiple choices)]" IN (Snapism, "사용 X (구 \'Sticker\')")'
+    if brand == "photoism":
+        return '"브랜드[select list (multiple choices)]" IN (Photoism, "Photoism Colored")'
+    return ('"브랜드[select list (multiple choices)]" IN '
+            '(Snapism, "사용 X (구 \'Sticker\')", Photoism, "Photoism Colored")')
+
+
+def fetch_ip_schedule(brand: str = "all", force_refresh: bool = False) -> list:
+    """오픈 캘린더용 — **티켓 1건당 1개** 를 리스트로 돌려준다.
+
+    ★fetch_ip_dates() 와 왜 따로 두나:
+      저건 '타이틀명 → 항목' 딕셔너리다. 매출 데이터의 타이틀과 이름을 맞춰
+      요율·기간을 찾는 게 목적이라 그 모양이 맞다. 하지만 캘린더에는 안 맞는다.
+      - WBS 가 빈 티켓은 **부모(=계약) 제목을 키로** 쓴다. 그래서 '1차 계약_투어스'
+        아래 상품이 3개면 셋이 같은 키로 겹쳐 하나만 남는다 — 달력에서 2건이 증발한다.
+      - 부모 제목은 계약 이름이지 상품 이름이 아니다. 달력에 '1차 계약_투어스'라고
+        찍히면 무슨 상품이 여는지 알 수 없다(실제 상품명은 summary 쪽에 있다).
+      리스트로 주면 겹칠 일이 없고, 이름도 티켓별로 제대로 고를 수 있다.
+
+    각 항목: {ticket_key, issuetype, summary, parent, wbs_titles, startdate, duedate,
+              brand, status}
+    """
+    cache_key = f"sched_v1_{brand}"
+
+    def _cached(max_age_h=None):
+        if not CACHE_FILE.exists():
+            return None
+        try:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                e = json.load(f).get(cache_key)
+            if not e:
+                return None
+            if max_age_h is not None:
+                age_h = (datetime.now()
+                         - datetime.fromisoformat(e["cached_at"])).total_seconds() / 3600
+                if age_h >= max_age_h:
+                    return None
+            return e["data"]
+        except Exception:
+            return None
+
+    if not force_refresh:
+        fresh = _cached(CACHE_TTL_HOURS)
+        if fresh is not None:
+            return fresh
+
+    cfg = _load_cfg()
+    jql = (
+        f'project = {cfg["project_key"]} '
+        f'AND ((issuetype = Sub-task AND summary ~ "프로그램 및 검수") OR issuetype = Task) '
+        f'AND {_brand_jql(brand)} '
+        f'AND status IN ({_STATUS_JQL}) '
+        f'ORDER BY duedate DESC'
+    )
+    try:
+        issues = _search_all(cfg, jql, fields=[
+            cfg["wbs_field"], "summary", "parent", "duedate",
+            "customfield_10390", "status", "issuetype", _STARTDATE_FIELD,
+        ])
+    except Exception as e:
+        stale = _cached(None)
+        if stale is not None:
+            return stale
+        raise RuntimeError(f"Jira 조회 실패: {e}")
+
+    out = []
+    for issue in issues:
+        f = issue["fields"]
+        brand_val = f.get("customfield_10390") or []
+        out.append({
+            "ticket_key": issue["key"],
+            "issuetype":  (f.get("issuetype") or {}).get("name", ""),
+            "summary":    f.get("summary") or "",
+            "parent":     (f.get("parent") or {}).get("fields", {}).get("summary", ""),
+            "wbs_titles": _parse_wbs_titles(_extract_wbs_text(f.get(cfg["wbs_field"]))),
+            "startdate":  f.get(_STARTDATE_FIELD),
+            "duedate":    f.get("duedate"),
+            "brand":      ", ".join(b.get("value", "") for b in brand_val)
+                          if isinstance(brand_val, list) else "",
+            "status":     (f.get("status") or {}).get("name", ""),
+        })
+
+    CACHE_FILE.parent.mkdir(exist_ok=True)
+    try:
+        with open(CACHE_FILE, encoding="utf-8") as f:
+            cache = json.load(f)
+        if not isinstance(cache, dict):
+            cache = {}
+    except Exception:
+        cache = {}
+    cache[cache_key] = {"cached_at": datetime.now().isoformat(), "data": out}
+    tmp = CACHE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, CACHE_FILE)
+
+    return out
 
 
 if __name__ == "__main__":
