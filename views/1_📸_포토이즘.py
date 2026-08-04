@@ -1651,7 +1651,7 @@ with tab_home:
 
 # ════════════ 탭 2: 구좌타입 분석 (IP구분 = 구좌 세분) ════════════
 with tab_ip:
-    with card("🎭 IP 구분 (비중 · 매출) <span class='muted'>(아티스트·캐릭터·PICK·오리지널)</span>"):
+    with card("🎭 IP 구분 (비중 · 매출) <span class='muted'>(아티스트·캐릭터·PICK·오리지널·렌탈)</span>"):
         if not gub.empty:
             _g1, _g2 = st.columns([5, 5])
             gg = gub.sort_values("매출", ascending=False)
@@ -1669,8 +1669,13 @@ with tab_ip:
 
     # 포3.3/포4: 하위탭 = 전체 + 아티스트/캐릭터/PICK(타이틀 단위, 판매기간 지라) + 오리지널 2종(프레임 단위).
     #   오리지널은 본 집계에 타이틀이 없어(그룹 폭증 방지) 경량 오리지널 집계(load_orig)에서 프레임별로 뽑는다.
-    _detail_gubuns = [g for g in present if g in ("아티스트", "캐릭터", "PICK")]
-    _orig_gubuns = [g for g in present if g in ("오리지널(포토이즘)", "오리지널(기본)")]
+    # ★화이트리스트로 두지 않는다. 예전엔 ("아티스트","캐릭터","PICK") 를 나열했는데,
+    #   IP_GUBUN_SHOWN 에 렌탈을 되살렸을 때 여기만 그대로라 렌탈 탭이 통째로 안 생겼다.
+    #   오리지널만 프레임 단위로 따로 빼고, **나머지는 전부 타이틀 단위**로 돈다.
+    #   (렌탈도 타이틀이 99.99% 채워져 있어 아티스트·캐릭터와 같은 방식이면 된다)
+    _ORIG_GUBUNS = ("오리지널(포토이즘)", "오리지널(기본)")
+    _orig_gubuns = [g for g in present if g in _ORIG_GUBUNS]
+    _detail_gubuns = [g for g in present if g not in _ORIG_GUBUNS]
     if _detail_gubuns or _orig_gubuns:
         with card("🎬 구좌별 상세 <span class='muted'>(전체·구좌별 → 타이틀/프레임별 매출)</span>"):
             _gall = ["전체"] + _detail_gubuns + _orig_gubuns
@@ -1715,7 +1720,8 @@ with tab_ip:
                             rank_table(_t, "타이틀", collapse_after=10, status_map=_tstat or None)
         helpbox("""
 **구좌별 상세**
-- **전체 / 아티스트 / 캐릭터 / PICK** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**.
+- **전체 / 아티스트 / 캐릭터 / PICK / 렌탈** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**.
+  - 오리지널을 뺀 나머지 구분은 자동으로 탭이 생겨요 — `IP_GUBUN_SHOWN` 만 고치면 돼요.
 - **오리지널(포토이즘) / 오리지널(기본)** = `프레임`별 매출액·건수 순위(경량 집계). 오리지널은 타이틀이 아니라 프레임 단위라 따로 봐요.
   - ⚠️ 오리지널 탭은 **매장 필터가 적용되지 않아요**(날짜·국가만). 다른 탭은 필터바 전체 반영.
 - '전체' 탭은 타이틀이 있는 구분(아티스트·캐릭터·PICK)만 합쳐요(오리지널은 프레임이라 제외).
