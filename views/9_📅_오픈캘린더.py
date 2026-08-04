@@ -102,13 +102,6 @@ ui_theme.kpis([
 # ── 달력 ──
 ui_theme.sec(2, "달력", "날짜를 누르면 그날 오픈하는 IP 를 전부 펼쳐 보여드려요")
 
-# 선택한 날 상세는 **달력 위**에 그린다 — 아래에 두면 볼 때마다 스크롤을 내려야 한다.
-# 칸 클릭은 on_click 콜백이라 rerun 전에 session_state 가 이미 갱신돼 있다.
-# 그래서 달력을 그리기 전에 읽어도 방금 누른 날짜가 그대로 나온다.
-_picked = st.session_state.get(SEL)
-if _picked is not None:
-    ipu.render_day_detail(f, _picked, sel_key=SEL)
-
 with ui_theme.card():
     # 달 이동 · 제목 · 범례를 한 줄로 — 버튼만 따로 떠 있으면 급조한 화면처럼 보인다.
     nav = st.columns([0.7, 0.7, 0.7, 8], vertical_alignment="center")
@@ -121,6 +114,12 @@ with ui_theme.card():
         ipu.header(y, m, len(month_df), brands_all)
     ipu.render_month(month_df, y, m, TODAY, sel_key=SEL)
 
+# 선택한 날 상세는 **달력 바로 아래**. 위로 올려 봤더니 달력이 통째로 밀려 내려가
+# 방금 누른 칸이 화면 밖으로 나갔다(사용자 요청으로 되돌림).
+_picked = st.session_state.get(SEL)
+if _picked is not None:
+    ipu.render_day_detail(f, _picked, sel_key=SEL)
+
 # ── 목록 ──
 # 달력이 주인공이라 목록은 접어 둔다 — 펼쳐 두면 스크롤이 길어져 달력이 밀린다.
 def _table(d: pd.DataFrame):
@@ -130,8 +129,14 @@ def _table(d: pd.DataFrame):
     # 계약(상위)은 화면에서 빼고 CSV 에만 남긴다 — 서브태스크 쪽은 비어 있어 열이 휑하다.
     v = d[["오픈일", "브랜드", "IP", "상태", "티켓"]].copy()
     v.insert(1, "요일", [ipu._WD[x.weekday()] for x in v["오픈일"]])
+    v.insert(5, "오픈 국가", [ipc.country_label(c) for c in d["국가"]])
+    v.insert(5, "국가수", d["국가수"].values)
     st.dataframe(v, use_container_width=True, hide_index=True, height=460,
-                 column_config={"IP": st.column_config.TextColumn(width="large")})
+                 column_config={
+                     "IP": st.column_config.TextColumn(width="large"),
+                     "국가수": st.column_config.NumberColumn("국가", width="small",
+                                                          help="이 상품을 여는 나라 수"),
+                     "오픈 국가": st.column_config.TextColumn(width="medium")})
 
 
 with st.expander(f"📋 목록으로 보기 — {m}월 {len(month_df):,}건 · 필터가 그대로 적용돼요"):

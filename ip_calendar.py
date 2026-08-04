@@ -85,6 +85,36 @@ def _brand_of(raw: str) -> str:
     return "기타"
 
 
+def _country_names() -> dict:
+    """국가코드(대문자) → 한글 이름. config 의 포토이즘 국가 목록을 그대로 쓴다.
+    읽기만 하고 자격증명은 건드리지 않는다. 없으면 코드를 그대로 보여준다."""
+    try:
+        import json
+        from pathlib import Path
+        cfg = json.loads((Path(__file__).parent / "config.json").read_text(encoding="utf-8"))
+        return {str(k).upper(): (v.get("name") or str(k).upper())
+                for k, v in (cfg.get("photoism", {}).get("countries") or {}).items()}
+    except Exception:
+        return {}
+
+
+CC_NAME = _country_names()
+# Jira Country 선택지가 30개국이라, 그만큼 다 고른 건 사실상 '전 국가'다.
+ALL_COUNTRY_N = 28
+
+
+def country_label(codes, limit: int = 6) -> str:
+    """표에 넣을 짧은 국가 문구. '전 국가(30)' 또는 '한국 · 일본 · 베트남 외 3'."""
+    codes = list(codes or [])
+    if not codes:
+        return ""
+    if len(codes) >= ALL_COUNTRY_N:
+        return f"전 국가({len(codes)})"
+    names = [CC_NAME.get(c, c) for c in codes]
+    head = " · ".join(names[:limit])
+    return head if len(names) <= limit else f"{head} 외 {len(names) - limit}"
+
+
 def _to_date(v):
     if not v:
         return None
@@ -102,7 +132,7 @@ def load_openings(brand: str = "all", force_refresh: bool = False) -> pd.DataFra
 
     컬럼: 오픈일 · IP · 브랜드 · 상태 · 티켓 · 종료일 · 계약
     """
-    cols = ["오픈일", "IP", "브랜드", "상태", "티켓", "종료일", "계약"]
+    cols = ["오픈일", "IP", "브랜드", "상태", "티켓", "종료일", "계약", "국가", "국가수"]
     try:
         items = jira_ip_dates.fetch_ip_schedule(brand=brand, force_refresh=force_refresh)
     except Exception:
@@ -127,6 +157,9 @@ def load_openings(brand: str = "all", force_refresh: bool = False) -> pd.DataFra
             "티켓":   it.get("ticket_key") or "",
             "종료일": _to_date(it.get("duedate")),
             "계약":   contract,
+            # 오픈 국가(Jira Country 필드). 6,312건 중 98.6% 가 채워져 있다.
+            "국가":   list(it.get("countries") or []),
+            "국가수": len(it.get("countries") or []),
         })
 
     df = pd.DataFrame(rows, columns=cols)

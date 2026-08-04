@@ -76,6 +76,16 @@ _CSS = """
 .cc span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .cd-more{font-size:11.5px;font-weight:800;color:var(--brand);margin-top:4px;
   padding-left:9px;}
+/* 상세 패널 위 '오픈 국가' 칩 줄 */
+.ccrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:2px 0 12px;}
+.cclab{font-size:11.5px;font-weight:800;color:var(--text-3);margin-right:2px;
+  white-space:nowrap;}
+.ccp{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;
+  color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);
+  border-radius:999px;padding:3px 9px 3px 5px;white-space:nowrap;}
+.ccp img{height:11px;border:1px solid #eceff4;border-radius:2px;display:block;}
+.ccp b{font-weight:800;color:var(--brand);}
+.ccp.more{color:var(--text-3);background:transparent;border-style:dashed;}
 /* 칸 전체를 누를 수 있게 — 보이지 않는 버튼을 칸 위에 겹친다.
    CSS 가 안 먹어도 버튼은 남으니 기능이 죽지는 않는다(모양만 투박해진다). */
 .st-key-calgrid [data-testid="stColumn"]{position:relative;min-height:var(--cdh);}
@@ -191,6 +201,32 @@ def render_month(df: pd.DataFrame, y: int, m: int, today: date,
     return st.session_state.get(sel_key)
 
 
+_FLAG = "https://flagcdn.com/w40/{cc}.png"      # 대시보드 다른 화면과 같은 국기 소스
+
+
+def _country_strip(g: pd.DataFrame, top: int = 14) -> None:
+    """그날 오픈이 어느 나라에 걸리는지 한 줄로. 국기 + 이름 + 건수.
+
+    표 안에는 국기 이미지를 못 넣어서(st.dataframe 은 HTML 을 안 그린다) 표 위에 따로 둔다.
+    '한국 12건'처럼 나라별 건수를 세 놔야 '30개국 오픈'이 몇 건짜리인지 감이 온다.
+    """
+    cnt = {}
+    for codes in g["국가"]:
+        for c in (codes or []):
+            cnt[c] = cnt.get(c, 0) + 1
+    if not cnt:
+        return
+    items = sorted(cnt.items(), key=lambda x: (-x[1], x[0]))
+    chips = "".join(
+        f'<span class="ccp"><img src="{_FLAG.format(cc=c.lower())}" alt="">'
+        f'{escape(ipc.CC_NAME.get(c, c))}<b>{n}</b></span>'
+        for c, n in items[:top])
+    more = (f'<span class="ccp more">외 {len(items) - top}개국</span>'
+            if len(items) > top else "")
+    st.markdown(f'<div class="ccrow"><span class="cclab">오픈 국가 '
+                f'{len(items)}개국</span>{chips}{more}</div>', unsafe_allow_html=True)
+
+
 def render_day_detail(df: pd.DataFrame, d: date, sel_key: str = "ipcal_day") -> None:
     """선택한 날짜의 전체 목록. 칸에서 접힌 '+N건 더'를 여기서 전부 편다."""
     g = ipc.in_range(df, d, d)
@@ -206,9 +242,16 @@ def render_day_detail(df: pd.DataFrame, d: date, sel_key: str = "ipcal_day") -> 
         if g.empty:
             st.info("이 날짜에는 오픈 예정이 없어요.")
             return
+        _country_strip(g)
         # 종료일은 뺀다 — 오픈 캘린더에서 볼 건 '언제 여는가'지 끝나는 날이 아니다.
         # 계약(상위)도 뺀다 — 서브태스크 쪽은 값이 없어 열 대부분이 비어 보인다(CSV 에는 남긴다).
-        v = g[["브랜드", "IP", "상태", "티켓"]].reset_index(drop=True)
-        st.dataframe(v, use_container_width=True, hide_index=True,
+        v = g[["브랜드", "IP", "상태", "티켓"]].copy()
+        v.insert(3, "오픈 국가", [ipc.country_label(c) for c in g["국가"]])
+        v.insert(3, "국가수", g["국가수"].values)
+        st.dataframe(v.reset_index(drop=True), use_container_width=True, hide_index=True,
                      height=min(430, 44 + 35 * len(v)),
-                     column_config={"IP": st.column_config.TextColumn(width="large")})
+                     column_config={
+                         "IP": st.column_config.TextColumn(width="large"),
+                         "국가수": st.column_config.NumberColumn("국가", width="small",
+                                                              help="이 상품을 여는 나라 수"),
+                         "오픈 국가": st.column_config.TextColumn(width="medium")})

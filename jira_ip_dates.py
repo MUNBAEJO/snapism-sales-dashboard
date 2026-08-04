@@ -30,6 +30,27 @@ _STATUS_JQL = ", ".join(f'"{s}"' for s in _STATUSES)
 # Jira '시작 날짜' 커스텀 필드. (Target start=10022, Actual start=10008 은 미사용)
 _STARTDATE_FIELD = "customfield_10015"
 
+# Jira 'Country' 필드 — 그 상품을 어느 나라에 여는지. ISO 2자리 코드 다중 선택으로 온다.
+#   예: ['KR','JP','VN','ID','US','GU','TW','TH','HK','CN','MY']
+# ※이름이 비슷한 다른 필드가 있으니 헷갈리지 말 것 —
+#   customfield_10507 'GSCM_수입 국가', customfield_10840 '키오스크 노출 프레임명(국가별 기입)'.
+_COUNTRY_FIELD = "customfield_10379"
+
+
+def _country_codes(v) -> list:
+    """Country 필드 → ['KR','JP',...]. 다중선택이라 [{value:'KR'}, ...] 형태로 온다."""
+    if not v:
+        return []
+    if isinstance(v, str):
+        return [v.strip().upper()] if v.strip() else []
+    out = []
+    for x in v if isinstance(v, list) else [v]:
+        c = x.get("value") if isinstance(x, dict) else x
+        c = str(c or "").strip().upper()
+        if c:
+            out.append(c)
+    return out
+
 # [KR], [GLO], [Global], [JP], [CN] 등 지역 태그 제거
 _TAG_RE   = re.compile(r'^\s*\[[A-Za-z가-힣]{2,10}\]\s*')
 # WBS 항목 구분: 2개 이상 공백
@@ -283,9 +304,10 @@ def fetch_ip_schedule(brand: str = "all", force_refresh: bool = False) -> list:
       리스트로 주면 겹칠 일이 없고, 이름도 티켓별로 제대로 고를 수 있다.
 
     각 항목: {ticket_key, issuetype, summary, parent, wbs_titles, startdate, duedate,
-              brand, status}
+              brand, status, countries}
     """
-    cache_key = f"sched_v1_{brand}"
+    # v2: countries(오픈 국가) 추가 — 옛 캐시는 이 키가 없어 자동 재조회된다.
+    cache_key = f"sched_v2_{brand}"
 
     def _cached(max_age_h=None):
         if not CACHE_FILE.exists():
@@ -321,6 +343,7 @@ def fetch_ip_schedule(brand: str = "all", force_refresh: bool = False) -> list:
         issues = _search_all(cfg, jql, fields=[
             cfg["wbs_field"], "summary", "parent", "duedate",
             "customfield_10390", "status", "issuetype", _STARTDATE_FIELD,
+            _COUNTRY_FIELD,
         ])
     except Exception as e:
         stale = _cached(None)
@@ -333,6 +356,7 @@ def fetch_ip_schedule(brand: str = "all", force_refresh: bool = False) -> list:
         f = issue["fields"]
         brand_val = f.get("customfield_10390") or []
         out.append({
+            "countries": _country_codes(f.get(_COUNTRY_FIELD)),
             "ticket_key": issue["key"],
             "issuetype":  (f.get("issuetype") or {}).get("name", ""),
             "summary":    f.get("summary") or "",
