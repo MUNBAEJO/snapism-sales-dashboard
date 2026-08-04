@@ -1130,7 +1130,10 @@ with tab_runs:
             '예: <b>25년 QWER vs 26년 QWER</b>. 런마다 기간이 달라 <b>일평균</b> 기준으로 봐요.<br>'
             '연산이 무거워 대시보드가 느려지지 않도록 <b>전용 페이지</b>로 열려요.</div>',
             unsafe_allow_html=True)
-        st.page_link("views/7_🆚_타이틀_런_비교.py", label="런 비교 페이지 열기", icon="🆚")
+        # ★st.page_link 를 직접 부르면 안 된다 — runs 권한이 없는 계정에서
+        #   StreamlitPageNotFoundError 로 이 화면 전체가 죽는다(auth.safe_page_link 주석 참고).
+        auth.safe_page_link("runs", "런 비교 페이지 열기", icon="🆚",
+                            denied="이 기능은 권한이 필요해요. 필요하면 관리자에게 요청해 주세요.")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
 with tab_home:

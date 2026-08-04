@@ -754,3 +754,32 @@ def set_role(email: str, role: str) -> None:
             u["approved"][e] = role
 
     _mutate_users(_fn)
+
+
+def safe_page_link(page_key: str, label: str, icon: str | None = None,
+                   denied: str | None = None) -> bool:
+    """권한이 있을 때만 다른 페이지로 가는 링크를 건다. 링크를 그렸으면 True.
+
+    ★★2026-08-04 실사용자 장애. `st.page_link` 는 **st.navigation 에 올라간
+      페이지만** 가리킬 수 있다. 권한이 없어 목록에서 빠진 페이지를 가리키면
+      StreamlitPageNotFoundError 가 나면서 **그 페이지 전체가 죽는다.**
+      스내피즘·포토이즘 본문에 '런 비교 페이지 열기' 링크가 박혀 있었는데,
+      runs 권한이 없는 계정(기본값이 꺼짐)은 매출 화면이 통째로 안 떴다.
+      소유자는 전 페이지가 보이니 **개발 중엔 절대 재현되지 않는다.**
+
+    경로는 pages_registry 에서 가져온다 — 파일명을 바꿔도 여기만 맞으면 된다.
+    """
+    email = getattr(getattr(st, "user", None), "email", None)
+    if not can_view_page(email, page_key):
+        if denied:
+            st.caption(denied)
+        return False
+    file = next((p[1] for p in pages_registry.PAGES if p[0] == page_key), None)
+    if not file:
+        return False
+    try:
+        st.page_link(file, label=label, icon=icon)
+        return True
+    except Exception:
+        # 멀티페이지 컨텍스트가 없는 경우(미리보기 하네스 등) — 화면을 죽이진 않는다.
+        return False
