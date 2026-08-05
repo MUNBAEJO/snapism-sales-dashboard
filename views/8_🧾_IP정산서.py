@@ -259,6 +259,11 @@ def make_panel():
         tot_base += base
         tot_a += round(base * ra) if ra else 0
         tot_m += round(base * rm) if rm else 0
+        # ★여기서 쓰는 '수량'은 문서(settlement_pdf:189)가 쓰는 값과 **같은 것**이다.
+        #   `floor(현지 ÷ 평균단가)` 라 한 거래에 두 장이면 2로 세고, 그래서
+        #   country_detail 의 `건수`(거래 행 수)보다 크다(대한축구협회 3,709 vs 3,654).
+        #   2026-07-31 '건수로 통일'은 **라벨**을 바꾼 것이지 값을 바꾼 게 아니다.
+        #   화면만 건수로 바꾸면 문서와 어긋나므로 건드리지 말 것.
         qty = "건수"          # 정산서와 같은 표기로 통일(브랜드 구분 없음)
         with st.expander(f"{sm.BRAND_LABEL[b]} · {_fmt(base)}원 · "
                          f"{qty} {_fmt(d['수량'].sum())} · "
@@ -319,6 +324,13 @@ def make_panel():
         stop.append(f"환율 없는 통화({', '.join(miss)})")
     if not any(v for pair in rs.values() for v in pair):
         stop.append("요율 없음")
+    # ★★화면 입력만으로는 문서가 안 나온다 — build_context 는 **저장된** 요율을 본다.
+    #   전엔 이걸 안 막아서 금액은 보이는데 PDF 만 0부인 상태가 됐다(대한축구협회 v1~v4).
+    else:
+        _un = [sm.BRAND_LABEL[b] for b, (tk, ti) in picks.items()
+               if tk and ti and not (lambda s: s.get("agency") or s.get("mgmt"))(sc.get_rs(b, tk))]
+        if _un:
+            stop.append(f"요율 저장 필요({' · '.join(_un)}) — 위 💾 저장을 눌러 주세요")
     if not ipn:
         stop.append("IP명 미입력")
     if nextv > 1 and not reason.strip():
@@ -334,10 +346,10 @@ def make_panel():
             ctx = sc.build_context({b: t for b, (t, _) in picks.items() if t},
                                    S, E, ipn, RATES, EFF or E,
                                    date.today().isoformat(), SRC)
-            # ★스냅샷을 먼저 남긴다. 매출은 매일 갱신되고 취소도 뒤늦게 붙어서,
-            #   얼려두지 않으면 보낸 문서를 다시 뽑을 수 없다.
-            rec = sc.record_issue(ctx, _email, reason.strip())
-            ctx["version"], ctx["reason"] = rec["version"], reason.strip()
+            # ★★먼저 만들어 보고, 성공했을 때만 발행 기록을 남긴다 (2026-08-05).
+            #   전엔 record_issue 가 앞에 있어서, 한 부도 못 만들어도 버전이 올라갔다.
+            #   실제로 대한축구협회가 v1~v4 까지 쌓이는 동안 PDF 는 0부였다.
+            ctx["version"], ctx["reason"] = nextv, reason.strip()
             made = {}
             for kind, lab in (("agency", "소속사"), ("mgmt", "대행사")):
                 fld = "agency" if kind == "agency" else "mgmt"
@@ -345,6 +357,22 @@ def make_panel():
                     continue        # 요율 없는 수취처는 문서를 만들지 않는다
                 made[lab] = sp.render_pdf(sp.build_html(ctx, kind),
                                           f"IP 정산서({lab}) · {ipn} · {S}~{E}")
+        if not made:
+            # ★조용히 0부로 끝나면 '발행됐는데 문서가 없다'가 된다. 원인을 짚어 준다.
+            _saved = {b: sc.get_rs(b, t) for b, (t, _) in picks.items() if t}
+            _none = [sm.BRAND_LABEL[b] for b, v in _saved.items()
+                     if not (v.get("agency") or v.get("mgmt"))]
+            ui_theme.nbox("err",
+                          "정산서를 한 부도 만들지 못했어요 — <b>저장된 요율이 없어요</b>"
+                          + (f" ({' · '.join(_none)})" if _none else "")
+                          + "<div class='sub'>위 <b>② 요율 확인</b>에서 %를 넣고 "
+                            "<b>💾 저장</b>을 누른 뒤 다시 만들어 주세요. 화면에 입력만 "
+                            "하면 금액은 보이지만 문서에는 안 들어가요.</div>")
+            st.stop()
+        with st.spinner("발행 기록을 남기는 중이에요…"):
+            # 스냅샷을 남긴다. 매출은 매일 갱신되고 취소도 뒤늦게 붙어서,
+            # 얼려두지 않으면 보낸 문서를 다시 뽑을 수 없다.
+            rec = sc.record_issue(ctx, _email, reason.strip())
             # ★세션에만 두면 새로고침 한 번에 사라진다. 대외로 나간 문서라
             #   나중에 원본 그대로 다시 꺼낼 수 있어야 한다(발행 이력에서 재다운로드).
             sc.save_issued_pdfs(rec["key"], rec["version"], made)

@@ -100,6 +100,7 @@ html, body{ letter-spacing:-0.02em; }
   font-size:13px; }
 .nbox.ok{ background:#eefbf3; border-color:#b6e6c8; color:#166534; }
 .nbox.warn{ background:#fff7ed; border-color:#fcd9a8; color:#92400e; }
+.nbox.err{ background:#fef2f2; border-color:#fecaca; color:#b91c1c; }
 .nbox .big{ font-size:22px; font-weight:800; letter-spacing:-.02em; }
 .nbox .sub{ color:inherit; opacity:.75; font-size:12px; }
 
