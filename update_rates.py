@@ -223,6 +223,22 @@ def _yahoo_close(symbol: str, day: str | None) -> float | None:
         return None
 
 
+def _sig(v: float, digits: int = 8) -> float:
+    """유효숫자 기준 반올림.
+
+    ★왜 소수점 4자리 고정을 쓰면 안 되나(2026-08-05): 라오스 킵은 1원의 0.06 수준이라
+      0.0001 눈금이 **값의 0.16%** 다. 실제로 0.0638502 를 0.0639 로 올리는 바람에
+      980,000 LAK 이 62,573원 대신 62,622원으로 나와 정산서가 49원 과대계상됐다
+      (사용자 시트와 대조하다 발견). USD(1,441)는 같은 4자리가 0.000007% 라 무해하니,
+      자릿수가 아니라 **유효숫자**로 잡아야 통화 크기와 무관하게 일정해진다.
+    ※ SMBS 고시분은 원래 소수 둘째 자리까지만 주므로 4자리 반올림이어도 손실이 없다.
+      나눗셈으로 만들어내는 이 크로스레이트만 정밀도가 깎였다.
+    """
+    if not v:
+        return 0.0
+    return float(f"%.{digits}g" % v)
+
+
 def fetch_yahoo_cross(usd_krw: float, day: str | None = None) -> dict:
     """SMBS 미고시 통화(LAK/PEN)를 야후 USD 크로스레이트로 보강.
     Yahoo '<CUR>=X' = 1 USD 당 해당 통화 수량 → 1 통화 = (1/price) USD → × USD_KRW.
@@ -233,7 +249,7 @@ def fetch_yahoo_cross(usd_krw: float, day: str | None = None) -> dict:
     for cur, sym in {"LAK": "LAK=X", "PEN": "PEN=X"}.items():
         price = _yahoo_close(sym, day)
         if price and price > 0:
-            out[cur] = round((1.0 / price) * usd_krw, 4)
+            out[cur] = _sig(( 1.0 / price) * usd_krw)
     return out
 
 
