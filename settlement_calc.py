@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -839,6 +840,46 @@ def record_issue(ctx: dict, by: str, reason: str = "") -> dict:
 
     _issue_store.mutate(_fn)
     return {"version": box.get("version", 1), "key": key}
+
+
+# ── 발행된 PDF 보관 ────────────────────────────────────────────────────────
+# ★왜 필요한가(2026-08-05 사용자 제보): 만든 PDF 는 st.session_state 에만 있었다.
+#   새로고침·세션만료·서버재시작이면 그대로 사라져서, **발행은 됐는데 문서를 다시
+#   받을 방법이 없었다.** 스냅샷(JSON)만 남기고 결과물은 안 남긴 셈이다.
+#   대외로 나간 문서라 원본 그대로 다시 꺼낼 수 있어야 한다 → 파일로 보관한다.
+#   reports/ 는 .gitignore 에 있어 커밋되지 않는다.
+ISSUED_DIR = BASE_DIR / "reports" / "issued"
+_SAFE_RE = re.compile(r'[\\/:*?"<>|\s]+')
+
+
+def _issue_stem(key: str, version: int) -> str:
+    """'IP|start|end' + 버전 → 파일명 앞부분. 윈도 금지문자를 걷어낸다."""
+    return _SAFE_RE.sub("_", f"{key.replace('|', '_')}_v{int(version)}").strip("_")
+
+
+def save_issued_pdfs(key: str, version: int, pdfs: dict) -> list:
+    """발행 직후 PDF 를 디스크에 남긴다. 실패해도 발행 자체를 막지 않는다."""
+    out = []
+    try:
+        ISSUED_DIR.mkdir(parents=True, exist_ok=True)
+        for lab, data in (pdfs or {}).items():
+            p = ISSUED_DIR / f"{_issue_stem(key, version)}__{_SAFE_RE.sub('_', lab)}.pdf"
+            p.write_bytes(data)
+            out.append(p)
+    except Exception:
+        pass
+    return out
+
+
+def issued_pdfs(key: str, version: int) -> dict:
+    """보관해 둔 PDF 를 {라벨: bytes} 로. 없으면 빈 딕셔너리."""
+    out = {}
+    try:
+        for p in sorted(ISSUED_DIR.glob(f"{_issue_stem(key, version)}__*.pdf")):
+            out[p.stem.split("__", 1)[-1]] = p.read_bytes()
+    except Exception:
+        pass
+    return out
 
 
 def list_issues(ip: str = "", start: str = "", end: str = "") -> list[dict]:

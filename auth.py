@@ -585,7 +585,9 @@ def log_download(page: str, name: str, rows=None, nbytes=None) -> None:
         email = ""
     tail = f"·{int(rows):,}행" if rows not in (None, "") else ""
     if nbytes:
-        tail += f"·{int(nbytes) // 1024:,}KB"
+        # 1KB 미만이 '0KB' 로 찍히면 안 받은 것처럼 보인다 → 그땐 바이트로.
+        tail += (f"·{int(nbytes) // 1024:,}KB" if nbytes >= 1024
+                 else f"·{int(nbytes):,}B")
     _log_access(email, f"download:{page}:{name}{tail}")
 
 

@@ -345,6 +345,9 @@ def make_panel():
                     continue        # 요율 없는 수취처는 문서를 만들지 않는다
                 made[lab] = sp.render_pdf(sp.build_html(ctx, kind),
                                           f"IP 정산서({lab}) · {ipn} · {S}~{E}")
+            # ★세션에만 두면 새로고침 한 번에 사라진다. 대외로 나간 문서라
+            #   나중에 원본 그대로 다시 꺼낼 수 있어야 한다(발행 이력에서 재다운로드).
+            sc.save_issued_pdfs(rec["key"], rec["version"], made)
             st.session_state["_pdfs"] = made
             st.session_state["_meta"] = {"ip": ipn, "v": rec["version"],
                                          "reason": reason.strip(),
@@ -480,6 +483,27 @@ with t1:
                            "발행자": h["by"], "정정사유": h["reason"] or "—"}
                           for h in hist[:50]],
                          hide_index=True, use_container_width=True)
+            # ★발행분 다시 받기 — 예전엔 만든 그 자리에서 못 받으면 방법이 없었다.
+            #   보관 시작(2026-08-05) 이전 건은 파일이 없어 안 뜬다.
+            _opts = {f'{h["key"].replace("|", " · ")} · v{h["version"]}': h
+                     for h in hist[:50]}
+            _pick = st.selectbox("발행분 다시 받기", list(_opts), key="hist_pick",
+                                 help="발행할 때 만든 PDF 원본이에요. 지금 다시 계산한 게 "
+                                      "아니라 그때 그대로예요.")
+            _h = _opts.get(_pick) or {}
+            _files = sc.issued_pdfs(_h.get("key", ""), _h.get("version", 0)) if _h else {}
+            if _files:
+                _hc = st.columns(len(_files))
+                for _c, (_lab, _data) in zip(_hc, _files.items()):
+                    auth.download_button(
+                        f"⬇️ {_lab}", _data, key=f"hist_dl_{_pick}_{_lab}",
+                        file_name=f'정산서_{_h["key"].split("|")[0]}_'
+                                  f'{_h["key"].split("|")[1][:7]}_{_lab}_v{_h["version"]}.pdf',
+                        mime="application/pdf", use_container_width=True,
+                        page="settledoc", container=_c)
+            else:
+                st.caption("이 건은 보관된 PDF 가 없어요. 보관은 2026-08-05 발행분부터예요 — "
+                           "위에서 같은 조건으로 다시 만들면 정정본이 되니 주의해 주세요.")
     sent = smail.sent_log()
     if sent:
         with st.expander(f"📧 발송 이력 ({len(sent)}건)"):
