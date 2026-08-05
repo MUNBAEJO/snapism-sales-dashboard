@@ -15,6 +15,7 @@ from update_rates import get_rates_for_date, get_effective_date
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
+import auth
 import data_io
 
 BASE_DIR    = Path(__file__).parent.parent
@@ -636,11 +637,12 @@ with st.container(border=True):
             use_container_width=True, height=350,
         )
         csv_out = df_ip[available].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button(
+        auth.download_button(
             f"CSV 다운로드 ({selected_ip})",
             csv_out,
             f"settlement_{selected_ip}.csv",
             "text/csv",
+            page="settlement", rows=len(df_ip),
         )
 
     # ── Jira RS 미등록 프레임 안내 ─────────────────────────────────

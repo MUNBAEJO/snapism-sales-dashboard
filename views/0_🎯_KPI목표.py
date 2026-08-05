@@ -990,10 +990,11 @@ if _is_owner:
         st.rerun()
 
     _template = pd.DataFrame({"연도": [2026]*12, "월": list(range(1, 13)), "매출목표": [0]*12})
-    st.sidebar.download_button(
+    auth.download_button(
         "📥 목표 CSV 템플릿",
         _template.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
         "kpi_targets.csv", "text/csv",
+        page="kpi", rows=len(_template), container=st.sidebar,
     )
 
     # ── 목표 직접 수정 (엑셀 재업로드 없이 인라인 편집) ──

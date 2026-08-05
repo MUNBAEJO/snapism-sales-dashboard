@@ -553,6 +553,11 @@ def _pretty_event(ev: str) -> str:
     if ev.startswith("view:"):
         k = ev.split(":", 1)[1]
         return "👁 열람 → " + pages_registry.PAGE_TITLE.get(k, k)
+    # 데이터 반출은 열람과 성격이 달라 눈에 띄게 둔다.
+    if ev.startswith("download:"):
+        _, _, rest = ev.partition(":")
+        pk, _, what = rest.partition(":")
+        return f"📥 다운로드 [{pages_registry.PAGE_TITLE.get(pk, pk)}] {what}"
     # 정산 매핑은 금액에 직접 영향을 주므로 누가 무엇을 확정했는지 남긴다.
     if ev.startswith("settlemap:"):
         return "🧾 정산 매핑 → " + ev.split(":", 1)[1]
@@ -564,6 +569,48 @@ def _pretty_event(ev: str) -> str:
 def log_event(email: str, event: str) -> None:
     """다른 모듈에서 활동 로그를 남길 때 쓰는 공개 진입점."""
     _log_access(email, event)
+
+
+# ── 다운로드 기록 ──────────────────────────────────────────────────
+# 왜 필요한가(2026-08-05): 외부인은 로그인 게이트에서 막히지만, **승인된 계정이
+# 통째로 받아가는 것**은 아무 흔적이 안 남았다. 화면에 다운로드 버튼이 10개고
+# 그중엔 기간 전체를 내려주는 것도 있는데, 로그에는 login·view 밖에 없었다.
+# 막는 대신 **보이게** 만든다 — 정상 업무 다운로드를 막으면 일이 안 돌아가지만,
+# 기록이 남으면 이상 징후는 사후에라도 잡힌다.
+def log_download(page: str, name: str, rows=None, nbytes=None) -> None:
+    """다운로드 1건 기록. 계정은 현재 세션에서 알아서 읽는다."""
+    try:
+        email = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
+    except Exception:
+        email = ""
+    tail = f"·{int(rows):,}행" if rows not in (None, "") else ""
+    if nbytes:
+        tail += f"·{int(nbytes) // 1024:,}KB"
+    _log_access(email, f"download:{page}:{name}{tail}")
+
+
+def download_button(label, data, file_name=None, mime=None, *,
+                    page: str = "", rows=None, container=None, **kw):
+    """기록을 남기는 st.download_button. 인자는 그대로 통과시킨다.
+
+    container 로 st.sidebar 나 컬럼을 넘길 수 있다 — 안 넘기면 현재 위치에 그린다.
+    ★on_click 을 이미 넘긴 호출부가 있으면 덮지 않고 **둘 다** 부른다.
+      (지금은 없지만, 나중에 생겼을 때 조용히 기록이 끊기면 못 알아챈다.)
+    """
+    try:
+        nbytes = len(data) if isinstance(data, (bytes, bytearray, str)) else None
+    except Exception:
+        nbytes = None
+    _name = file_name or label
+    _prev = kw.pop("on_click", None)
+
+    def _cb(*a, **k):
+        log_download(page, _name, rows, nbytes)
+        if callable(_prev):
+            _prev(*a, **k)
+
+    tgt = container if container is not None else st
+    return tgt.download_button(label, data, file_name, mime, on_click=_cb, **kw)
 
 
 def read_access_log(limit: int = 1000) -> list[dict]:
@@ -704,15 +751,26 @@ def render_admin_console() -> None:
     with tab_logs:
         with st.container(border=True):
             rows = read_access_log(3000)
+            _dl = [r for r in rows if "다운로드" in r["이벤트"]]
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("총 기록", f"{len(rows):,}")
             c2.metric("로그인", f"{sum(1 for r in rows if '로그인' in r['이벤트']):,}")
             c3.metric("페이지 열람", f"{sum(1 for r in rows if '열람' in r['이벤트']):,}")
-            c4.metric("관리 활동", f"{sum(1 for r in rows if any(x in r['이벤트'] for x in ('승인', '거절', '해제', '역할', '팀')) ):,}")
-            _kinds = ["전체", "페이지 열람", "로그인", "관리 활동"]
+            # 데이터 반출은 따로 세운다 — 관리 활동에 섞이면 눈에 안 띈다.
+            c4.metric("다운로드", f"{len(_dl):,}",
+                      help="누가 어떤 자료를 내려받았는지예요. 평소보다 많으면 살펴봐 주세요.")
+            _kinds = ["전체", "📥 다운로드", "페이지 열람", "로그인", "관리 활동"]
             _k = st.radio("종류", _kinds, horizontal=True, key="logkind",
                           label_visibility="collapsed")
-            if _k == "페이지 열람":
+            if _k == "📥 다운로드":
+                rows = _dl
+                if _dl:
+                    _by = {}
+                    for r in _dl:
+                        _by[r["계정"]] = _by.get(r["계정"], 0) + 1
+                    _top = sorted(_by.items(), key=lambda x: -x[1])[:5]
+                    st.caption("계정별 · " + " / ".join(f"{e} {n}건" for e, n in _top))
+            elif _k == "페이지 열람":
                 rows = [r for r in rows if "열람" in r["이벤트"]]
             elif _k == "로그인":
                 rows = [r for r in rows if "로그인" in r["이벤트"] or "승인 요청" in r["이벤트"]]

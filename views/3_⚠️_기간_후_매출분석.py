@@ -18,6 +18,7 @@ from jira_ip_dates import fetch_ip_dates
 import os as _os
 sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 from guide_content import render_guide
+import auth
 import data_io
 st.markdown("""
 <style>
@@ -363,6 +364,7 @@ with st.container(border=True):
             use_container_width=True, height=400,
         )
         csv = detail[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("CSV 다운로드", csv, "기한초과매출.csv", "text/csv")
+        auth.download_button("CSV 다운로드", csv, "기한초과매출.csv", "text/csv",
+                             page="overdue")
     else:
         st.info("이 타이틀에는 기한 초과 거래가 없어요.")

@@ -368,9 +368,11 @@ def _deliver():
                   + f"<div class='sub'>{' · '.join(pdfs)}</div>")
     cols = st.columns(len(pdfs))
     for c, (lab, data) in zip(cols, pdfs.items()):
-        c.download_button(f"⬇️ {lab} 정산서", data, key=f"dl_{lab}",
-                          file_name=f"정산서_{meta.get('ip','IP')}_{S[:7]}_{lab}.pdf",
-                          mime="application/pdf", use_container_width=True)
+        # ★정산서 PDF 는 대외 문서라 특히 누가 받아 갔는지 남아야 한다.
+        auth.download_button(f"⬇️ {lab} 정산서", data, key=f"dl_{lab}",
+                             file_name=f"정산서_{meta.get('ip','IP')}_{S[:7]}_{lab}.pdf",
+                             mime="application/pdf", use_container_width=True,
+                             page="settledoc", container=c)
 
     ui_theme.sec(5, "메일 보내기", "원하는 사람에게 바로 보낼 수 있어요")
     ok, who = smail.config_ready()

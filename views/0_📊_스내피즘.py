@@ -882,6 +882,10 @@ _country_opts = sorted(set(_uniq("국가")) | set(KNOWN_COUNTRIES)) if "국가" 
 _store_all = _uniq("매장 이름")
 _prod_opts = _uniq("상품 카테고리")
 _ip_opts = _uniq("프레임 이름")
+# ★'상품 카테고리'(미니스티커·포토카드 = 무엇을 샀나)와 '카테고리'(아티스트·캐릭터·
+#   반팔입고나와 = 어떤 IP 기획인가)는 **다른 열**이다. 이름이 비슷해 자주 헷갈린다.
+#   화면 라벨을 각각 '상품' / 'IP구분' 으로 갈라 놓은 이유다.
+_cat_opts = _uniq("카테고리")
 
 
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
@@ -944,7 +948,7 @@ default_start = max(last_date - timedelta(days=29), first_date)
 def _filterbar():
     with st.container(border=True, key="scard-filter"):
         # 필터(5개)는 폭을 넉넉히 채우고 오른쪽 스페이서는 작게(포토이즘 톤)
-        _fb = st.columns([1.05, 0.95, 0.95, 0.95, 0.95, 0.55, 1.35], gap="small")
+        _fb = st.columns([1.0, 0.9, 0.9, 0.9, 0.95, 0.9, 0.5, 1.05], gap="small")
         with _fb[0]:
             st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
             st.date_input("기간", value=[default_start, last_date],
@@ -955,8 +959,11 @@ def _filterbar():
         _std = (sorted(set().union(*[set(_sbc.get(c, [])) for c in _dc])) if _dc else _store_all)
         cbfilter(_fb[2], "매장", _std, "f_store")
         cbfilter(_fb[3], "상품", _prod_opts, "f_prod")
-        cbfilter(_fb[4], "IP", _ip_opts, "f_ip")
-        with _fb[5]:
+        # 도넛은 아티스트·캐릭터·기타 3분류로 두되, '기타' 안을 파고들 수 있게 필터를 준다
+        # (후드입고나와 ₩4,747만 같은 기획전이 기타에 묻혀 개별 성과가 안 보였다).
+        cbfilter(_fb[4], "IP구분", _cat_opts, "f_cat")
+        cbfilter(_fb[5], "IP", _ip_opts, "f_ip")
+        with _fb[6]:
             st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
             if st.button("✓ 적용", key="f_apply", use_container_width=True, type="primary"):
                 st.rerun()
@@ -974,6 +981,7 @@ else:
     _store_opts = _store_all
 sel_store = [o for o in _store_opts if st.session_state.get(f"f_store__cb__{o}", False)]
 sel_prod = [o for o in _prod_opts if st.session_state.get(f"f_prod__cb__{o}", False)]
+sel_cat = [o for o in _cat_opts if st.session_state.get(f"f_cat__cb__{o}", False)]
 sel_ip = [o for o in _ip_opts if st.session_state.get(f"f_ip__cb__{o}", False)]
 
 _cfg = load_config()
@@ -991,6 +999,8 @@ if sel_store:
     df = df[df["매장 이름"].isin(sel_store)]
 if sel_prod:
     df = df[df["상품 카테고리"].isin(sel_prod)]
+if sel_cat and "카테고리" in df.columns:
+    df = df[df["카테고리"].astype(str).str.strip().isin(sel_cat)]
 if sel_ip:
     df = df[df["프레임 이름"].isin(sel_ip)]
 scope = df                      # 날짜 외 모든 필터
@@ -1268,10 +1278,31 @@ with tab_home:
                           ["var(--brand-2)", "var(--teal)"], sub=_sub)
             else:
                 st.info("데이터가 없어요.")
+            # ★'기타'가 뭔지 안 보이면 찾을 수가 없다. 기간 한정 기획전이 여기 묻혀 있다
+            #   (후드입고나와 ₩4,747만 등). 접어서 내역을 보여주고 필터로 안내한다.
+            _etc = rev[cat3(rev["카테고리"]) == "기타"]
+            if not _etc.empty and _etc["정산금액"].sum() > 0:
+                # ★'카테고리'는 nullable string 이라 결측이 <NA> 다. astype(str) 하면
+                #   'nan' 이 아니라 '<NA>' 가 나와서, 그것만 거르면 라벨이 빈칸으로 보인다.
+                _kk = _etc["카테고리"].fillna("").astype(str).str.strip()
+                _kk = _kk.mask(_kk.isin(["", "nan", "None", "<NA>"]), "(미지정)")
+                _eg = (_etc.assign(_k=_kk)
+                       .groupby("_k")["정산금액"].sum().sort_values(ascending=False))
+                with st.expander(f"기타 {len(_eg)}종 열어보기 · {fmt_krw(int(_eg.sum()))}"):
+                    for _k, _v in _eg.items():
+                        st.markdown(
+                            f'<div style="display:flex;justify-content:space-between;'
+                            f'font-size:12.5px;padding:3px 0;border-bottom:1px solid var(--surface-3)">'
+                            f'<span style="color:var(--text-2);font-weight:600">{_k}</span>'
+                            f'<b style="color:var(--text)">{fmt_krw(int(_v))}</b></div>',
+                            unsafe_allow_html=True)
+                    st.caption("위 필터바의 **IP구분**에서 골라 보면 그 기획만 전 화면에 적용돼요.")
             helpbox("""
 **아티스트/캐릭터 비중**
 - 거래의 `카테고리` 값을 `cat3()`으로 **아티스트 / 캐릭터 / 기타** 3분류로 정규화한 뒤 `정산금액` 합.
 - 도넛은 **아티스트·캐릭터 2조각만** 그리고, '기타'는 조각에서 빼고 캡션에 금액만 표기.
+- '기타'는 기간 한정 기획전(반팔입고나와·후드입고나와 등)이라 종류가 계속 늘어요.
+  개별 성과는 아래 **'기타 N종 열어보기'** 또는 필터바 **IP구분**에서 봐요.
 """)
 
     with card("🖼 카테고리별 TOP 프레임(IP)"):
@@ -1797,6 +1828,7 @@ if SHOW_TAB_ETC:
             avail = [c for c in cols if c in df.columns]
             st.dataframe(df[avail].sort_values("결제일시", ascending=False).reset_index(drop=True),
                          use_container_width=True, height=400)
-            st.download_button("CSV 다운로드",
-                               df[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
-                               "snapism_filtered.csv", "text/csv")
+            auth.download_button("CSV 다운로드",
+                                 df[avail].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
+                                 "snapism_filtered.csv", "text/csv",
+                                 page="snapism", rows=len(df))

@@ -2246,9 +2246,10 @@ if SHOW_TAB_DETAIL:
                            "단가(예: 7,000원)보다 높게, 0원(코인·무료) 거래가 섞이면 낮게 보여요.")
                 csv_d = detail_df.rename(columns={"항목": sel_dim_label}).to_csv(
                     index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                st.download_button("세부 항목 CSV 다운로드", csv_d,
-                                   f"photoism_detail_{DETAIL_DIMS[sel_dim_label]}.csv", "text/csv",
-                                   key="ph_detail_csv")
+                auth.download_button("세부 항목 CSV 다운로드", csv_d,
+                                     f"photoism_detail_{DETAIL_DIMS[sel_dim_label]}.csv", "text/csv",
+                                     key="ph_detail_csv",
+                                     page="photoism", rows=len(d_show))
 
     _detail_search(date_range, selected_ips, sel_countries,
                    sel_stores, sel_brands, sel_gubuns)
@@ -2287,7 +2288,8 @@ if SHOW_TAB_ETC:
                 st.caption(f"총 {len(view):,}행 · 표는 상위 2,000행만 표시 (전체는 CSV)")
                 st.dataframe(view.head(2000), use_container_width=True, height=400)
                 csv_export = view.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                st.download_button("CSV 다운로드 (전체)", csv_export,
-                                   "photoism_filtered.csv", "text/csv")
+                auth.download_button("CSV 다운로드 (전체)", csv_export,
+                                     "photoism_filtered.csv", "text/csv",
+                                     page="photoism", rows=len(view))
             else:
                 st.caption("체크하면 현재 필터 기준 집계 데이터를 표로 불러와요.")

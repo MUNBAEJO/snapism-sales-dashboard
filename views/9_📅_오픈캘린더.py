@@ -146,9 +146,10 @@ with st.expander(f"📋 목록으로 보기 — {m}월 {len(month_df):,}건 · �
     tab_month, tab_up = st.tabs([f"{m}월 전체 ({len(month_df)}건)", "⏭️ 다가오는 60일"])
     with tab_month:
         _table(month_df)
-        st.download_button("📥 이 달 일정 CSV",
-                           data=month_df.to_csv(index=False).encode("utf-8-sig"),
-                           file_name=f"IP오픈일정_{y}-{m:02d}.csv", mime="text/csv")
+        auth.download_button("📥 이 달 일정 CSV",
+                             month_df.to_csv(index=False).encode("utf-8-sig"),
+                             f"IP오픈일정_{y}-{m:02d}.csv", "text/csv",
+                             page="ipcal", rows=len(month_df))
     with tab_up:
         _table(ipc.upcoming(f, TODAY, 60))
 

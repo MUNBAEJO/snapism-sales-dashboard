@@ -171,12 +171,13 @@ def _xlsx(df: pd.DataFrame) -> bytes:
     return sm_report.build_xlsx(df)
 
 
-st.download_button(
+auth.download_button(
     "📥 엑셀 다운로드 (부서 공유용)",
-    data=_xlsx(f),
-    file_name=f"SM촬영현황_{s_str}_{e_str}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    _xlsx(f),
+    f"SM촬영현황_{s_str}_{e_str}.xlsx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True,
+    page="smshoot", rows=len(f),
 )
 st.caption("엑셀: **요약** + **아티스트별 시트**(NCT WISH·라이즈·아이린·승한·태용·샤이니·NCT 재민제노) + **국가별**. "
            "멤버 한·영 통합, CMS 값과 일치해요. (현재 오픈 IP만)")

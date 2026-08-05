@@ -28,6 +28,7 @@ from weekly_insight import (
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
+import auth
 
 st.markdown("""
 <style>
@@ -362,11 +363,12 @@ with st.container(border=True):
 
         st.markdown(f'<div class="report-box">{ai_text}</div>', unsafe_allow_html=True)
 
-        st.download_button(
-            label="📄 텍스트로 내려받기",
-            data=ai_text,
-            file_name=f"주간리포트_{insight.get('period',str(this_start)).replace(' ','')}.txt",
-            mime="text/plain",
+        auth.download_button(
+            "📄 텍스트로 내려받기",
+            ai_text,
+            f"주간리포트_{insight.get('period',str(this_start)).replace(' ','')}.txt",
+            "text/plain",
+            page="weekly",
         )
     else:
         st.warning("아직 생성된 AI 리포트가 없어요. 위 '리포트 생성' 버튼을 누르면 만들 수 있어요.")
