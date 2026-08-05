@@ -325,6 +325,42 @@ def run_jira_cache_warm():
 
 
 # ── 매출 딥 재수집 (매주 월요일) ─────────────────────────────────
+def run_photoism_deep_resync():
+    """매주: 포토이즘 매출을 30일치 재수집해 **늦게 반영된 거래**까지 채운다.
+
+    ★왜 필요한가(2026-08-05 규명): photoism_crawler 의 롤링은 LOOKBACK_DAYS=3 뿐이라
+      거래일 +3일이 지나 CMS 에 올라온 건은 **영구히 누락**된다. 실제로
+      L-CA-LA-PHOTOISMKTP-KPOPNATION 의 2026-07-03 13:24·13:29 KFA 2건이
+      퀵사이트엔 있는데 우리 XLSX 에는 없었다(파일을 07-10 에 받았는데도 없음).
+      정산서가 그만큼 과소계상된다.
+      스내피즘은 일일 14일 롤링 + 주간 60일 딥이 있는데 포토이즘만 대응이 없었다.
+
+    ★기간을 30일로 잡은 이유: 30개국 × N일이라 60일이면 1,800회 다운로드다.
+      서버 부담을 줄이려고 절반으로 잡았다(사용자 지정). config 로 조절 가능.
+    ★크롤러 자체가 국가 간 COUNTRY_DELAY=2초를 두므로 여기서 더 조이지는 않는다.
+      심야에 돌려 낮 트래픽과 겹치지 않게 한다.
+    """
+    try:
+        deep = int(load_config().get("schedule", {}).get("photoism_deep_days", 30))
+    except Exception:
+        deep = 30
+    end = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    start = (datetime.now() - timedelta(days=deep)).strftime("%Y-%m-%d")
+    log(f"포토이즘 딥 재수집 시작: {start} ~ {end} ({deep}일)")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(BASE_DIR / "photoism_crawler.py"), start, end],
+            cwd=str(BASE_DIR), capture_output=True, text=True, timeout=7200,
+        )
+        log(result.stdout.strip() if result.stdout else "(출력 없음)")
+        log("포토이즘 딥 재수집 완료." if result.returncode == 0
+            else f"포토이즘 딥 재수집 일부 실패 (exit {result.returncode})")
+    except subprocess.TimeoutExpired:
+        log("포토이즘 딥 재수집 타임아웃 (2시간 초과)")
+    except Exception as e:
+        log(f"포토이즘 딥 재수집 오류: {e}")
+
+
 def run_sales_deep_resync():
     """매주: 매출을 더 긴 기간(기본 60일) 재수집해 '늦은 취소·정정'까지 반영.
     일일 크롤은 최근 14일 롤링이라 대부분 잡히지만, 그 이후 발생한 취소를 이 주간 딥이 보완.
@@ -443,6 +479,9 @@ def main():
     schedule.every().day.at(run_time).do(run_photoism_crawler)
     schedule.every().monday.at("07:00").do(run_sm_weekly)          # SM 촬영수 주간 갱신
     schedule.every().monday.at("05:00").do(run_sales_deep_resync)  # 매출 60일 딥 재수집(늦은 취소 반영)
+    # 포토이즘 딥 30일 — 일일 롤링이 3일뿐이라 늦게 올라온 거래가 영구 누락된다.
+    # 스내피즘 딥(05:00)과 겹치면 CMS 부하가 몰려서 시간을 벌려 둔다.
+    schedule.every().monday.at("02:00").do(run_photoism_deep_resync)
     # Jira 일정 캐시 예열 — TTL 12h 에 맞춰 하루 두 번(업무 시작 전 / 저녁).
     # 안 해두면 캐시 만료 후 첫 접속자가 20초쯤 기다린다.
     schedule.every().day.at("08:40").do(run_jira_cache_warm)
