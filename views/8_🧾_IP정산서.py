@@ -204,10 +204,14 @@ def make_panel():
 
     ui_theme.sec(2, "요율 확인", "지라에 있으면 자동으로 채워요")
     rs = {}
+    # ★get_rs 는 저장값이 없으면 지라를 부른다(네트워크). 아래에서 또 부르면
+    #   화면이 눈에 띄게 느려진다 — 여기서 한 번 부른 결과를 재사용한다.
+    saved_rs = {}
     for b, (tk, titles) in picks.items():
         if not tk or not titles:
             continue
         cur = sc.get_rs(b, tk)
+        saved_rs[b] = cur
         tag = {"화면 입력": "🖊 저장된 값", "지라": "🔗 지라",
                "없음": "⚠️ 없음 — 직접 넣어 주세요"}[cur["source"]]
         st.markdown(f"**{sm.BRAND_LABEL[b]}** `{tk}` <span class='muted'>{tag}</span>",
@@ -328,7 +332,8 @@ def make_panel():
     #   전엔 이걸 안 막아서 금액은 보이는데 PDF 만 0부인 상태가 됐다(대한축구협회 v1~v4).
     else:
         _un = [sm.BRAND_LABEL[b] for b, (tk, ti) in picks.items()
-               if tk and ti and not (lambda s: s.get("agency") or s.get("mgmt"))(sc.get_rs(b, tk))]
+               if tk and ti and not ((saved_rs.get(b) or {}).get("agency")
+                                     or (saved_rs.get(b) or {}).get("mgmt"))]
         if _un:
             stop.append(f"요율 저장 필요({' · '.join(_un)}) — 위 💾 저장을 눌러 주세요")
     if not ipn:
@@ -359,8 +364,7 @@ def make_panel():
                                           f"IP 정산서({lab}) · {ipn} · {S}~{E}")
         if not made:
             # ★조용히 0부로 끝나면 '발행됐는데 문서가 없다'가 된다. 원인을 짚어 준다.
-            _saved = {b: sc.get_rs(b, t) for b, (t, _) in picks.items() if t}
-            _none = [sm.BRAND_LABEL[b] for b, v in _saved.items()
+            _none = [sm.BRAND_LABEL[b] for b, v in saved_rs.items()
                      if not (v.get("agency") or v.get("mgmt"))]
             ui_theme.nbox("err",
                           "정산서를 한 부도 만들지 못했어요 — <b>저장된 요율이 없어요</b>"
