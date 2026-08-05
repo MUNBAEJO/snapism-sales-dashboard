@@ -23,6 +23,14 @@
 """
 import subprocess
 import sys
+
+# ★윈도 콘솔은 cp949 라 em대시(—)·화살표 같은 문자에서 UnicodeEncodeError 로
+#   죽는다. 이 저장소에서 세 번 당했다(coverage_audit·ingest·여기). 맨 먼저 고정한다.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -73,7 +81,7 @@ def main() -> int:
             print(f"  {k}  파일 {n:2d}개 · {sz / 1024:8,.0f} KB")
         return 0
 
-    print("\n크롤러 실행 — 30개국을 순차로 받습니다. 30분 이상 걸릴 수 있어요.\n")
+    print("\n크롤러 실행: 30개국을 순차로 받습니다. 30분 이상 걸릴 수 있어요.\n")
     r = subprocess.run([sys.executable, str(BASE_DIR / "photoism_crawler.py"),
                         start.isoformat(), end.isoformat()], cwd=str(BASE_DIR))
 
@@ -89,10 +97,10 @@ def main() -> int:
                   f"{b[1] / 1024:,.0f}→{a[1] / 1024:,.0f} KB  "
                   f"({(a[1] - b[1]) / 1024:+,.0f} KB)")
     if not grew:
-        print("  변화 없음 — 이미 최신이거나 CMS 에 추가분이 없어요.")
+        print("  변화 없음. 이미 최신이거나 CMS 에 추가분이 없어요.")
     print("=" * 62)
     print(f"\n크롤러 종료코드 {r.returncode}")
-    print("\n다음 단계 — 결과를 확인한 뒤 직접 실행해 주세요:")
+    print("\n다음 단계: 결과를 확인한 뒤 직접 실행해 주세요:")
     print("  python photoism_ingest.py        # 파일 → master_photoism")
     print("  python build_photoism_agg.py     # 집계 재생성(대시보드·정산서 반영)")
     return r.returncode
