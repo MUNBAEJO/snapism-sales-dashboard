@@ -8,6 +8,7 @@
 """
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -380,7 +381,6 @@ def main():
     #   적재하는 게 맞다. 일일 수집은 이 변수가 없으니 지금까지와 똑같이 동작한다.
     if success_list and os.environ.get("PHOTOISM_SKIP_INGEST") != "1":
         log("\n데이터 누적 처리 시작 (photoism_ingest.py)...")
-        import subprocess
         subprocess.run(
             [sys.executable, str(BASE_DIR / "photoism_ingest.py"), dates[0]],
             cwd=str(BASE_DIR),
@@ -392,7 +392,9 @@ def main():
     # 이 크롤러의 실행시간 제한(PT1H)·종료코드와 무관하게 SM 데이터도 매일 갱신되도록.
     # (전용 작업 스케줄러 등록은 관리자 권한이 필요해, 매일 도는 이 작업에 얹어 트리거)
     try:
-        import subprocess, os
+        # ★여기서 import 하면 os/subprocess 가 **함수 전체**의 지역변수가 되어
+        #   위쪽 os.environ 사용이 UnboundLocalError 로 죽는다(2026-08-05 실제 발생).
+        #   모듈 최상단 import 를 쓴다. 지역 import 를 되살리지 말 것.
         flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
         subprocess.Popen(
             [sys.executable, str(BASE_DIR / "sm_daily.py")],
