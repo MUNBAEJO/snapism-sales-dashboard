@@ -49,6 +49,72 @@ STORE_RENAME = {
 }
 
 
+# ★★중복제거 키가 '진짜 별개 거래'를 뭉개던 문제 — 2026-08-05 수정
+#
+# 옛 키는 `결제일시|매장|상품|단가|결제수단|승인번호` 였다. 카드 결제는 승인번호가
+# 있어서 구분이 되는데, **FREE·COIN 은 승인번호가 비어 있다.** 그러면 같은 분(分)에
+# 같은 매장에서 같은 상품이 두 번 팔리면 키가 완전히 같아져 **한 건으로 합쳐진다.**
+#
+# 실측(2026-08-05, raw 162개 파일 1,806,340행):
+#   · 파일 내부 자기충돌 25,318건. 나쁜 날은 한 파일의 21.3%(kr_20260610).
+#   · 충돌 그룹 9,051개를 매출 ID 로 확인하니 **100% 가 서로 다른 거래**였다.
+#   · 결과적으로 12,4xx건(약 +3%)이 통째로 사라져 있었다. 거의 전부 ₩0(FREE·COIN)이라
+#     매출액은 사실상 안 변하지만, **정산서 수량은 '건수' 기준**이라 정산에도 걸린다.
+#
+# 고치는 방법: 키에 **파일 안에서의 순번**을 붙인다.
+#   · 같은 파일에 똑같아 보이는 줄이 3개면 #0 #1 #2 로 갈라져 셋 다 산다.
+#   · 같은 거래가 두 파일에 겹쳐 들어와도 양쪽에서 같은 순번을 받아 그대로 합쳐진다.
+#   · 순번은 **매출 ID 오름차순**으로 매긴다. 파일마다 정렬이 달라도 결과가 같아야 해서다.
+#     옛 포맷(24열)엔 매출 ID 가 아예 없는데, 그건 파일에 적힌 순서를 그대로 쓴다.
+#
+# 검증: 매출 ID 가 있는 행만 놓고 (소스, 매출 ID) 유일수 328,965 를 정답으로 봤을 때
+#       옛 키는 325,664(-3,301), **새 키는 328,965(오차 0)** 였다.
+#
+# ★`_seq` 는 master.csv 에 컬럼으로 남긴다. 다음 수집 때 옛 행과 새 행이 같은 규칙으로
+#   키를 만들어야 겹침 판정이 되기 때문이다. 지우지 말 것.
+SEQ_COL = "_seq"
+
+
+def _dup_key_base(df: pd.DataFrame) -> pd.Series:
+    """중복제거 키의 앞부분(순번 제외). 파일 단위·전체 단위에서 **똑같이** 나와야 한다."""
+    def col(name):
+        return df[name].astype(str) if name in df.columns else pd.Series("", index=df.index)
+
+    store = col("매장 이름").str.strip().replace(STORE_RENAME)
+    return (col("결제일시")
+            + "|" + store
+            + "|" + col("상품 이름").str.strip()
+            + "|" + (df["상품 단가"].map(clean_amount).astype(str)
+                     if "상품 단가" in df.columns else "")
+            + "|" + col("결제 수단")
+            + "|" + (df["승인번호"].fillna("").astype(str)
+                     if "승인번호" in df.columns else ""))
+
+
+def _assign_seq(df: pd.DataFrame) -> pd.Series:
+    """파일 하나 안에서 '같아 보이는' 거래에 0,1,2… 순번. 매출 ID 순으로 매긴다.
+
+    ★**승인번호가 있는 행은 손대지 않는다(항상 0).** 왜 이렇게까지 조심하나:
+      승인번호가 붙은 채로 키가 겹치는 행이 전체 25,318건 중 **74건** 있는데,
+      들여다보니 같은 단말기 · 같은 승인번호 · 같은 분 · 같은 금액인데 매출 ID 만
+      다르다(186106/186103 등). 카드 승인 하나에 매출 레코드가 둘 달린 건지 정말
+      별개 결제인지 CSV 만으로는 못 가린다.
+      가르면 매출이 ₩309,800 늘고, 안 가르면 건수만 손해다. **정산 금액이 걸린
+      쪽으로 틀리면 안 되니** 안 가르는 쪽을 택했다(사용자 확인 전까지).
+      실익도 거의 없다 — 진짜 손실은 승인번호 없는 25,244건(99.7%)에 있다.
+      ※ CMS 에 물어 '별개 결제'로 확인되면 아래 `_ap` 조건만 빼면 된다.
+    """
+    base = _dup_key_base(df)
+    sid = (pd.to_numeric(df["매출 ID"], errors="coerce")
+           if "매출 ID" in df.columns else pd.Series(float("nan"), index=df.index))
+    t = pd.DataFrame({"k": base, "sid": sid}).sort_values(
+        "sid", na_position="last", kind="stable")
+    seq = t.groupby("k").cumcount().reindex(df.index)
+    _ap = (df["승인번호"].fillna("").astype(str).str.strip() != ""
+           if "승인번호" in df.columns else pd.Series(False, index=df.index))
+    return seq.where(~_ap, 0)
+
+
 def clean_amount(val):
     if pd.isna(val) or str(val).strip() == "":
         return 0
@@ -97,8 +163,13 @@ def ingest():
                 "한국",  # 기본값: 파일명 prefix 없으면 한국 어드민 데이터로 간주
             )
             df["소스"] = source
+            # ★순번은 **파일 단위**로 매겨야 한다. 전체를 합친 뒤에 매기면 겹쳐 들어온
+            #   같은 거래끼리도 #0 #1 로 갈라져 중복이 그대로 살아남는다.
+            df[SEQ_COL] = _assign_seq(df)
             new_dfs.append(df)
-            print(f"  OK {Path(f).name}  ({len(df):,}건)  [{source}]")
+            _dup = int((df[SEQ_COL] > 0).sum())
+            print(f"  OK {Path(f).name}  ({len(df):,}건)  [{source}]"
+                  + (f"  동일키 {_dup:,}건 분리" if _dup else ""))
         else:
             print(f"  NG {Path(f).name}  (인코딩 오류)")
 
@@ -159,15 +230,14 @@ def ingest():
         combined.loc[missing_unit, "결제 단위"] = combined.loc[missing_unit, "국가"].map(COUNTRY_CURRENCY)
     combined["결제 단위"] = combined["결제 단위"].fillna("KRW")
 
-    # 중복 제거 (결제일시+매장+상품+결제수단+승인번호 조합 기준)
-    combined["_key"] = (
-        combined["결제일시"].astype(str)
-        + "|" + combined["매장 이름"].astype(str)
-        + "|" + combined["상품 이름"].astype(str)
-        + "|" + (combined["상품 단가"].astype(str) if "상품 단가" in combined.columns else "")
-        + "|" + combined["결제 수단"].astype(str)
-        + "|" + (combined["승인번호"].fillna("").astype(str) if "승인번호" in combined.columns else "")
-    )
+    # 중복 제거 (결제일시+매장+상품+결제수단+승인번호 +파일 내 순번)
+    # ★순번을 왜 붙이는지는 파일 위쪽 SEQ_COL 주석 참고. 빼면 FREE·COIN 이 뭉개진다.
+    #   옛 master(순번 없음)를 읽었을 땐 0 으로 채운다 — 그 행들은 이미 옛 키로
+    #   1건씩만 남아 있어서 신규 파일의 #0 과 정확히 맞물린다(#1 이상은 새로 추가된다).
+    if SEQ_COL not in combined.columns:
+        combined[SEQ_COL] = 0
+    combined[SEQ_COL] = pd.to_numeric(combined[SEQ_COL], errors="coerce").fillna(0).astype(int)
+    combined["_key"] = _dup_key_base(combined) + "#" + combined[SEQ_COL].astype(str)
     before = len(combined)
     # ★keep="last": 나중에 재수집된(=최신) 행이 이김 → 판매 후 발생한 취소·정정이 옛 행을 덮어씀.
     #   (concat 순서가 [기존master, 신규]라 last=신규가 승리. 키 필드는 취소돼도 안 바뀌어 정확히 매칭됨.)
