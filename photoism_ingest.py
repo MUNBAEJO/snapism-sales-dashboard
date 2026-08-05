@@ -21,6 +21,7 @@ import io
 import os
 import re
 import sys
+import time
 import json
 import pandas as pd
 from pathlib import Path
@@ -296,7 +297,23 @@ def main():
     finally:
         con.close()
 
-    os.replace(new_master, MASTER_PARQ)
+    # ★★대시보드(8503)가 parquet 을 열고 있으면 os.replace 가 WinError 5 로 죽는다
+    #   (2026-08-05 실제 발생). 그대로 두면 새 데이터가 통째로 버려지고 .tmp 만 남는다.
+    #   윈도는 열린 파일을 못 지우므로 잠깐 기다렸다 다시 시도하고, 그래도 안 되면
+    #   **새 파일을 지우지 말고** 무엇을 하면 되는지 알려 준다.
+    for _try in range(6):
+        try:
+            os.replace(new_master, MASTER_PARQ)
+            break
+        except PermissionError:
+            if _try == 5:
+                log(f"[실패] parquet 교체 불가 — 다른 프로세스가 열고 있어요.")
+                log(f"        대시보드(8503)를 잠깐 내리고 아래를 실행하면 이어집니다:")
+                log(f'        python -c "import os;os.replace(r\'{new_master}\',r\'{MASTER_PARQ}\')"')
+                log(f"        새 데이터는 {new_master} 에 그대로 보관돼 있어요.")
+                return
+            log(f"parquet 이 잠겨 있어요 — {(_try + 1) * 10}초 뒤 다시 시도 ({_try + 1}/5)")
+            time.sleep((_try + 1) * 10)
     tmp_new.unlink(missing_ok=True)
     mb = MASTER_PARQ.stat().st_size / 1024 / 1024
     log(f"[완료] master_photoism.parquet 갱신 — 누적 {total:,}건 ({mb:.0f} MB)")
