@@ -7,6 +7,7 @@
   날짜 미지정 시 전날 데이터 자동 다운로드
 """
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -373,13 +374,19 @@ def main():
         log(f"  실패 ({len(fail_list)}개): {', '.join(fail_list)}")
     log(f"{'='*45}")
 
-    if success_list:
+    # ★대량 재수집 때는 적재를 건너뛴다(PHOTOISM_SKIP_INGEST=1).
+    #   적재는 406MB parquet 을 통째로 다시 만들어 1회 14분이 걸린다. 기간을 나눠
+    #   여러 번 돌리면 그것만 몇 시간이 붙는다. 전량 재수집은 다 받은 뒤 **한 번만**
+    #   적재하는 게 맞다. 일일 수집은 이 변수가 없으니 지금까지와 똑같이 동작한다.
+    if success_list and os.environ.get("PHOTOISM_SKIP_INGEST") != "1":
         log("\n데이터 누적 처리 시작 (photoism_ingest.py)...")
         import subprocess
         subprocess.run(
             [sys.executable, str(BASE_DIR / "photoism_ingest.py"), dates[0]],
             cwd=str(BASE_DIR),
         )
+    elif success_list:
+        log("\n적재 건너뜀 (PHOTOISM_SKIP_INGEST=1) — 끝나면 직접 돌려 주세요.")
 
     # SM 촬영수 일일 수집을 독립 프로세스로 분리 실행(fire-and-forget).
     # 이 크롤러의 실행시간 제한(PT1H)·종료코드와 무관하게 SM 데이터도 매일 갱신되도록.
