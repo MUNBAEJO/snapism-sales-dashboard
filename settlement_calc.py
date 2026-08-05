@@ -166,6 +166,34 @@ def _raw_titles(titles: list[str], start: str, end: str) -> list[str]:
     return df["타이틀명"].tolist()
 
 
+# ★★쿠폰·코인 결제분은 '상품총액'으로 센다 (2026-08-05, 사용자 확정)
+#
+# 무엇이 문제였나: 쿠폰·코인 정산국에서 **쿠폰/코인 액면가**를 매출로 잡고 있었다.
+# 그런데 CMS 가 적어 주는 액면가는 상품값과 안 맞을 때가 있다.
+#   · 클라씨 영국 2건: 단가 16 · 상품총액 16 인데 **쿠폰 18** → 정산이 36 으로 잡혔다.
+#     (사용자 시트는 32. 환율은 양쪽 다 1,940.15 로 같았고 차이는 여기서 났다.)
+#   · 페루: 단가 24 · 총액 24 인데 **코인 224224** 같은 입력 오류가 섞여 있다.
+#     이런 몇 건이 페루 정산액을 3배로 부풀리고 있었다.
+#
+# 왜 '상품 단가'가 아니라 '상품총액'인가: 단가는 **1개분**이라 여러 장 산 거래에서
+# 수량이 통째로 날아간다. 라오스는 단가 70,000 에 코인 140,000/210,000/280,000 …
+# 이 흔한데, 이건 전부 상품총액과 정확히 일치한다(= 2장·3장·4장). 단가로 바꾸면
+# 라오스만 -1.4억이 깎인다. 상품총액은 수량도 살리고 액면가 오류도 걸러낸다.
+#
+# 적용 범위는 **쿠폰·코인이 실제로 붙은 행만**이다. 카드로 낸 행은 손대지 않는다
+# (전 국가 3,651만 행 중 80만 행은 상품총액 ≠ 결제금액이라, 전부 바꾸면 카드 매출까지 흔들린다).
+# 상품총액이 0/누락이면 옛 식으로 되돌린다 — 설명 못 하는 값을 임의로 0 처리하지 않는다.
+#
+# 전 기간 영향(현지통화): 페루 -64%(오류 교정) · 멕시코 -6.9% · 영국 -1.6% ·
+#   독일 -0.8% · 칠레 -0.5% · 라오스 -0.08% · 태국·라트비아 거의 0.
+def _ph_num(cpn: str, coin: str, pay="pay", c1="cpn", c2="coin", tot="tot") -> str:
+    """포토이즘 매출 인식액 SQL. cpn/coin 은 국가코드 목록 문자열."""
+    add_c = f"CASE WHEN cc IN ({cpn})  THEN {c1} ELSE 0 END"
+    add_i = f"CASE WHEN cc IN ({coin}) THEN {c2} ELSE 0 END"
+    return (f"CASE WHEN ({add_c}) + ({add_i}) > 0 AND {tot} > 0 THEN {tot}"
+            f" ELSE {pay} + ({add_c}) + ({add_i}) END")
+
+
 # ── 국가별 상세 ────────────────────────────────────────────────────────────
 def country_detail(brand: str, titles: list[str], start: str, end: str,
                    rates: dict) -> pd.DataFrame:
@@ -189,6 +217,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                          CAST("최종 결제 금액" AS BIGINT) AS pay,
                          CAST("쿠폰 할인 금액"  AS BIGINT) AS cpn,
                          CAST("서비스코인"      AS BIGINT) AS coin,
+                         CAST("상품총액"        AS BIGINT) AS tot,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
@@ -196,9 +225,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
-                  SELECT *, pay
-                         + CASE WHEN cc IN ({cpn})  THEN cpn  ELSE 0 END
-                         + CASE WHEN cc IN ({coin}) THEN coin ELSE 0 END AS num
+                  SELECT *, {_ph_num(cpn, coin)} AS num
                   FROM t
                 )
                 SELECT "국가", any_value(unit) AS unit,
@@ -411,6 +438,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                          CAST("최종 결제 금액" AS BIGINT) AS pay,
                          CAST("쿠폰 할인 금액"  AS BIGINT) AS cpn,
                          CAST("서비스코인"      AS BIGINT) AS coin,
+                         CAST("상품총액"        AS BIGINT) AS tot,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
@@ -418,9 +446,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
-                  SELECT *, pay
-                         + CASE WHEN cc IN ({cpn})  THEN cpn  ELSE 0 END
-                         + CASE WHEN cc IN ({coin}) THEN coin ELSE 0 END AS num
+                  SELECT *, {_ph_num(cpn, coin)} AS num
                   FROM t
                 )
                 SELECT "국가", member, SUM(num) AS num,
@@ -601,14 +627,16 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
             if not raws:
                 return 0
             cpn, coin = _sqlist(sorted(COUPON_CC)), _sqlist(sorted(COIN_CC))
-            num = (f'CAST("최종 결제 금액" AS BIGINT)'
-                   f' + CASE WHEN lower(trim("국가코드")) IN ({cpn})'
-                   f'        THEN CAST("쿠폰 할인 금액" AS BIGINT) ELSE 0 END'
-                   f' + CASE WHEN lower(trim("국가코드")) IN ({coin})'
-                   f'        THEN CAST("서비스코인" AS BIGINT) ELSE 0 END')
+            # 위 두 곳과 **같은 식**을 써야 취소 차감이 매출과 어긋나지 않는다.
+            num = _ph_num(cpn, coin,
+                          pay='CAST("최종 결제 금액" AS BIGINT)',
+                          c1='CAST("쿠폰 할인 금액" AS BIGINT)',
+                          c2='CAST("서비스코인" AS BIGINT)',
+                          tot='CAST("상품총액" AS BIGINT)')
             q = f"""
                 SELECT CAST(ROUND(SUM(-({num}) * {rate})) AS BIGINT) AS v
-                FROM read_parquet('{PH_RAW.as_posix()}')
+                FROM (SELECT *, lower(trim("국가코드")) AS cc
+                      FROM read_parquet('{PH_RAW.as_posix()}'))
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                   AND "타이틀명" IN ({_sqlist(raws)}) {_gubun_filter()}
                   AND CAST("최종 결제 금액" AS BIGINT) < 0"""
