@@ -110,6 +110,13 @@ EXCEL_COLUMNS = [
     {"columnId": "sales",             "headerDesc": "공급가액"},
     {"columnId": "surtax",            "headerDesc": "세액"},
     {"columnId": "paymentDt",         "headerDesc": "결제일"},
+    # ★★현지 결제시각 (2026-08-05 추가). CMS 화면의 '결제일 (지역)' 이고
+    #   퀵사이트가 보여주는 값도 이것이다. `paymentDt` 는 시차가 반영 안 된 값이라
+    #   미국처럼 시차 큰 나라에서 **같은 거래가 다른 날짜로 잡힌다**
+    #   (KFA 2건: paymentDt 07-02 23:24 ↔ localPaymentDt 07-03 13:24).
+    #   정산은 현지 기준이어야 하므로 이 열을 받아 `날짜` 산출에 쓴다.
+    #   국가별 오프셋 표를 두지 않아도 30개국이 전부 자동으로 맞는다.
+    {"columnId": "localPaymentDt",    "headerDesc": "결제일(지역)"},
     {"columnId": "frameFeePrice",     "headerDesc": "수수료"},
     {"columnId": "frameRoyaltyPrice", "headerDesc": "로열티"},
     {"columnId": "cash",              "headerDesc": "투입현금"},
