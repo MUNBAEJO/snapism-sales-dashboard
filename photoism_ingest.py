@@ -32,7 +32,15 @@ CONFIG_FILE = BASE_DIR / "config.json"
 RAW_DIR     = BASE_DIR / "raw_photoism"
 DATA_DIR    = BASE_DIR / "data"
 MASTER_FILE = DATA_DIR / "master_photoism.csv"        # 레거시(대용량) — 더 이상 갱신 안 함
-MASTER_PARQ = DATA_DIR / "master_photoism.parquet"    # canonical
+# ★대량 재적재용 우회로 (2026-08-06).
+#   PHOTOISM_MASTER 로 다른 parquet 을 지정하면 운영본을 안 건드리고 거기에 쌓는다.
+#   전량 재적재는 월 단위로 20번 돌려야 하는데, 매번 운영 parquet 을 교체하면
+#   그때마다 대시보드가 파일을 잡고 있어 실패하고(WinError 5) 서비스도 끊긴다.
+#   별도 파일에 다 쌓은 뒤 **마지막에 한 번만** 바꾸는 게 맞다.
+# ★PHOTOISM_SKIP_AGG=1 이면 집계 생성을 건너뛴다. 월마다 6.8M행 집계를 다시
+#   만들 이유가 없다 — 마지막에 한 번만 만든다.
+MASTER_PARQ = Path(os.environ.get("PHOTOISM_MASTER")
+                   or (DATA_DIR / "master_photoism.parquet"))    # canonical
 
 def load_config():
     with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -319,6 +327,9 @@ def main():
     log(f"[완료] master_photoism.parquet 갱신 — 누적 {total:,}건 ({mb:.0f} MB)")
 
     # 집계 parquet 갱신 (build_photoism_agg 는 DuckDB 로 parquet 직접 읽음 → 메모리 안전)
+    if os.environ.get("PHOTOISM_SKIP_AGG") == "1":
+        log("집계 생성 건너뜀 (PHOTOISM_SKIP_AGG=1)")
+        return
     try:
         from build_photoism_agg import main as build_agg
         log("집계 파일 갱신 중...")
