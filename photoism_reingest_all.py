@@ -156,6 +156,9 @@ def main() -> int:
         after = _rows(WORK)
         if r.returncode == 0:
             st["done"].append([a, b])
+            # ★재시도로 성공했으면 실패 목록에서 빼야 한다. 안 지우면 다 됐는데도
+            #   '실패 7개월' 이 그대로 찍혀서 뭐가 남았는지 알 수 없다.
+            st["failed"] = [f for f in st["failed"] if list(f) != [a, b]]
             print(f"    완료 ({mins:.0f}분) {before:,} -> {after:,}행 ({after - before:+,})", flush=True)
         else:
             st["failed"].append([a, b])
