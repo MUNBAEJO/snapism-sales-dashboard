@@ -224,7 +224,7 @@ def crawl_country(browser, country_code, country_info, username, password, date_
             log("[실패] JWT 토큰 추출 실패")
             return False
 
-        log(f"토큰 확보 ({token[:30]}...)")
+        log(f"토큰 확보 ({len(token)}자)")
 
         # 2. UTC 날짜 계산 (국가별 시간대 적용)
         tz_offset = country_info.get("timezone_offset", 9)   # 기본 KST(+9)
@@ -280,7 +280,7 @@ def crawl_country_days(browser, country_code, country_info, username, password, 
         if not token:
             log("[실패] JWT 토큰 추출 실패")
             return 0
-        log(f"토큰 확보 ({token[:30]}...)")
+        log(f"토큰 확보 ({len(token)}자)")
 
         tz_offset  = country_info.get("timezone_offset", 9)
         cmsapi_url = country_info.get("cmsapi") or get_cmsapi_url(url)
