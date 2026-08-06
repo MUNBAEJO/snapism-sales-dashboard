@@ -103,11 +103,18 @@ def main() -> int:
             print("작업본이 없어요. 먼저 재적재를 돌려 주세요.")
             return 1
         w, l = _rows(WORK), _rows(LIVE)
-        print(f"작업본 {w:,}행 · 운영본 {l:,}행")
-        # ★줄어들면 무언가 잘못된 것이다. 사람이 확인하기 전엔 안 바꾼다.
-        if w < l:
-            print("작업본이 운영본보다 적어요. 교체하지 않습니다 — 먼저 확인해 주세요.")
+        print(f"작업본 {w:,}행 · 운영본 {l:,}행 ({w - l:+,})")
+        # ★조금 줄어드는 건 정상이다 — 날짜 기준을 현지시각으로 바꾸면서 2025-01-01
+        #   이전으로 밀려난 행은 범위 밖이라 빠진다. 다만 크게 줄면 뭔가 잘못된 것이라
+        #   사람이 확인하기 전엔 안 바꾼다.
+        LOSS_OK = 0.001                       # 0.1% (약 3.7만 행)
+        if l and (l - w) > max(1000, l * LOSS_OK):
+            print(f"작업본이 {l - w:,}행 적어요(허용 {int(max(1000, l * LOSS_OK)):,}행 초과).")
+            print("교체하지 않습니다 — 먼저 확인해 주세요.")
             return 1
+        if w < l:
+            print(f"※ {l - w:,}행 줄었어요. 시차 전환으로 범위 밖(2024-12-31)으로 "
+                  "밀려난 행이라 정상 범위로 봅니다.")
         bak = DATA / "_backup_20260805" / "master_photoism.parquet.pre_reingest"
         bak.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(LIVE, bak)
