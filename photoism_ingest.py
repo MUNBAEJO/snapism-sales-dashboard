@@ -17,7 +17,6 @@ canonical 은 parquet 로 전환했다(대용량 CSV 미사용). 기존 master_p
 
 실행: python photoism_ingest.py [YYYY-MM-DD]   (날짜 생략 시 최신 누적일부터)
 """
-import io
 import os
 import re
 import sys
@@ -265,6 +264,7 @@ def main():
         return
 
     new_df = pd.concat(frames, ignore_index=True)
+    frames.clear()                              # concat 이 복사본을 만든다 — 원본은 놓아준다
     new_df["_k"] = new_df["결제일시"].astype(str)
     before = len(new_df)
     new_df = new_df.drop_duplicates(
@@ -290,12 +290,17 @@ def main():
     new_df = new_df.drop(columns=["_kiosk"], errors="ignore")
 
     # CSV 직렬화와 동일한 문자열 포맷으로 변환(기존 parquet 이 전부 문자열 스키마라 일치 필요)
-    buf = io.StringIO()
-    new_df.to_csv(buf, index=False, encoding="utf-8-sig")
-    buf.seek(0)
-    new_str = pd.read_csv(buf, dtype=str, keep_default_na=False)
+    # ★예전엔 io.StringIO 를 썼는데, 한 달치 CSV 본문 + read_csv 결과가 **동시에** 메모리에
+    #   올라가 최근 달(2026-07 은 230만 행)에서 MemoryError 로 죽었다(2026-08-06 전량
+    #   재적재에서 7개월 실패). 디스크를 거치면 한 벌만 들고 있으면 된다.
+    tmp_csv = DATA_DIR / "_photoism_new.csv"
+    new_df.to_csv(tmp_csv, index=False, encoding="utf-8-sig")
+    del new_df                                  # 원본은 더 안 쓴다 — 바로 놓아준다
+    new_str = pd.read_csv(tmp_csv, dtype=str, keep_default_na=False)
     tmp_new = DATA_DIR / "_photoism_new.parquet"
     new_str.to_parquet(tmp_new, compression="snappy", index=False)
+    del new_str
+    tmp_csv.unlink(missing_ok=True)
 
     import duckdb
     new_master = MASTER_PARQ.with_suffix(".parquet.tmp")
