@@ -172,12 +172,40 @@ def _share_chart(rows, total):
     return f'<div class="bars">{h}</div>'
 
 
+def _alloc_settle(krws, rs):
+    """국가별 정산액. 합계가 **총 기준액 × 요율을 한 번 반올림한 값**과 같도록 배분.
+
+    ★국가마다 따로 반올림해 더하면 총액 기준과 어긋난다(김준수 13,555,438 vs
+      13,555,436). 담당자 시트는 총액에 요율을 한 번 곱해 지급액을 내므로 그쪽에
+      맞춘다. 그러면서도 표의 세로 합은 그대로 맞아야 해서, 목표를 먼저 정하고
+      최대잔여법으로 국가에 나눈다(멤버 배분과 같은 방식).
+    """
+    if not rs:
+        return [0] * len(krws)
+    from settlement_calc import _round_half_up
+    target = _round_half_up(sum(krws) * rs)
+    raw = [k * rs for k in krws]
+    base = [int(x) for x in raw]                 # 0 쪽 절사
+    gap = target - sum(base)
+    if gap > 0:
+        order = sorted(range(len(raw)), key=lambda i: (-(raw[i] - base[i]), -krws[i]))
+        for i in order[:gap]:
+            base[i] += 1
+    elif gap < 0:
+        order = sorted((i for i in range(len(raw)) if base[i] > 0),
+                       key=lambda i: (raw[i] - base[i], -krws[i]))
+        for i in order[:-gap]:
+            base[i] -= 1
+    return base
+
+
 def _country_table(rows, qty_label, rate_pct, rs):
     """국가 | 통화 | 수량 | 현지 매출 | 적용 환율 | 매출(KRW) | 요율 | 정산액 | 비중
 
-    ★소계 정산액은 각 행 정산액의 합. 기준액×요율로 내면 1원 어긋난다.
+    ★소계 정산액은 각 행 정산액의 합이면서 총액×요율과도 같다(_alloc_settle).
     """
     tot_krw = sum(r["매출액"] for r in rows) or 1
+    amts = _alloc_settle([int(r["매출액"]) for r in rows], rs)
     tq = tk = ts = 0
     # 한 페이지에 들어갈 만큼 자동으로 조인다(기본 27행까지 여유).
     dens = " d2" if len(rows) > 33 else (" d1" if len(rows) > 26 else "")
@@ -185,9 +213,9 @@ def _country_table(rows, qty_label, rate_pct, rs):
          f'<th>{qty_label}</th><th>현지 매출</th><th>적용 환율</th>'
          '<th>매출(KRW)</th><th>요율</th><th>정산액</th>'
          '<th>비중</th></tr>')
-    for r in rows:
+    for _i, r in enumerate(rows):
         krw, loc, q = int(r["매출액"]), int(r["현지"]), int(r["수량"])
-        amt = rhe(krw * rs) if rs else 0
+        amt = amts[_i]
         tq += q; tk += krw; ts += amt
         p = krw / tot_krw * 100
         zero = krw == 0

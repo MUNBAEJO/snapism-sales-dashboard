@@ -3,11 +3,14 @@
 확정 매핑(`settlement_map`)으로 고른 타이틀만 가지고
 국가별 매출·수량·단가·멤버별 상세와 수취처별 정산액을 낸다.
 
-★수량은 두 브랜드 같은 공식 `floor(현지 분자 ÷ 현지 평균단가)` 이고,
-  문서 표기도 **'건수'로 통일**한다(2026-07-31). 포토이즘은 프레임, 스내피즘은
+★수량은 **단가별로 나눠** `ROUNDDOWN(현지 분자 ÷ 단가)` 하고 합친다(2026-08-06).
+  문서 표기는 **'건수'로 통일**한다(2026-07-31). 포토이즘은 프레임, 스내피즘은
   스티커·포토카드로 물건만 다를 뿐 둘 다 '팔린 개수'라 같은 지표다.
-★'현지 매출' 은 매출액과 **같은 분자**를 현지통화로 적는다. 실결제만 쓰면
-  전액 쿠폰 결제인 국가가 0으로 보여 "매출 없는데 정산액이 있다"가 된다.
+★'현지 매출' 은 그 건수에 단가를 곱한 **정산 기준액**이다. 나누어떨어지지 않는
+  자투리는 버린다 — 담당자가 손으로 해 오던 방식(`ROUNDDOWN(금액/단가)`)이고,
+  1,600엔짜리 1,000엔 프레임은 1건 1,000엔으로 친다.
+  ★단가를 하나로 뭉치면 안 된다. 한 나라에 단가가 섞인 타이틀(KBO 5,000·7,000)에서
+    평균단가로 한 번에 나누면 KBO 한국이 18,103 → 18,056건으로 47건 사라진다.
   검증식: 현지 × 환율 == 매출(KRW).
 
 관련: CURRENT-PROJECTS/IP-정산서-생성.md · 지라 CO-288
@@ -195,6 +198,68 @@ def _ph_num(cpn: str, coin: str, pay="pay", c1="cpn", c2="coin", tot="tot") -> s
             f" ELSE {pay} + ({add_c}) + ({add_i}) END")
 
 
+# ── 절사·반올림 (엑셀과 같은 규칙) ─────────────────────────────────────────
+def _trunc(x) -> int:
+    """엑셀 ROUNDDOWN(x, 0). **0 쪽으로** 버린다.
+
+    ★floor 를 쓰면 안 된다. 취소는 음수로 들어오는데 floor(-1.5) = -2 라
+      실제보다 한 건 더 깎인다. int() 는 0 쪽 절사라 엑셀과 같다.
+    """
+    try:
+        return int(float(x))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _round_half_up(x) -> int:
+    """엑셀 ROUND(x, 0). 0.5 는 **올린다**.
+
+    ★파이썬 내장 round() 는 0.5 를 짝수로 보낸다(은행식). 브루나이
+      10 BND × 1,124.45 = 11,244.5 가 11,244 로 내려가 시트(11,245)와
+      1원이 어긋났다. 같은 문서에서 1원이 안 맞으면 반드시 질문이 들어온다.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    try:
+        return int(Decimal(str(float(x))).quantize(Decimal("1"),
+                                                   rounding=ROUND_HALF_UP))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _settle_by_price(g: pd.DataFrame) -> tuple[int, int, float | None]:
+    """한 나라의 (단가, 현지분자) 묶음 → (건수, 정산 현지액, 대표단가).
+
+    단가마다 따로 절사한 뒤 합친다. 뭉쳐서 한 번만 나누면 단가 비율이 뭉개져
+    KBO 한국에서 47건이 사라진다.
+
+    ★단가가 0/없는 행은 그냥 버리면 돈이 사라진다(전 기간 1,585행, 태국
+      '250627 sm' 715행 등). 같은 나라에서 제일 큰 단가 묶음에 얹어 한 번만
+      절사한다 — 담당자가 나라당 단가 하나로 계산하던 방식과 같은 취급이다.
+      나라 전체에 단가가 하나도 없으면 절사하지 않고 금액만 살린다(건수 0).
+    """
+    ok = g[pd.to_numeric(g["up"], errors="coerce").fillna(0) > 0]
+    orphan = int(g.loc[~g.index.isin(ok.index), "현지"].sum())
+    if ok.empty:
+        return 0, orphan, None
+    ok = ok.copy()
+    top = ok["현지"].abs().idxmax()
+    ok.loc[top, "현지"] = ok.loc[top, "현지"] + orphan
+    q = (ok["현지"] / ok["up"]).map(_trunc)
+    return int(q.sum()), int((q * ok["up"]).sum()), float(ok.loc[top, "up"])
+
+
+def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
+    """(국가 × 단가) 행을 국가 단위로 접는다. 절사는 여기서 한 번만 일어난다."""
+    out = []
+    for nat, g in df.groupby("국가", sort=False):
+        unit = g["unit"].iloc[0]
+        q, loc, up = _settle_by_price(g)
+        out.append({"국가": nat, "unit": unit, "수량": q, "현지": loc,
+                    "매출액": _round_half_up(loc * float(rates.get(unit, 1))),
+                    "건수": int(g["건수"].sum()), "단가": up})
+    return pd.DataFrame(out)
+
+
 # ── 국가별 상세 ────────────────────────────────────────────────────────────
 def country_detail(brand: str, titles: list[str], start: str, end: str,
                    rates: dict) -> pd.DataFrame:
@@ -229,13 +294,11 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                   SELECT *, {_ph_num(cpn, coin)} AS num
                   FROM t
                 )
-                SELECT "국가", any_value(unit) AS unit,
+                SELECT "국가", any_value(unit) AS unit, up,
                        CAST(SUM(num) AS BIGINT) AS 현지,
-                       CAST(ROUND(SUM(num * r)) AS BIGINT) AS 매출액,
-                       CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수,
-                       AVG(NULLIF(up, 0)) AS 단가
-                -- 음수(취소)를 살려야 차감된다
-                FROM f WHERE num <> 0 GROUP BY 1
+                       CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수
+                -- 음수(취소)를 살려야 차감된다. 단가별로 나눠 담고 절사는 파이썬에서.
+                FROM f WHERE num <> 0 GROUP BY 1, 3
             """).df()
         else:
             df = con.execute(f"""
@@ -249,12 +312,10 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                     AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
                     AND NOT COALESCE("취소 여부", FALSE)
                 )
-                SELECT "국가", any_value(unit) AS unit,
+                SELECT "국가", any_value(unit) AS unit, up,
                        CAST(SUM(num) AS BIGINT) AS 현지,
-                       CAST(ROUND(SUM(num * r)) AS BIGINT) AS 매출액,
-                       CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수,
-                       AVG(NULLIF(up, 0)) AS 단가
-                FROM t WHERE num <> 0 GROUP BY 1
+                       CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수
+                FROM t WHERE num <> 0 GROUP BY 1, 3
             """).df()
     finally:
         con.close()
@@ -262,8 +323,8 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     if df.empty:
         return pd.DataFrame(columns=["국가", "unit", "수량", "현지", "매출액", "건수"])
     df["국가"] = df["국가"].map(lambda x: NAT_KO.get(x, x))
-    # ★수량은 원화가 아니라 현지통화끼리 나눈다. 환산 후 나누면 환율배수만큼 부푼다.
-    df["수량"] = (df["현지"] / df["단가"].replace(0, pd.NA)).fillna(0).astype("int64")
+    # ★절사는 현지통화끼리 한다. 환산 후 나누면 환율배수만큼 부푼다.
+    df = _fold_prices(df, rates)
     return df.sort_values("매출액", ascending=False).reset_index(drop=True)
 
 
@@ -351,7 +412,7 @@ def set_member_alias(ko: str, en: str) -> None:
     _alias_store.mutate(lambda d: d.setdefault("aliases", {}).update({ko: en}))
 
 
-def _allocate_krw(df: "pd.DataFrame") -> "pd.Series":
+def _allocate_krw(df: "pd.DataFrame", targets: dict | None = None) -> "pd.Series":
     """멤버별 매출(원)을 **국가 합계에 정확히 맞춰** 정수로 배분한다(최대잔여법).
 
     ★멤버마다 반올림해 더하면 국가 합계가 국가별 내역과 1원씩 어긋난다(중국
@@ -360,20 +421,32 @@ def _allocate_krw(df: "pd.DataFrame") -> "pd.Series":
     """
     import math
     out = pd.Series(0, index=df.index, dtype="int64")
-    for _, g in df.groupby("국가"):
-        target = int(round(g["krw_raw"].sum()))
-        base = g["krw_raw"].map(math.floor).astype("int64")
+    for nat, g in df.groupby("국가"):
+        # ★국가 소계는 단가별 절사를 거친 값이다(country_detail). 원금액을 그대로
+        #   더하면 별첨 합계가 본문보다 커진다(일본 3,541,762 vs 본문 3,536,350).
+        #   소계를 목표로 받아 **비례 축소**한 뒤 최대잔여법으로 정수를 맞춘다.
+        raw = g["krw_raw"].astype(float)
+        tot = float(raw.sum())
+        target = (int(targets[nat][1]) if targets and nat in targets
+                  else int(round(tot)))
+        scaled = raw * (target / tot) if tot else raw * 0.0
+        base = scaled.map(math.floor).astype("int64")
         gap = target - int(base.sum())
+        frac = scaled - base
         if gap > 0:
-            frac = g["krw_raw"] - base
             order = sorted(g.index, key=lambda i: (-frac[i], str(g.loc[i, "member"])))
             for i in order[:gap]:
                 base[i] += 1
+        elif gap < 0:
+            order = sorted([i for i in g.index if base[i] > 0],
+                           key=lambda i: (frac[i], str(g.loc[i, "member"])))
+            for i in order[:-gap]:
+                base[i] -= 1
         out.loc[base.index] = base
     return out
 
 
-def _allocate(df: "pd.DataFrame") -> "pd.Series":
+def _allocate(df: "pd.DataFrame", targets: dict | None = None) -> "pd.Series":
     """멤버별 수량을 **국가 소계에 정확히 맞춰** 배분한다(최대잔여법).
 
     ★왜 필요한가 — 국가별 내역은 '국가 전체 분자 ÷ 국가 평균단가'를 한 번 내림하고,
@@ -389,7 +462,10 @@ def _allocate(df: "pd.DataFrame") -> "pd.Series":
         if not cnt:
             continue
         nat_price = g["up_sum"].sum() / cnt            # 국가 평균단가(행 기준)
-        target = int(g["num"].sum() / nat_price) if nat_price else 0
+        # ★국가 소계는 단가별로 따로 절사한 값이라 평균단가로 다시 내면 어긋난다
+        #   (KBO 한국 18,103 vs 평균단가 18,056). 소계를 그대로 목표로 받는다.
+        target = (int(targets[nat][0]) if targets and nat in targets
+                  else (int(g["num"].sum() / nat_price) if nat_price else 0))
         q = g.apply(lambda r: (r["num"] / (r["up_sum"] / r["up_cnt"]))
                     if r["up_cnt"] else 0.0, axis=1)
         base = q.astype("int64")
@@ -412,7 +488,8 @@ def _allocate(df: "pd.DataFrame") -> "pd.Series":
 
 
 def member_pivot(brand: str, titles: list[str], start: str, end: str,
-                 rates: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+                 rates: dict,
+                 targets: dict | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """국가 × 멤버의 **(수량, 매출KRW)** 두 표. 두 브랜드 다 나온다 —
     포토이즘은 '프레임 이름', 스내피즘은 '상품 이름' 이 멤버다.
 
@@ -486,8 +563,8 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
     df = df.groupby(["국가", "member"], as_index=False).agg(
         num=("num", "sum"), krw_raw=("krw_raw", "sum"),
         up_sum=("up_sum", "sum"), up_cnt=("up_cnt", "sum"))
-    df["수량"] = _allocate(df)
-    df["매출"] = _allocate_krw(df)
+    df["수량"] = _allocate(df, targets)
+    df["매출"] = _allocate_krw(df, targets)
     piv = df.pivot_table(index="국가", columns="member", values="수량",
                          aggfunc="sum", fill_value=0).astype(int)
     rev = df.pivot_table(index="국가", columns="member", values="매출",
@@ -751,8 +828,10 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
         d = fill_open(country_detail(brand, titles, start, end, rates),
                       open_countries(brand, start, end))
         ctx["details"][brand] = d
+        # 별첨 합계를 본문 국가 소계에 맞춘다 — 같은 문서에서 두 숫자가 다르면 안 된다.
+        _tg = {r["국가"]: (int(r["수량"]), int(r["매출액"])) for _, r in d.iterrows()}
         ctx["pivots"][brand], ctx["pivots_rev"][brand] = member_pivot(
-            brand, titles, start, end, rates)
+            brand, titles, start, end, rates, _tg)
         ctx["titles"][brand] = titles
         ctx["rs"][brand] = get_rs(brand, ticket)
         ctx["mg"][brand] = get_mg(brand, ticket)
