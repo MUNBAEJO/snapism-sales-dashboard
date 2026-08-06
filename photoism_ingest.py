@@ -144,6 +144,13 @@ def parse_excel(filepath: Path, country_code: str, config: dict) -> pd.DataFrame
         "취소 여부":      cancelled,
         "지역":           df.get("지역", ""),
         "국가코드":       country_code,
+        # ★중복제거 전용 임시열. 적재 직전에 버린다(parquet 스키마는 그대로 둔다).
+        #   같은 매장에서 **같은 초에 다른 키오스크 두 대**가 같은 프레임을 팔면
+        #   결제시각+매장+프레임+금액이 전부 같아 한 건이 지워졌다.
+        #   실측(KR 2026-06-20): 64,262행 중 4행 손실 → 키오스크를 넣으면 손실 0.
+        #   '원본/취소 거래 ID'·'승인 번호'는 이 리포트에서 전부 비어 있어 못 쓴다.
+        "_kiosk":         df.get("키오스크 ID", "").astype(str)
+                          if "키오스크 ID" in df.columns else "",
     })
 
     return out
@@ -261,8 +268,11 @@ def main():
     new_df["_k"] = new_df["결제일시"].astype(str)
     before = len(new_df)
     new_df = new_df.drop_duplicates(
-        subset=["국가코드", "_k", "매장 이름", "프레임 이름", "최종 결제 금액"], keep="last"
+        subset=["국가코드", "_k", "매장 이름", "_kiosk", "프레임 이름", "최종 결제 금액"],
+        keep="last"
     ).drop(columns=["_k"])
+    _lost = before - len(new_df)
+    log(f"  중복 제거: {before:,} -> {len(new_df):,} ({_lost:,}건)")
     # 스필오버 방지(타임존 경계로 파일에 섞인 인접일): cutoff 미만은 기존 master 유지,
     # cutoff 이상만 신규로 교체. → 완결된 과거일(예: 06-08)을 부분 데이터로 덮어쓰지 않는다.
     if cutoff is not None:
@@ -276,6 +286,8 @@ def main():
         return
     new_dates = sorted(set(pd.to_datetime(new_df["날짜"], errors="coerce").dt.date.dropna()))
     log(f"  반영 대상: {len(new_df):,}건 · 날짜 {[str(d) for d in new_dates]}")
+    # 중복제거를 마쳤으니 임시열은 버린다 — parquet 스키마가 달라지면 기존 파일과 안 붙는다.
+    new_df = new_df.drop(columns=["_kiosk"], errors="ignore")
 
     # CSV 직렬화와 동일한 문자열 포맷으로 변환(기존 parquet 이 전부 문자열 스키마라 일치 필요)
     buf = io.StringIO()
