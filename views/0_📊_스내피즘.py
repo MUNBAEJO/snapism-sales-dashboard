@@ -177,6 +177,24 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .seg-real{ background:var(--brand-2); } .seg-cp{ background:var(--sky); }
 .xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
 .vlab{ font-size:10.5px; color:var(--text-2); font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* 면적 선그래프 — 주·일처럼 점이 많을 때. 막대로 그리면 341개가 서로 붙어 못 읽는다. */
+.lchart{ position:relative; height:200px; border-bottom:1px solid var(--border); }
+.lchart svg{ display:block; width:100%; height:100%; }
+/* hover 는 SVG 밖 HTML 열로 받는다 — SVG 안 요소로는 바깥 툴팁을 못 살린다(형제가 아님) */
+.lhits{ position:absolute; inset:0; display:flex; }
+.hcol{ flex:1 1 0; position:relative; cursor:crosshair; }
+.hcol::after{ content:""; position:absolute; left:50%; top:0; bottom:0; width:1px;
+              background:var(--text-3); opacity:0; }
+.hcol:hover::after{ opacity:.35; }
+.hcol .ltip{ position:absolute; left:50%; transform:translate(-50%,-8px); opacity:0;
+             pointer-events:none; background:var(--text); color:#fff; font-size:11px;
+             font-weight:700; line-height:1.55; padding:6px 9px; border-radius:7px;
+             white-space:nowrap; z-index:6; transition:opacity .08s; }
+.hcol:hover .ltip{ opacity:1; }
+.hcol.st .ltip{ left:0; transform:translate(0,-8px); }      /* 왼쪽 끝 — 잘리지 않게 */
+.hcol.en .ltip{ left:auto; right:0; transform:translate(0,-8px); }
+.lxlab{ display:flex; justify-content:space-between; font-size:11px; color:var(--text-3);
+        font-weight:600; margin-top:7px; }
 /* 시간대 막대 */
 .hours{ display:flex; align-items:flex-end; gap:5px; height:180px; border-bottom:1px solid var(--border); padding-top:8px; }
 .hours .hc{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
@@ -805,10 +823,69 @@ def fmt_short(n):
     return f"₩{n:,}"
 
 
+def _area_chart(rows, series):
+    """면적 선그래프(SVG). rows=[(label, v1, v2, ...)], series=[(이름, 색), ...].
+
+    ★왜 막대가 아니라 선인가 — 추이 차트가 조회 기간과 무관하게 최근 1년이 되면서
+      '일' 보기는 점이 341개다. 막대로 그리면 서로 붙어 형태도 라벨도 안 읽힌다.
+      선은 점이 많을수록 오히려 흐름이 또렷해진다. '월'(12개)은 막대가 낫다.
+    누적(스택)이라 값은 아래에서부터 쌓는다 — 맨 위 선이 합계다."""
+    n = len(rows)
+    W, H, PAD = 1000.0, 180.0, 6.0            # viewBox 좌표(실제 폭은 CSS 가 100%)
+    tots = [sum(r[1:]) for r in rows]
+    mx = max(tots) or 1
+    x = (lambda i: (W * i / (n - 1)) if n > 1 else W / 2)
+    y = (lambda v: PAD + (H - PAD) * (1 - v / mx))
+
+    body, base = "", [0.0] * n
+    for si, (name, color) in enumerate(series):
+        top = [base[i] + rows[i][si + 1] for i in range(n)]
+        up = " ".join(f"{x(i):.2f},{y(top[i]):.2f}" for i in range(n))
+        dn = " ".join(f"{x(i):.2f},{y(base[i]):.2f}" for i in range(n - 1, -1, -1))
+        # ★vector-effect — viewBox 를 preserveAspectRatio="none" 로 늘리면 선 두께가
+        #   가로·세로 배율만큼 달라져 들쭉날쭉해 보인다. 이걸 주면 화면 기준 2px 로 고정된다.
+        body += (f'<polygon points="{up} {dn}" fill="{color}" fill-opacity=".22"/>'
+                 f'<polyline points="{up}" fill="none" stroke="{color}" stroke-width="2" '
+                 f'vector-effect="non-scaling-stroke" stroke-linejoin="round" '
+                 f'stroke-linecap="round"/>')
+        base = top
+
+    # 가로 격자 — 값 눈금 없이 선만 있으면 크기를 가늠할 수 없다. 최고점 라벨을 같이 준다.
+    grid = "".join(f'<line x1="0" y1="{y(mx * f):.1f}" x2="{W}" y2="{y(mx * f):.1f}" '
+                   f'stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" '
+                   f'vector-effect="non-scaling-stroke"/>' for f in (0.5, 1.0))
+    # hover 열 — 점마다 하나. 열 안에 툴팁을 넣어야 CSS :hover 로 띄울 수 있다.
+    hits = ""
+    for i, r in enumerate(rows):
+        _parts = " · ".join(f"{nm} {fmt_krw(int(r[si + 1]))}"
+                            for si, (nm, _) in enumerate(series) if r[si + 1])
+        _cls = "hcol st" if i < n * 0.06 else ("hcol en" if i > n * 0.94 else "hcol")
+        _bot = max(4.0, min(88.0, tots[i] / mx * 88.0))     # 툴팁을 점 근처에
+        hits += (f'<div class="{_cls}"><div class="ltip" style="bottom:{_bot:.1f}%">'
+                 f'{r[0]}<br>합계 {fmt_krw(int(tots[i]))}'
+                 + (f'<br>{_parts}' if _parts else '') + '</div></div>')
+    st.markdown(
+        f'<div class="lchart">'
+        f'<svg viewBox="0 0 {W:.0f} {H:.0f}" preserveAspectRatio="none">{grid}{body}</svg>'
+        f'<div class="lhits">{hits}</div></div>'
+        f'<div class="lxlab"><span>{rows[0][0]}</span>'
+        f'<span>최고 {fmt_short(int(mx))}</span>'
+        f'<span>{rows[-1][0]}</span></div>',
+        unsafe_allow_html=True)
+
+
 def css_trend(rows, gran):
-    """시안과 동일한 CSS 스택 막대 추이. rows=[(label, 실결제, 쿠폰)]."""
+    """시안과 동일한 CSS 스택 막대 추이. rows=[(label, 실결제, 쿠폰)].
+    ★'주'·'일'은 점이 많아 막대가 안 읽힌다 → 면적 선그래프로 넘긴다."""
     if not rows:
         st.info("선택한 조건에 맞는 데이터가 없어요. 기간·필터를 바꿔 보세요.")
+        return
+    if gran != "월" and len(rows) > 20:
+        st.markdown(
+            '<div class="legend"><span><i class="dot" style="background:var(--brand-2)"></i>실결제</span>'
+            '<span><i class="dot" style="background:var(--sky)"></i>쿠폰 할인</span></div>',
+            unsafe_allow_html=True)
+        _area_chart(rows, [("실결제", "var(--brand-2)"), ("쿠폰 할인", "var(--sky)")])
         return
     mx = max((r[1] + r[2]) for r in rows) or 1
     # ★막대가 많아지면(최근 1년 · 일 단위면 365개) 라벨이 겹쳐 아무것도 못 읽는다.

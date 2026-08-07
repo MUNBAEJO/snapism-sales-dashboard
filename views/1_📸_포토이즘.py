@@ -172,6 +172,24 @@ h2, h3{ letter-spacing:-0.02em !important; }
         border-radius:5px 5px 0 0; overflow:hidden; }
 .xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
 .vlab{ font-size:10.5px; color:var(--text-2); font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* 면적 선그래프 — 주·일처럼 점이 많을 때. 막대로 그리면 341개가 서로 붙어 못 읽는다. */
+.lchart{ position:relative; height:200px; border-bottom:1px solid var(--border); }
+.lchart svg{ display:block; width:100%; height:100%; }
+/* hover 는 SVG 밖 HTML 열로 받는다 — SVG 안 요소로는 바깥 툴팁을 못 살린다(형제가 아님) */
+.lhits{ position:absolute; inset:0; display:flex; }
+.hcol{ flex:1 1 0; position:relative; cursor:crosshair; }
+.hcol::after{ content:""; position:absolute; left:50%; top:0; bottom:0; width:1px;
+              background:var(--text-3); opacity:0; }
+.hcol:hover::after{ opacity:.35; }
+.hcol .ltip{ position:absolute; left:50%; transform:translate(-50%,-8px); opacity:0;
+             pointer-events:none; background:var(--text); color:#fff; font-size:11px;
+             font-weight:700; line-height:1.55; padding:6px 9px; border-radius:7px;
+             white-space:nowrap; z-index:6; transition:opacity .08s; }
+.hcol:hover .ltip{ opacity:1; }
+.hcol.st .ltip{ left:0; transform:translate(0,-8px); }      /* 왼쪽 끝 — 잘리지 않게 */
+.hcol.en .ltip{ left:auto; right:0; transform:translate(0,-8px); }
+.lxlab{ display:flex; justify-content:space-between; font-size:11px; color:var(--text-3);
+        font-weight:600; margin-top:7px; }
 .hours{ display:flex; align-items:flex-end; gap:5px; height:180px; border-bottom:1px solid var(--border); padding-top:8px; }
 .hours .hc{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
 .hours .hb2{ width:70%; border-radius:3px 3px 0 0; }
@@ -983,13 +1001,68 @@ def fmt_short(n):
     return f"₩{n:,}"
 
 
+def _area_chart(labels, data, series):
+    """스택 면적 선그래프(SVG). data={시리즈:[값...]}, series=아래부터 쌓을 순서.
+
+    ★왜 막대가 아니라 선인가 — 추이 차트가 조회 기간과 무관하게 최근 1년이 되면서
+      '일' 보기는 점이 341개다. 막대로 그리면 서로 붙어 형태도 라벨도 안 읽힌다.
+      선은 점이 많을수록 오히려 흐름이 또렷해진다. '월'(12개)은 막대가 낫다."""
+    n = len(labels)
+    W, H, PAD = 1000.0, 180.0, 6.0            # viewBox 좌표(실제 폭은 CSS 가 100%)
+    tots = [sum(data[s][i] for s in series) for i in range(n)]
+    mx = max(tots) or 1
+    x = (lambda i: (W * i / (n - 1)) if n > 1 else W / 2)
+    y = (lambda v: PAD + (H - PAD) * (1 - v / mx))
+
+    body, base = "", [0.0] * n
+    for s in series:
+        color = _GUB_COLORS.get(s, "#888")
+        top = [base[i] + data[s][i] for i in range(n)]
+        up = " ".join(f"{x(i):.2f},{y(top[i]):.2f}" for i in range(n))
+        dn = " ".join(f"{x(i):.2f},{y(base[i]):.2f}" for i in range(n - 1, -1, -1))
+        # ★vector-effect — viewBox 를 preserveAspectRatio="none" 로 늘리면 선 두께가
+        #   가로·세로 배율만큼 달라져 들쭉날쭉해 보인다. 이걸 주면 화면 기준 2px 로 고정된다.
+        body += (f'<polygon points="{up} {dn}" fill="{color}" fill-opacity=".26"/>'
+                 f'<polyline points="{up}" fill="none" stroke="{color}" stroke-width="1.8" '
+                 f'vector-effect="non-scaling-stroke" stroke-linejoin="round" '
+                 f'stroke-linecap="round"/>')
+        base = top
+
+    grid = "".join(f'<line x1="0" y1="{y(mx * f):.1f}" x2="{W}" y2="{y(mx * f):.1f}" '
+                   f'stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4" '
+                   f'vector-effect="non-scaling-stroke"/>' for f in (0.5, 1.0))
+    hits = ""
+    for i, lab in enumerate(labels):
+        _parts = " · ".join(f"{s} {fmt_krw(int(data[s][i]))}"
+                            for s in series if data[s][i] > 0)
+        _cls = "hcol st" if i < n * 0.06 else ("hcol en" if i > n * 0.94 else "hcol")
+        _bot = max(4.0, min(88.0, tots[i] / mx * 88.0))
+        hits += (f'<div class="{_cls}"><div class="ltip" style="bottom:{_bot:.1f}%">'
+                 f'{lab}<br>합계 {fmt_krw(int(tots[i]))}'
+                 + (f'<br>{_parts}' if _parts else '') + '</div></div>')
+    st.markdown(
+        f'<div class="lchart">'
+        f'<svg viewBox="0 0 {W:.0f} {H:.0f}" preserveAspectRatio="none">{grid}{body}</svg>'
+        f'<div class="lhits">{hits}</div></div>'
+        f'<div class="lxlab"><span>{labels[0]}</span>'
+        f'<span>최고 {fmt_short(int(mx))}</span>'
+        f'<span>{labels[-1]}</span></div>', unsafe_allow_html=True)
+
+
 def css_stack(labels, data, series, gran):
     """시안 CSS 스택 막대 추이 (IP구분별 다중 시리즈).
-    labels=x축, data={시리즈:[값...]} labels 순서, series=그릴 순서."""
+    labels=x축, data={시리즈:[값...]} labels 순서, series=그릴 순서.
+    ★'주'·'일'은 점이 많아 막대가 안 읽힌다 → 면적 선그래프로 넘긴다."""
     if not labels:
         st.info("선택한 조건에 맞는 데이터가 없어요. 기간·구분을 바꿔 보세요.")
         return
     n = len(labels)
+    if gran != "월" and n > 20:
+        leg = "".join(f'<span><i class="dot" style="background:{_GUB_COLORS.get(s, "#888")}"></i>{s}</span>'
+                      for s in series)
+        st.markdown(f'<div class="legend">{leg}</div>', unsafe_allow_html=True)
+        _area_chart(labels, data, series)
+        return
     totals = [sum(data[s][i] for s in series) for i in range(n)]
     mx = max(totals) or 1
     # ★막대가 많아지면(최근 1년 · 일 단위면 365개) 라벨이 겹쳐 아무것도 못 읽는다.
