@@ -249,20 +249,28 @@ def make_panel():
             if not _nats:
                 st.caption("이 기간에 매출이 난 국가가 없어요.")
             else:
-                st.caption(f"비워 두면 기본 요율({a:g}%)을 써요. 다른 나라만 채우세요. "
-                           "여기에 값이 하나라도 있으면 문서의 '요율' 칸은 **국가별**로 적히고, "
-                           "지급액은 나라마다 따로 반올림해 더해요.")
+                st.caption(f"**비워 두면 기본 요율({a:g}%)** 을 써요 — 다른 나라만 채우세요. "
+                           "값을 하나라도 넣으면 문서의 '요율' 칸은 **국가별**로 적히고, "
+                           "지급액은 나라마다 따로 반올림해 더해요. "
+                           "**0 을 넣으면 그 나라는 정말 0%** 로 봐요(빈칸과 달라요).")
                 _cols = st.columns(4)
                 for _i, _n in enumerate(_nats):
-                    _v = _cols[_i % 4].number_input(
+                    _c = _cols[_i % 4]
+                    # ★value=None 이라 빈칸이 유지된다. 0 과 '안 정함'을 구분해야
+                    #   '이 나라는 0%' 계약을 표현할 수 있다.
+                    _v = _c.number_input(
                         _n, 0.0, 100.0,
-                        float(_saved_cc.get(_n, 0) * 100) if _n in _saved_cc else 0.0,
-                        0.5, key=f"rcc_{b}_{_n}")
-                    if _v > 0:
+                        (float(_saved_cc[_n]) * 100 if _n in _saved_cc else None),
+                        0.5, key=f"rcc_{b}_{_n}", placeholder=f"기본 {a:g}")
+                    _eff = _v if _v is not None else a
+                    _c.caption(("↳ " + f"{_eff:g}%") if _v is not None
+                               else f"↳ 기본 {a:g}%")
+                    if _v is not None:
                         _cc_new[_n] = _v / 100
                 if _cc_new:
-                    st.caption("지정: " + " · ".join(f"{k} {v * 100:g}%"
-                                                    for k, v in _cc_new.items()))
+                    st.caption("지정한 나라: " + " · ".join(f"**{k} {v * 100:g}%**"
+                                                        for k, v in _cc_new.items())
+                               + f" · 나머지 {len(_nats) - len(_cc_new)}개국 {a:g}%")
 
         if st.button(f"💾 {sm.BRAND_LABEL[b]} 저장", key=f"sv_{b}",
                      disabled=not CAN_EDIT):

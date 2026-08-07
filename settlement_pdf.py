@@ -206,8 +206,9 @@ def _alloc_settle(krws, rs, rates=None):
 
 
 def _pct(v) -> str:
-    """요율 표기. 7.5% 처럼 소수도 그대로, 정수는 정수로."""
-    return f"{v * 100:g}%" if v else "—"
+    """요율 표기. 7.5% 처럼 소수도 그대로, 정수는 정수로.
+    ★0 과 None 을 구분한다 — 0% 계약인 나라를 '—'(요율 없음)로 적으면 안 된다."""
+    return "—" if v is None else f"{v * 100:g}%"
 
 
 def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):

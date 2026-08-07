@@ -675,8 +675,8 @@ def set_rs(brand: str, ticket: str, agency, mgmt, by: str,
     tk = str(ticket or "").strip().upper()
     key = f"{brand}:{tk}"
     now = datetime.now().isoformat(timespec="seconds")
-    cc = {str(k): float(v) for k, v in (agency_cc or {}).items()
-          if v is not None and float(v) > 0}
+    # ★0 도 저장한다 — '이 나라는 0%' 와 '안 정함(기본 요율)' 은 다른 뜻이다.
+    cc = {str(k): float(v) for k, v in (agency_cc or {}).items() if v is not None}
 
     def _fn(d):
         cur = d.setdefault("rates", {}).get(key) or {}
