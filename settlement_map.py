@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -238,16 +239,26 @@ def candidates(brand: str, title: str) -> list[dict]:
     ★빈 타이틀 가드 — `normalize_title("")` 은 `""` 라서 빈 키에 등록된 티켓
       12장이 통째로 붙는다(CANDIP-26514 등). 후보 탐색 자체를 건너뛴다.
     """
-    if not str(title or "").strip():
+    t = str(title or "").strip()
+    if not t:
         return []
     keyed, tokidx = _indexes(brand)
     seen, out = set(), []
-    for e in title_runs._entries_for(keyed, title, tokidx):
-        tk = str(e.get("ticket_key") or "").strip().upper()
-        if not tk or tk in seen:
-            continue
-        seen.add(tk)
-        out.append({**e, "ticket_key": tk})
+    # ★접두어(PW/L/SP/렌탈…)를 뗀 이름으로도 찾는다 (2026-08-07).
+    #   집계에서 접두어를 타이틀에 살리자 'PW 260710 TWICE' 가 정규화되면서
+    #   'pw260710twice' 가 돼 지라 제목('260710 TWICE')과 안 맞았다. 그 결과
+    #   같은 IP 를 아티스트 구좌만 후보로 띄우고 **PICK 구좌는 통째로 안 보였다**
+    #   — 한꺼번에 정산해야 하는데 반쪽만 잡힌다.
+    #   접두어는 '어느 제품 라인인가'를 가르는 표시이지 IP 이름이 아니므로,
+    #   티켓을 찾을 때는 떼고 본다. 확정은 여전히 사람이 체크한 것만 인정한다.
+    _bare = re.sub(r"^(렌탈|PW|L7|L|P|B|SP)\s+", "", t)
+    for probe in ([t] if _bare == t else [t, _bare]):
+        for e in title_runs._entries_for(keyed, probe, tokidx):
+            tk = str(e.get("ticket_key") or "").strip().upper()
+            if not tk or tk in seen:
+                continue
+            seen.add(tk)
+            out.append({**e, "ticket_key": tk})
     return out
 
 
