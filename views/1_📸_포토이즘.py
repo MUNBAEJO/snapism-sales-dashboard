@@ -992,8 +992,14 @@ def css_stack(labels, data, series, gran):
     n = len(labels)
     totals = [sum(data[s][i] for s in series) for i in range(n)]
     mx = max(totals) or 1
-    gap = "6px" if gran == "일" else ("12px" if gran == "주" else "24px")
-    fs = "10px" if gran == "일" else "11px"
+    # ★막대가 많아지면(최근 1년 · 일 단위면 365개) 라벨이 겹쳐 아무것도 못 읽는다.
+    #   x축 라벨은 26개쯤만 남기고, 막대 위 금액은 아예 뺀다(툴팁으로 본다).
+    #   라벨 목표는 14개쯤 — '07/28주' 같은 라벨이 40px 남짓이라 그 이상은 겹친다.
+    step = 1 if n <= 20 else max(1, -(-n // 14))
+    show_val = n <= 20
+    gap = ("2px" if n > 120 else "4px") if n > 40 else (
+        "6px" if gran == "일" else ("12px" if gran == "주" else "24px"))
+    fs = ("9px" if n > 60 else "10px") if gran == "일" else "11px"
     leg = "".join(f'<span><i class="dot" style="background:{_GUB_COLORS.get(s, "#888")}"></i>{s}</span>'
                   for s in series)
     cols = ""
@@ -1009,10 +1015,12 @@ def css_stack(labels, data, series, gran):
         _tb = min(h, 80)   # 막대가 아주 높으면 툴팁이 카드 밖으로 나가지 않게 상한
         _parts = " · ".join(f'{s} {fmt_krw(data[s][i])}' for s in series if data[s][i] > 0)
         _tip = f'{lab} · 합계 {fmt_krw(tot)}' + (f' · {_parts}' if _parts else '')
+        _xl = lab if (i % step == 0 or i == n - 1) else ""
         cols += (f'<div class="col"><div class="vtip" style="bottom:{_tb}%">{_tip}</div>'
                  f'<div class="stack" style="height:{h}%">{seg}</div>'
-                 f'<div class="xlab" style="font-size:{fs}">{lab}</div>'
-                 f'<div class="vlab">{fmt_short(tot)}</div></div>')
+                 f'<div class="xlab" style="font-size:{fs}">{_xl}</div>'
+                 + (f'<div class="vlab">{fmt_short(tot)}</div>' if show_val else '')
+                 + '</div>')
     st.markdown(f'<div class="legend">{leg}</div><div class="chart" style="gap:{gap}">{cols}</div>',
                 unsafe_allow_html=True)
 
@@ -1521,11 +1529,27 @@ with tab_home:
         _th, _tg = st.columns([2.4, 1])
         with _th:
             st.markdown('<div class="ct" style="margin-bottom:0">📈 매출 추이 '
-                        '<span class="muted">IP구분별</span></div>', unsafe_allow_html=True)
+                        '<span class="muted">IP구분별 · 최근 1년</span></div>',
+                        unsafe_allow_html=True)
         with _tg:
             gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
                                         key="ph_trend_gran", label_visibility="collapsed") or "월"
-        _tsrc = sales[sales["IP구분"].astype(str).isin(present)].copy() if present else pd.DataFrame()
+        # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07 요청).
+        #   흐름은 길게 봐야 읽히는데, 기간을 좁히면 막대 서너 개만 남아 추이가 안 보였다.
+        #   국가·브랜드·매장·IP 필터는 그대로 적용된다(scope = 날짜만 빠진 프레임).
+        _t_end = last_date
+        _t_start = (pd.Timestamp(_t_end).normalize()
+                    - pd.DateOffset(months=11)).replace(day=1).date()
+        _tw = scope[(scope["날짜"] >= _t_start) & (scope["날짜"] <= _t_end)]
+        _tsales = paid_sales(_tw)
+        # ★시리즈 목록은 **1년 창에서** 뽑는다. present 는 조회 기간 기준이라, 이번 달에만
+        #   안 팔린 구분이 1년 차트에서 통째로 사라진다(막대는 있는데 범례가 없어 보인다).
+        _tpresent = []
+        if "IP구분" in _tsales.columns and not _tsales.empty:
+            _tset = set(_tsales.loc[_tsales["IP구분"] != "제외", "IP구분"].astype(str))
+            _tpresent = [g for g in IP_GUBUN_VIEW if g in _tset]
+        _tsrc = (_tsales[_tsales["IP구분"].astype(str).isin(_tpresent)].copy()
+                 if _tpresent else pd.DataFrame())
         if _tsrc.empty:
             css_stack([], {}, [], gran)
         else:
@@ -1535,16 +1559,19 @@ with tab_home:
             periods = sorted(g2["_p"].unique())
             labels = [_plabel(p, gran) for p in periods]
             pidx = {p: i for i, p in enumerate(periods)}
-            data = {g: [0] * len(periods) for g in present}
+            data = {g: [0] * len(periods) for g in _tpresent}
             for _, r in g2.iterrows():
                 _g = str(r["IP구분"])
                 if _g in data:
                     data[_g][pidx[r["_p"]]] = int(r["매출"])
-            css_stack(labels, data, present, gran)
-            st.caption("막대는 IP구분(아티스트·캐릭터·PICK·오리지널·렌탈)별로 쌓았어요. "
+            css_stack(labels, data, _tpresent, gran)
+            st.caption(f"막대는 IP구분(아티스트·캐릭터·PICK·오리지널·렌탈)별로 쌓았어요. "
+                       f"이 차트는 조회 기간과 무관하게 **{_t_start} ~ {_t_end}** 최근 1년이에요. "
                        "전체 순위는 '구좌타입 분석' 탭에서 봐요.")
         helpbox("""
 **매출 추이 (IP구분별 스택)**
+- ★**이 차트만 상단 조회 기간을 안 따라요 — 항상 최근 1년(12개월)이에요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. **국가·브랜드·매장·IP 필터는 그대로 적용돼요.**
+- 막대가 많아지면(일 단위 1년이면 365개) x축 라벨은 26개쯤만 남기고 막대 위 금액은 빼요. 값은 막대에 마우스를 올리면 나와요.
 - 매출액(실결제 + 쿠폰기여 + 코인기여)을 기간(월/주/일)·`IP구분`으로 묶어 쌓은 막대.
 - IP구분 = **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본) · 렌탈** (`IP_GUBUN_SHOWN`).
   - **렌탈·팝업도 2026-08-04 부터 포함**돼요. 다만 **'키오스크 1대당 매출' 카드에서만 빠져요** — 행사 기간만 도는 장비라 분모에 남으면 대당 매출이 실제보다 낮게 나와요.
@@ -1872,11 +1899,15 @@ with tab_nat:
                     .reset_index())
             _rev["국가코드"] = _rev["국가코드"].astype(str).str.lower().str.strip()
             per = _rev.merge(_dd, on="국가코드", how="inner")
-            # 스4·포3.1: 분모를 '총 가동일'이 아니라 '가동 대수'로. 조회기간이 30일이 아닐 때만
+            # 스4·포3.1: 분모를 '총 가동일'이 아니라 '대수'로. 조회기간이 30일이 아닐 때만
             #            30일로 환산(_pkd)해 '1대당 월매출' 라벨을 유지한다.
-            per = per[(per["대수"] > 0) & (per["매출"] > 0)].copy()
-            per["대당월"] = (per["매출"] / per["대수"] / _pkd * 30).round(0).astype("int64")
-            per["대당건"] = (per["건수"] / per["대수"] / _pkd * 30).round(1)
+            # ★분모는 '가동 대수'가 아니라 **매출 발생 대수**다(2026-08-07 요청).
+            #   계약상 가동중이어도 그 기간에 한 건도 안 판 장비가 분모에 남으면,
+            #   장비를 많이 깔아둔 나라일수록 대당 매출이 실제보다 낮게 나온다.
+            #   '실제로 돈을 번 장비 한 대가 얼마를 버는가'를 보는 지표로 통일한다.
+            per = per[(per["매출대수"] > 0) & (per["매출"] > 0)].copy()
+            per["대당월"] = (per["매출"] / per["매출대수"] / _pkd * 30).round(0).astype("int64")
+            per["대당건"] = (per["건수"] / per["매출대수"] / _pkd * 30).round(1)
             per = per.sort_values("대당월", ascending=False)
 
             if not per.empty:
@@ -1886,9 +1917,9 @@ with tab_nat:
                     #   1위로 튄다(포토이즘에서 4대짜리 영국이 1위였다). 3대 고정은 한국 1,600대
                     #   옆에서 너무 얕아 최대 보유국의 1%(최소 3대)로 규모에 맞춘다.
                     #   숨기지는 않는다 — 기준 미달 국가는 표 아래쪽에 '표본 적음'으로 따로 보인다.
-                    _MIN_DEV = max(3, int(-(-per["대수"].max() // 100)))
-                    _big   = per[per["대수"] >= _MIN_DEV]
-                    _small = per[per["대수"] < _MIN_DEV]
+                    _MIN_DEV = max(3, int(-(-per["매출대수"].max() // 100)))
+                    _big   = per[per["매출대수"] >= _MIN_DEV]
+                    _small = per[per["매출대수"] < _MIN_DEV]
                     if _big.empty:                      # 전부 소규모면 하한을 접는다
                         _big, _small = per, per.iloc[0:0]
                     per = pd.concat([_big, _small])     # 둘 다 이미 대당월 내림차순
@@ -1904,7 +1935,9 @@ with tab_nat:
                             '한 매장에 2대가 있고 1대만 돌았어도 2대로 잡혀요">'
                             '매출 발생 ⓘ</span>'
                             '<span class="r">기간 내 변동</span>'
-                            '<span class="r">1대당 월매출</span>'
+                            '<span class="r tip dn" data-tip="매출 ÷ 매출 발생 대수예요. '
+                            '가동 대수가 아니라 실제로 판 장비만 나눠요 — 깔아만 두고 안 판 '
+                            '장비까지 세면 대당 매출이 실제보다 낮게 나와요">1대당 월매출 ⓘ</span>'
                             '<span class="r">1대당 월건수</span>'
                             f'<span class="tip dn" data-tip="1대당 월매출이 가장 높은 {_lead}{josa(_lead, '을', '를')} 100%로 둔 비율 · 총매출 1위와는 다른 순위예요">{_lead} 대비 ⓘ</span></div>')
                     for _, r in per.iterrows():
@@ -1961,13 +1994,14 @@ with tab_nat:
                                        "증설 효과를 가늠할 수 있어요.")
                     helpbox("""
 **키오스크 1대당 매출**
-- **1대당 월매출 = (조회기간 매출 ÷ 가동 대수) ÷ 조회일수 × 30**. **예상치가 아니에요.** 30일 조회면 ×30/30=×1 이라 그대로 한 달 실적, 아니면 30일치로 환산해요(7일만 보면 ×30/7). 월건수도 같은 식(매출 대신 건수).
-  - **분자 = 조회기간 매출 = 실결제 + 쿠폰·코인(정산금액)** · **분모 = 가동 대수 = 렌탈·팝업 뺀 가동중 키오스크 수**.
+- **1대당 월매출 = (조회기간 매출 ÷ 매출 발생 대수) ÷ 조회일수 × 30**. **예상치가 아니에요.** 30일 조회면 ×30/30=×1 이라 그대로 한 달 실적, 아니면 30일치로 환산해요(7일만 보면 ×30/7). 월건수도 같은 식(매출 대신 건수).
+  - **분자 = 조회기간 매출 = 실결제 + 쿠폰·코인(정산금액)** · **분모 = 매출 발생 대수 = 그 기간에 실제로 판 장비 수**(렌탈·팝업 제외).
+  - ★**가동 대수가 아니라 매출 발생 대수로 나눠요**(2026-08-07 변경). 계약상 가동중이어도 한 건도 안 판 장비까지 세면, 장비를 많이 깔아둔 나라일수록 대당 매출이 실제보다 낮게 나와요. '실제로 돈을 번 한 대가 얼마를 버는가'를 보는 값이에요.
   - 그래서 **짧은 기간을 보면 그 며칠의 편차(주말·이벤트)가 30배로 커져** 보여요. 최소 2~4주로 보는 걸 권해요.
-  - ⚠️ 분모가 **가동 대수**라, 이번 기간에 **막 증설한 나라**는 새 장비도 온전히 한 대로 세어져 대당 매출이 실제보다 **눌려(낮게)** 보일 수 있어요. 아래 '기간 내 변동'·'설치 이력'을 함께 보세요.
+  - ⚠️ 매출 발생 대수는 **매장 단위**로 세요. 거래 데이터에 장비 번호가 없어서, 한 매장에 2대가 있고 1대만 돌았어도 2대로 잡혀요.
 - **'○○ 대비'** = 이 표의 1위, 즉 **1대당 매출이 가장 높은 국가**를 100%로 둔 비율이에요. 헤더에 그 나라 이름이 그대로 나와요.
   - ★**총매출 1위와 다른 나라일 수 있어요.** 한국은 총매출은 1위지만 1대당으로는 아래쪽이라 100%가 아니에요.
-  - ⚠️ **표본이 적은 국가**(가동 대수가 기준 미만)는 표 아래쪽으로 내려요. 매장 한 곳 성적이 그대로 국가 대표값이 돼서 1위로 튀거든요. 기준은 **최대 보유국의 1%**(최소 3대)라 나라 규모가 커지면 같이 올라가요. 100%와 헤더 국가명도 기준을 넘긴 나라에서만 잡아요. (배지 표기는 뺐고, 몇 개국이 내려갔는지는 표 아래 캡션에 나와요.)
+  - ⚠️ **표본이 적은 국가**(매출 발생 대수가 기준 미만)는 표 아래쪽으로 내려요. 매장 한 곳 성적이 그대로 국가 대표값이 돼서 1위로 튀거든요. 기준은 **최대 보유국의 1%**(최소 3대)라 나라 규모가 커지면 같이 올라가요. 100%와 헤더 국가명도 기준을 넘긴 나라에서만 잡아요. (배지 표기는 뺐고, 몇 개국이 내려갔는지는 표 아래 캡션에 나와요.)
   - 위 '국가별 매출' 표의 **비중(전체 대비 점유율)과도 다른 값**이에요.
 - **기간 내 변동** = 이 기간에 새로 깔린 대수(+)와 지금 '중지' 상태인 대수.
 - 아래 **설치 이력**(월별 신규 설치)을 펼치면 어느 달에 증설했는지 보여요. 매출이 뛴 시점과 겹치는지 보면 증설 효과를 가늠할 수 있어요.
