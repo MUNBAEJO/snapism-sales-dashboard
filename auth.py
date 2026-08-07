@@ -858,12 +858,13 @@ def render_watermark(email: str | None = None) -> None:
       드러나게** 하는 데 목적을 둔다. 실제 통제는 접근 승인·감사 로그·다운로드
       기록이 하고, 이건 그 위에 얹는 억지력이다.
 
-    지우기를 조금이라도 어렵게 하려고 둔 장치
-      · 타일을 화면 전체에 촘촘히 깔아 **데이터 위에 겹치게** 한다. 여백에만 있으면
-        잘라내기만 해도 사라진다.
-      · 타일 원점을 계정마다 다르게 흔든다(아래 _jitter). 지우고 다시 칠한 캡처라도
-        남은 격자 간격으로 어느 계정 화면이었는지 좁힐 수 있다.
-      · `print` 미디어에서도 남긴다 — PDF 로 저장해도 따라간다.
+    ★**여백에만 깐다**(2026-08-07 사용자 결정). 앱 배경에 그리므로 불투명한 흰
+      카드가 그 위를 덮고, 카드 사이 여백에서만 보인다. 표·그래프 위에는 안 얹힌다.
+      대신 **카드 하나만 잘라 찍은 캡처에는 안 남는다** — 그건 감수하기로 했다.
+      데이터 위에 겹치려면 다시 fixed 오버레이(z-index 999998)로 되돌리면 된다.
+
+    타일 원점을 계정마다 다르게 흔든다(아래 _jitter). 지우고 다시 칠한 캡처라도
+    남은 격자 간격으로 어느 계정 화면이었는지 좁힐 수 있다.
     """
     import html as _html
     from datetime import datetime
@@ -886,14 +887,20 @@ def render_watermark(email: str | None = None) -> None:
         "</svg>"
     )
     src = "data:image/svg+xml;utf8," + svg.replace("#", "%23").replace('"', "'")
+    # ★오버레이 div 가 아니라 **앱 배경**에 그린다. 그래야 불투명한 카드가 위를
+    #   덮어 여백에서만 보인다. background-color 위에 background-image 가 얹히므로
+    #   config.toml 의 배경색(#f4f5f7)과 같이 쓸 수 있다.
+    #   attachment:fixed — 스크롤해도 무늬가 제자리에 있어 눈에 덜 거슬린다.
     st.markdown(
         f"""<style>
-        #wm-layer {{
-            position: fixed; inset: 0; z-index: 999998; pointer-events: none;
-            background-image: url("{src}");
-            background-repeat: repeat; background-position: {_jitter}px {_jitter}px;
+        [data-testid="stAppViewContainer"] {{
+            background-image: url("{src}") !important;
+            background-repeat: repeat !important;
+            background-attachment: fixed !important;
+            background-position: {_jitter}px {_jitter}px !important;
         }}
-        @media print {{ #wm-layer {{ display: block !important; }} }}
-        </style><div id="wm-layer"></div>""",
+        /* 사이드바는 흰 패널이라 무늬가 비치면 지저분하다 — 거기선 끈다. */
+        [data-testid="stSidebar"] {{ background-image: none !important; }}
+        </style>""",
         unsafe_allow_html=True,
     )
