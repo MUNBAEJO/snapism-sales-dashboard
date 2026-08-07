@@ -34,15 +34,26 @@ import plotly.graph_objects as go
 
 INK, MUTED, GRID = "#1b2330", "#9aa3b2", "#e8eaef"
 PRESETS = ["12개월 · 월", "12개월 · 주", "최근 90일 · 일"]
+# ★두 대시보드의 CSS 툴팁(.vtip)과 같은 톤으로 맞춘다.
+#   #1b2330 배경 · 흰 글자 · 11.5px · weight 600 · Pretendard.
+#   (다른 화면의 Plotly 는 '1,234,567원' 을 쓰지만, 이 카드는 스내피즘·포토이즘
+#    페이지에 얹히므로 그 페이지 방식인 '₩1,234,567' 을 따른다.)
+FONT = "Pretendard, 'Malgun Gothic', -apple-system, sans-serif"
 
 
 def money(v) -> str:
+    """축 눈금용 짧은 표기(fmt_short 와 같은 규칙)."""
     v = float(v or 0)
     if abs(v) >= 1e8:
         return f"₩{v / 1e8:,.1f}억"
     if abs(v) >= 1e4:
         return f"₩{v / 1e4:,.0f}만"
     return f"₩{v:,.0f}"
+
+
+def won(v) -> str:
+    """툴팁용 원 단위 표기(fmt_krw 와 같은 규칙)."""
+    return f"₩{int(v or 0):,}"
 
 
 def _nice_top(v: float) -> float:
@@ -65,16 +76,22 @@ def _month_ticks(fig, lo, hi):
                                 else f"{t.month}월") for t in ticks])
 
 
-def _shell(fig, top: float, height: int = 300):
+def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d"):
+    """hoverfmt — 'x unified' 툴팁 머리의 날짜 표기. 안 주면 'Sep 1, 2025' 처럼
+    영문으로 나와 화면 톤과 안 맞는다. D3 포맷이라 %-m 같은 건 못 쓴다."""
     ticks = [0, top / 2, top]
     fig.update_layout(
         height=height, margin=dict(l=66, r=14, t=6, b=32),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Pretendard, Malgun Gothic, sans-serif", size=12, color=INK),
+        font=dict(family=FONT, size=12, color=INK),
         showlegend=False, hovermode="x unified", dragmode=False,
-        hoverlabel=dict(bgcolor=INK, font=dict(color="#fff", size=12), align="left"),
+        # bordercolor 를 배경과 같게 — 안 주면 Plotly 가 계열색 테두리를 둘러
+        # 집 툴팁(.vtip, 테두리 없음)과 달라 보인다.
+        hoverlabel=dict(bgcolor=INK, bordercolor=INK, align="left",
+                        font=dict(family=FONT, size=11.5, color="#fff")),
         xaxis=dict(showgrid=False, showline=True, linecolor=GRID, ticks="outside",
-                   tickcolor=GRID, tickfont=dict(color=MUTED, size=11)),
+                   tickcolor=GRID, tickfont=dict(color=MUTED, size=11),
+                   hoverformat=hoverfmt),
         # ★0 기준 고정. 0을 안 깔면 5% 오르내림이 두 배처럼 보인다.
         yaxis=dict(range=[0, top * 1.04], tickvals=ticks,
                    ticktext=[money(t) for t in ticks], gridcolor=GRID,
@@ -84,11 +101,12 @@ def _shell(fig, top: float, height: int = 300):
 
 
 def _tip(row_total, parts: dict) -> str:
-    """툴팁 본문. 계열을 하나로 줄이는 대신 구성은 여기에 숫자로 남긴다."""
-    s = f"<b>{money(row_total)}</b>"
+    """툴팁 본문. 계열을 하나로 줄이는 대신 구성은 여기에 숫자로 남긴다.
+    금액은 **원 단위**로 적는다 — 같은 페이지의 다른 툴팁이 전부 그렇다."""
+    s = f"<b>{won(row_total)}</b>"
     for k, v in parts.items():
         if v:
-            s += f"<br>{k} {money(v)}"
+            s += f'<br><span style="opacity:.72">{k}</span> {won(v)}'
     return s
 
 
@@ -129,12 +147,11 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
                                  "해외만 따로 보려면 켜세요.")
     d = daily.copy()
     if ex_kr and kr_col:
-        for c in ["total"] + parts_cols:
-            if c != kr_col:
-                pass
         d["total"] = d["total"] - d[kr_col]
+        # ★구성 값(parts)은 한국이 섞인 채라 빼고 나면 합계와 안 맞는다.
+        #   나라별로 다시 쪼갠 값이 없으니, 숫자가 틀리게 보이느니 아예 안 보여준다.
+        parts_cols = []
         d = d[[c for c in d.columns if c != kr_col]]
-        parts_cols = [c for c in parts_cols if c != kr_col]
 
     end = d.index.max()
 
@@ -170,6 +187,7 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         fig.update_layout(bargap=.35)
         _month_ticks(fig, g.index[0], g.index[-1])
         top = _nice_top(float(g["total"].max()))
+        hfmt = "%Y년 %m월"
         cap = f"마지막 달은 사선이에요 — {end.month}월 {end.day}일까지만 집계된 부분치예요."
     elif preset == PRESETS[1]:                                 # 12개월 · 주
         g = d.resample("W-MON", label="left", closed="left").sum()
@@ -186,6 +204,7 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
             hovertemplate="%{customdata}<extra></extra>"))
         _month_ticks(fig, g.index[0], g.index[-1])
         top = _nice_top(float(g["total"].max()))
+        hfmt = "%Y-%m-%d 부터 한 주"
         cap = "주로 묶으면 요일 효과가 사라져 추세가 가장 깨끗해요. 양 끝의 잘린 주는 뺐어요."
     else:                                                      # 최근 90일 · 일
         g = d.tail(90)
@@ -200,9 +219,10 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
             hovertemplate="%{customdata}<extra></extra>"))
         _month_ticks(fig, g.index[0], g.index[-1])
         top = _nice_top(float(max(g["total"].max(), ma.max())))
+        hfmt = "%Y-%m-%d"
         cap = ("굵은 선이 7일 평균(추세), 옅은 선이 그날 실제값이에요. "
                "12개월을 일 단위로는 안 그려요 — 점이 341개라 읽을 수가 없어서요.")
 
-    st.plotly_chart(_shell(fig, top), use_container_width=True,
+    st.plotly_chart(_shell(fig, top, hoverfmt=hfmt), use_container_width=True,
                     config={"displayModeBar": False}, key=f"{key}_fig")
     st.caption(cap)
