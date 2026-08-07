@@ -843,3 +843,57 @@ def safe_page_link(page_key: str, label: str, icon: str | None = None,
     except Exception:
         # 멀티페이지 컨텍스트가 없는 경우(미리보기 하네스 등) — 화면을 죽이진 않는다.
         return False
+
+
+# ══════════════════════════════════════════════════════════════
+#  화면 워터마크 (캡처 유출 대비)
+# ══════════════════════════════════════════════════════════════
+def render_watermark(email: str | None = None) -> None:
+    """로그인 계정과 시각을 화면 전체에 옅게 깔아 둔다. 라우터에서 한 번만 부른다.
+
+    ★무엇을 위한 기능인지 분명히 해 둔다 — **유출 방지가 아니라 유출 추적**이다.
+      화면에 그린 것은 무엇이든 지울 수 있다. 개발자도구로 노드를 지워도 되고,
+      AI 인페인팅으로 지워도 된다(규칙적으로 반복되는 옅은 무늬는 특히 지우기 쉽다).
+      그래서 '못 지우게' 만드는 대신 **지우지 않은 캡처가 돌아다닐 때 누구 화면인지
+      드러나게** 하는 데 목적을 둔다. 실제 통제는 접근 승인·감사 로그·다운로드
+      기록이 하고, 이건 그 위에 얹는 억지력이다.
+
+    지우기를 조금이라도 어렵게 하려고 둔 장치
+      · 타일을 화면 전체에 촘촘히 깔아 **데이터 위에 겹치게** 한다. 여백에만 있으면
+        잘라내기만 해도 사라진다.
+      · 타일 원점을 계정마다 다르게 흔든다(아래 _jitter). 지우고 다시 칠한 캡처라도
+        남은 격자 간격으로 어느 계정 화면이었는지 좁힐 수 있다.
+      · `print` 미디어에서도 남긴다 — PDF 로 저장해도 따라간다.
+    """
+    import html as _html
+    from datetime import datetime
+
+    email = (email or getattr(getattr(st, "user", None), "email", "") or "").strip().lower()
+    if not email:
+        return
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    label = _html.escape(f"{email} · {stamp}")
+
+    # 계정마다 타일 원점을 다르게 — 같은 화면이라도 격자 위치가 달라진다.
+    _jitter = sum(ord(c) for c in email) % 40
+
+    # SVG 한 장을 배경으로 반복시킨다. div 를 수백 개 그리면 스크롤이 무거워진다.
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='420' height='210'>"
+        "<text x='0' y='120' transform='rotate(-24 0 120)' "
+        "font-family='Pretendard, Malgun Gothic, sans-serif' font-size='15' "
+        "font-weight='600' fill='%231b2330' fill-opacity='0.085'>" + label + "</text>"
+        "</svg>"
+    )
+    src = "data:image/svg+xml;utf8," + svg.replace("#", "%23").replace('"', "'")
+    st.markdown(
+        f"""<style>
+        #wm-layer {{
+            position: fixed; inset: 0; z-index: 999998; pointer-events: none;
+            background-image: url("{src}");
+            background-repeat: repeat; background-position: {_jitter}px {_jitter}px;
+        }}
+        @media print {{ #wm-layer {{ display: block !important; }} }}
+        </style><div id="wm-layer"></div>""",
+        unsafe_allow_html=True,
+    )

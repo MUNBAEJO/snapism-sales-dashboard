@@ -17,7 +17,10 @@ st.set_page_config(
 # 통과하지 못하면 로그인/승인대기 화면을 그리고 여기서 멈춘다.
 import auth
 import pages_registry
-auth.require_login()
+_ME = auth.require_login()
+# 캡처가 돌아다닐 때 누구 화면인지 드러나게 — 계정·시각을 화면 전체에 옅게 깐다.
+# (유출 '방지'가 아니라 '추적'이다. 자세한 한계는 auth.render_watermark 주석 참고.)
+auth.render_watermark(_ME)
 
 INK = "#1a1a2e"
 st.markdown(f"""
