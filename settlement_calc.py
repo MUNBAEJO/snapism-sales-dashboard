@@ -328,6 +328,33 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     return df.sort_values("매출액", ascending=False).reset_index(drop=True)
 
 
+def revenue_countries(brand: str, titles: list[str], start: str, end: str) -> list[str]:
+    """그 기간에 **매출이 난 국가** 이름만. 국가별 요율 입력칸을 그릴 때 쓴다.
+
+    ★country_detail 을 부르면 안 된다 — 요율 화면은 금액 미리보기보다 먼저 뜨는데
+      거기서 무거운 집계를 또 돌리면 화면이 두 번 느려진다. 국가 이름만 필요하므로
+      집계본에서 가볍게 긁는다(포토이즘 기준 0.2초).
+    """
+    if not titles:
+        return []
+    con = _con()
+    try:
+        if brand == "photoism":
+            sql = f"""SELECT DISTINCT "국가" FROM read_parquet('{PH_AGG.as_posix()}')
+                      WHERE "날짜" BETWEEN DATE '{start}' AND DATE '{end}'
+                        AND "타이틀" IN ({_sqlist(titles)})
+                        AND COALESCE("최종 결제 금액",0) + COALESCE("쿠폰 할인 금액",0) <> 0"""
+        else:
+            sql = f"""SELECT DISTINCT "국가" FROM read_parquet('{SN_MASTER.as_posix()}')
+                      WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+                        AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+                        AND NOT COALESCE("취소 여부", FALSE)"""
+        names = con.execute(sql).df()["국가"].astype(str).tolist()
+    finally:
+        con.close()
+    return sorted({NAT_KO.get(n, n) for n in names if n and n != "nan"})
+
+
 def open_countries(brand: str, start: str, end: str) -> pd.DataFrame:
     """그 기간에 브랜드가 실제 영업한 국가 전체.
     매출 0인 국가를 빼면 '거긴 안 열었다'로 오해된다."""
@@ -625,6 +652,9 @@ def get_rs(brand: str, ticket: str) -> dict:
     saved = _rates_store.load().get("rates", {}).get(f"{brand}:{tk}")
     if saved:
         return {"agency": saved.get("agency"), "mgmt": saved.get("mgmt"),
+                # ★국가별 예외 요율 {국가명: 0.07}. 캐릭터 IP 는 나라마다 요율이 다르다
+                #   (가나디: 한국 7% · 일본 10% · 중국 12%). 여기 없는 나라는 기본 요율.
+                "agency_cc": dict(saved.get("agency_cc") or {}),
                 "source": "화면 입력", "by": saved.get("by"), "at": saved.get("at")}
     try:
         import jira_client
@@ -634,18 +664,24 @@ def get_rs(brand: str, ticket: str) -> dict:
                         "source": "지라", "by": None, "at": None}
     except Exception:
         pass
-    return {"agency": None, "mgmt": None, "source": "없음", "by": None, "at": None}
+    return {"agency": None, "mgmt": None, "agency_cc": {},
+            "source": "없음", "by": None, "at": None}
 
 
-def set_rs(brand: str, ticket: str, agency, mgmt, by: str) -> None:
+def set_rs(brand: str, ticket: str, agency, mgmt, by: str,
+           agency_cc: dict | None = None) -> None:
+    """agency_cc = {국가명: 요율} 국가별 예외. 빈 dict 면 전 국가 기본 요율."""
     from datetime import datetime
     tk = str(ticket or "").strip().upper()
     key = f"{brand}:{tk}"
     now = datetime.now().isoformat(timespec="seconds")
+    cc = {str(k): float(v) for k, v in (agency_cc or {}).items()
+          if v is not None and float(v) > 0}
 
     def _fn(d):
         cur = d.setdefault("rates", {}).get(key) or {}
-        cur.update({"agency": agency, "mgmt": mgmt, "by": by, "at": now})
+        cur.update({"agency": agency, "mgmt": mgmt, "agency_cc": cc,
+                    "by": by, "at": now})
         d["rates"][key] = cur          # 파트너사명 등 다른 필드는 보존한다
 
     _rates_store.mutate(_fn)

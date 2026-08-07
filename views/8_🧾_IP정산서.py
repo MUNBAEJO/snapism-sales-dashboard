@@ -203,7 +203,7 @@ def make_panel():
         st.caption("확정하면 다음 달부터 같은 티켓에 자동으로 붙어요.")
 
     ui_theme.sec(2, "요율 확인", "지라에 있으면 자동으로 채워요")
-    rs = {}
+    rs, rs_cc = {}, {}
     # ★get_rs 는 저장값이 없으면 지라를 부른다(네트워크). 아래에서 또 부르면
     #   화면이 눈에 띄게 느려진다 — 여기서 한 번 부른 결과를 재사용한다.
     saved_rs = {}
@@ -236,13 +236,42 @@ def make_panel():
         vt = p3.checkbox("부가세 적용", value=pt["vat"], key=f"vt_{b}",
                          help="총 지급액을 부가세 포함으로 보고 공급가액·VAT 를 나눠 적어요. "
                               "해외 파트너면 꺼 주세요.")
+        # ── 국가별 예외 요율 (소속사) ──────────────────────────────
+        # ★캐릭터 IP 는 나라마다 요율이 다르다(가나디: 한국 7 · 일본 10 · 중국 12).
+        #   전 세계 30칸을 매번 채우게 하면 안 쓰므로 **그 기간에 매출이 난 나라만**
+        #   줄 세우고, 기본 요율로 미리 채워 둔다. 다른 나라만 고치면 된다.
+        _saved_cc = dict(cur.get("agency_cc") or {})
+        _nats = sc.revenue_countries(b, titles, S, E)
+        _cc_new = {}
+        with st.expander(f"🌏 국가별 소속사 요율 "
+                         + (f"— {len(_saved_cc)}개국 지정됨" if _saved_cc else "— 기본 요율 일괄"),
+                         expanded=bool(_saved_cc)):
+            if not _nats:
+                st.caption("이 기간에 매출이 난 국가가 없어요.")
+            else:
+                st.caption(f"비워 두면 기본 요율({a:g}%)을 써요. 다른 나라만 채우세요. "
+                           "여기에 값이 하나라도 있으면 문서의 '요율' 칸은 **국가별**로 적히고, "
+                           "지급액은 나라마다 따로 반올림해 더해요.")
+                _cols = st.columns(4)
+                for _i, _n in enumerate(_nats):
+                    _v = _cols[_i % 4].number_input(
+                        _n, 0.0, 100.0,
+                        float(_saved_cc.get(_n, 0) * 100) if _n in _saved_cc else 0.0,
+                        0.5, key=f"rcc_{b}_{_n}")
+                    if _v > 0:
+                        _cc_new[_n] = _v / 100
+                if _cc_new:
+                    st.caption("지정: " + " · ".join(f"{k} {v * 100:g}%"
+                                                    for k, v in _cc_new.items()))
+
         if st.button(f"💾 {sm.BRAND_LABEL[b]} 저장", key=f"sv_{b}",
                      disabled=not CAN_EDIT):
-            sc.set_rs(b, tk, a / 100 or None, m / 100 or None, _email)
+            sc.set_rs(b, tk, a / 100 or None, m / 100 or None, _email, _cc_new)
             sc.set_mg(b, tk, has, amt, mg_cur.get("note", ""), _email)
             sc.set_partner(b, tk, an, mn, vt, _email)
             _rerun()
         rs[b] = (a / 100 or None, m / 100 or None)
+        rs_cc[b] = _cc_new or dict(_saved_cc)
 
     # ── 미리보기 ──────────────────────────────────────────────────────
     ui_theme.sec(3, "금액 확인")
@@ -261,7 +290,14 @@ def make_panel():
         base = int(d["매출액"].sum())
         ra, rm = rs.get(b, (None, None))
         tot_base += base
-        tot_a += round(base * ra) if ra else 0
+        # ★국가별 요율이 있으면 총액×요율이 성립하지 않는다 — 문서와 같은 식으로 낸다.
+        _cc = rs_cc.get(b) or None
+        if _cc:
+            tot_a += sum(sp._alloc_settle(
+                [int(x) for x in d["매출액"]], ra,
+                [_cc.get(n, ra) for n in d["국가"]]))
+        else:
+            tot_a += round(base * ra) if ra else 0
         tot_m += round(base * rm) if rm else 0
         # ★여기서 쓰는 '수량'은 문서(settlement_pdf:189)가 쓰는 값과 **같은 것**이다.
         #   `floor(현지 ÷ 평균단가)` 라 한 거래에 두 장이면 2로 세고, 그래서

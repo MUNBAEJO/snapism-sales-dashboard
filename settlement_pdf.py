@@ -172,17 +172,23 @@ def _share_chart(rows, total):
     return f'<div class="bars">{h}</div>'
 
 
-def _alloc_settle(krws, rs):
+def _alloc_settle(krws, rs, rates=None):
     """국가별 정산액. 합계가 **총 기준액 × 요율을 한 번 반올림한 값**과 같도록 배분.
+
+    ★rates 를 주면(국가마다 요율이 다른 계약) 총액×요율이 성립하지 않는다.
+      그땐 **국가별로 반올림해 더한다** — 담당자도 나라마다 따로 계산하므로 같은 값이 나온다.
+      (가나디처럼 한국 7% · 일본 10% · 중국 12% 인 캐릭터 IP 계약용.)
 
     ★국가마다 따로 반올림해 더하면 총액 기준과 어긋난다(김준수 13,555,438 vs
       13,555,436). 담당자 시트는 총액에 요율을 한 번 곱해 지급액을 내므로 그쪽에
       맞춘다. 그러면서도 표의 세로 합은 그대로 맞아야 해서, 목표를 먼저 정하고
       최대잔여법으로 국가에 나눈다(멤버 배분과 같은 방식).
     """
+    from settlement_calc import _round_half_up
+    if rates is not None:                      # 국가별 요율 — 행마다 따로 반올림
+        return [_round_half_up(k * (r or 0)) for k, r in zip(krws, rates)]
     if not rs:
         return [0] * len(krws)
-    from settlement_calc import _round_half_up
     target = _round_half_up(sum(krws) * rs)
     raw = [k * rs for k in krws]
     base = [int(x) for x in raw]                 # 0 쪽 절사
@@ -199,13 +205,20 @@ def _alloc_settle(krws, rs):
     return base
 
 
-def _country_table(rows, qty_label, rate_pct, rs):
+def _pct(v) -> str:
+    """요율 표기. 7.5% 처럼 소수도 그대로, 정수는 정수로."""
+    return f"{v * 100:g}%" if v else "—"
+
+
+def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
     """국가 | 통화 | 수량 | 현지 매출 | 적용 환율 | 매출(KRW) | 요율 | 정산액 | 비중
 
     ★소계 정산액은 각 행 정산액의 합이면서 총액×요율과도 같다(_alloc_settle).
     """
     tot_krw = sum(r["매출액"] for r in rows) or 1
-    amts = _alloc_settle([int(r["매출액"]) for r in rows], rs)
+    # 국가별 요율이 있으면 행마다 다른 요율을 쓴다. 없으면 전 행이 기본 요율.
+    _rates = ([(rs_cc or {}).get(r["국가"], rs) for r in rows] if rs_cc else None)
+    amts = _alloc_settle([int(r["매출액"]) for r in rows], rs, _rates)
     tq = tk = ts = 0
     # 한 페이지에 들어갈 만큼 자동으로 조인다(기본 27행까지 여유).
     dens = " d2" if len(rows) > 33 else (" d1" if len(rows) > 26 else "")
@@ -227,7 +240,7 @@ def _country_table(rows, qty_label, rate_pct, rs):
               f'<td class="dim">{_f(loc) if loc else dash}</td>'
               f'<td class="dim">{_fx_cell(r["unit"], loc, krw) if krw else dash}</td>'
               f'<td>{_f(krw) if krw else dash}</td>'
-              f'<td class="dim">{rate_pct}</td>'
+              f'<td class="dim">{_pct(_rates[_i]) if _rates else rate_pct}</td>'
               f'<td>{"<b>" + _f(amt) + "</b>" if amt else dash}</td>'
               '<td><span class="sharecell"><span class="bar">'
               f'<i style="width:{max(p, 1.2):.1f}%"></i></span>{p:.1f}%</span>'
@@ -597,7 +610,15 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
     rs_key = "agency" if kind == "agency" else "mgmt"
     rs = next((v for v in ((ctx["rs"].get(b) or {}).get(rs_key)
                            for b in ctx["details"]) if v), None)
-    rate_pct = f"{rs * 100:g}%" if rs else "—"
+    # 국가별 예외 요율(소속사 문서에만). 있으면 표지·요약의 '요율'은 '국가별'로 적는다 —
+    # 한 숫자로 못 쓰는데 대표값을 적으면 받는 쪽이 그 값으로 검산하다 안 맞는다.
+    rs_cc = None
+    if rs_key == "agency":
+        _m = {}
+        for b in ctx["details"]:
+            _m.update((ctx["rs"].get(b) or {}).get("agency_cc") or {})
+        rs_cc = _m or None
+    rate_pct = ("국가별" if rs_cc else (f"{rs * 100:g}%" if rs else "—"))
     ip, S, E = ctx["ip"], ctx["start"], ctx["end"]
     ym = f"{int(E[:4])}년 {int(E[5:7])}월"
     docno = ctx.get("docno") or ""
@@ -617,7 +638,7 @@ def build_html(ctx: dict, kind: str, sample: bool = True,
         rows = ctx["details"][b].sort_values("매출액", ascending=False) \
             .to_dict("records")
         tbl, krw, setl, qty = _country_table(rows, QTY_LABEL[b],
-                                             rate_pct, rs)
+                                             rate_pct, rs, rs_cc)
         calc[b] = {"rows": rows, "tbl": tbl, "krw": krw, "set": setl, "qty": qty}
     base = sum(c["krw"] for c in calc.values())
     total = sum(c["set"] for c in calc.values())
