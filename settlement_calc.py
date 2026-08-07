@@ -249,14 +249,36 @@ def _settle_by_price(g: pd.DataFrame) -> tuple[int, int, float | None]:
 
 
 def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
-    """(국가 × 단가) 행을 국가 단위로 접는다. 절사는 여기서 한 번만 일어난다."""
+    """(국가 × 멤버) 행을 국가 단위로 접는다. 절사는 여기서 한 번만 일어난다.
+
+    ★★절사 단위는 **국가 × 멤버**다 (2026-08-07, 담당자 피벗으로 확정).
+      담당자는 CSV 를 `행=국가 · 열=멤버` 로 피벗해 칸마다 `ROUNDDOWN(금액/평균단가)`
+      를 내고 그걸 더한다. 국가 단위로 한 번만 나누면 자투리가 덜 버려져 값이 커진다.
+        트와이스(멤버 9명) 일본: 국가단위 3,040 vs 멤버별 3,038 — 시트는 3,038.
+        243+171+213+180+454+592+336+541+308 = 3,038 (멤버별 몫의 합)
+      멤버가 한 명인 솔로 IP 는 두 방식이 같아서 여태 안 드러났다. 허남준·김준수·
+      정대현이 국가 단위로도 맞았던 이유다(그래서 이 규칙을 늦게 찾았다).
+      네 건 전부 이 방식으로 시트와 일치한다.
+
+    ★단가는 멤버별 **평균**을 쓴다(피벗 머리에 '평균 : 프레임단가' 라고 쓰여 있다).
+      한 멤버가 여러 단가로 팔렸어도 평균으로 한 번 나눈다 — 단가별로 또 쪼개면
+      담당자 값과 어긋난다.
+    """
     out = []
     for nat, g in df.groupby("국가", sort=False):
         unit = g["unit"].iloc[0]
-        q, loc, up = _settle_by_price(g)
-        out.append({"국가": nat, "unit": unit, "수량": q, "현지": loc,
-                    "매출액": _round_half_up(loc * float(rates.get(unit, 1))),
-                    "건수": int(g["건수"].sum()), "단가": up})
+        up = pd.to_numeric(g["up"], errors="coerce")
+        q = (g["현지"] / up.where(up > 0)).map(_trunc)     # 멤버별 몫
+        loc = (q * up.where(up > 0)).fillna(0)             # 그 몫에 다시 단가를 곱한 정산 기준액
+        # 단가를 못 구한 멤버(전부 0/누락)는 금액만 살린다 — 버리면 돈이 사라진다.
+        loc = loc.where(up > 0, g["현지"])
+        _tot = int(round(float(loc.sum())))
+        _big = g.loc[g["현지"].abs().idxmax(), "up"] if len(g) else None
+        out.append({"국가": nat, "unit": unit, "수량": int(q.fillna(0).sum()),
+                    "현지": _tot,
+                    "매출액": _round_half_up(_tot * float(rates.get(unit, 1))),
+                    "건수": int(g["건수"].sum()),
+                    "단가": (float(_big) if _big and _big == _big else None)})
     return pd.DataFrame(out)
 
 
@@ -279,6 +301,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
             df = con.execute(f"""
                 WITH t AS (
                   SELECT "국가", lower(trim("국가코드")) AS cc, "결제 단위" AS unit,
+                         trim(CAST("프레임 이름" AS VARCHAR)) AS mem,
                          {rate} AS r,
                          CAST("최종 결제 금액" AS BIGINT) AS pay,
                          CAST("쿠폰 할인 금액"  AS BIGINT) AS cpn,
@@ -294,16 +317,18 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                   SELECT *, {_ph_num(cpn, coin)} AS num
                   FROM t
                 )
-                SELECT "국가", any_value(unit) AS unit, up,
+                SELECT "국가", any_value(unit) AS unit, mem,
+                       AVG(NULLIF(up, 0)) AS up,
                        CAST(SUM(num) AS BIGINT) AS 현지,
                        CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수
-                -- 음수(취소)를 살려야 차감된다. 단가별로 나눠 담고 절사는 파이썬에서.
+                -- 음수(취소)를 살려야 차감된다. 절사는 파이썬에서 **멤버 단위**로.
                 FROM f WHERE num <> 0 GROUP BY 1, 3
             """).df()
         else:
             df = con.execute(f"""
                 WITH t AS (
                   SELECT "국가", "결제 단위" AS unit, {rate} AS r,
+                         trim(CAST("상품 이름" AS VARCHAR)) AS mem,
                          CAST("최종 결제 금액" AS BIGINT)
                          + CAST("쿠폰 할인 금액" AS BIGINT) AS num,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
@@ -312,7 +337,8 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                     AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
                     AND NOT COALESCE("취소 여부", FALSE)
                 )
-                SELECT "국가", any_value(unit) AS unit, up,
+                SELECT "국가", any_value(unit) AS unit, mem,
+                       AVG(NULLIF(up, 0)) AS up,
                        CAST(SUM(num) AS BIGINT) AS 현지,
                        CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수
                 FROM t WHERE num <> 0 GROUP BY 1, 3
