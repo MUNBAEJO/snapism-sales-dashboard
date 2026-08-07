@@ -76,6 +76,7 @@ def build_agg(con, parq: str):
                 ({ip_classify.IP_GUBUN_SQL})                                    AS "IP구분",
                 ({ip_classify.IP_DATE_SQL})                                     AS "날짜코드",
                 ({ip_classify.IP_NAMECORE_SQL})                                AS "IP명_raw",
+                ({ip_classify.IP_PREFIX_SQL})                                   AS "접두어",
                 TRY_CAST("최종 결제 금액" AS BIGINT)                            AS "_amt",
                 TRY_CAST("쿠폰 할인 금액" AS BIGINT)                            AS "_cpn",
                 {COIN_FIX}                                                      AS "_coin"
@@ -89,13 +90,16 @@ def build_agg(con, parq: str):
                 CASE WHEN "IP구분" IN ('제외','오리지널(기본)','오리지널(포토이즘)')
                      THEN '' ELSE "IP명_raw" END  AS "IP명_c",
                 CASE WHEN "IP구분" IN ('제외','오리지널(기본)','오리지널(포토이즘)')
-                     THEN '' ELSE "날짜코드"  END  AS "날짜코드_c"
+                     THEN '' ELSE "날짜코드"  END  AS "날짜코드_c",
+                CASE WHEN "IP구분" IN ('제외','오리지널(기본)','오리지널(포토이즘)')
+                     THEN '' ELSE "접두어"   END  AS "접두어_c"
             FROM base
         ),
         grouped AS (
         SELECT
             "날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
-            "결제 단위","구좌","IP구분","날짜코드_c" AS "날짜코드","IP명_c" AS "IP명_raw","취소 여부",
+            "결제 단위","구좌","IP구분","날짜코드_c" AS "날짜코드","IP명_c" AS "IP명_raw",
+            "접두어_c" AS "접두어","취소 여부",
             -- ★★취소는 **음수 거래**로 들어온다(포토이즘은 '취소 여부' 플래그가 안 붙는다).
             --   그냥 SUM 하면 같은 그룹의 정상 매출과 상쇄돼 **취소가 통째로 사라진다** —
             --   원본 518건/-300만원이 집계에서는 45행/-29만원으로만 남아 있었다.
@@ -110,7 +114,7 @@ def build_agg(con, parq: str):
             CAST(COALESCE(SUM("_cpn"),0)           AS BIGINT) AS "쿠폰 할인 금액",
             CAST(COALESCE(SUM("_coin"),0)          AS BIGINT) AS "서비스코인"
         FROM tagged
-        GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
+        GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14
     )
     -- ★한·영 통합(별칭)·타이틀 조립·최종 재집계를 전부 DuckDB 에서 끝낸다.
     --   예전엔 여기서 9M 행을 pandas 로 넘겨 apply_alias+groupby 했는데, 데이터가
@@ -124,7 +128,7 @@ def build_agg(con, parq: str):
             -- ★안 그러면 이름 추출 실패한 아티스트/PICK 행이 'nan'·'None' 이라는
             --   가짜 IP 로 화면에 뜬다(기존 pandas 방식의 잠복 버그).
             COALESCE(m."v", NULLIF(TRIM(g."IP명_raw"), ''), '') AS "_ip",
-            g."날짜코드" AS "_date",
+            g."날짜코드" AS "_date", g."접두어" AS "_pfx",
             g."건수", g."취소금액", g."취소건수",
             g."최종 결제 금액", g."쿠폰 할인 금액", g."서비스코인"
         FROM grouped g
@@ -134,9 +138,12 @@ def build_agg(con, parq: str):
         "날짜","국가","국가코드","브랜드","대분류","타이틀명","매장 이름",
         "결제 단위","구좌","IP구분","취소 여부",
         "_ip" AS "IP명",
+        -- ★접두어(PW/L/SP/렌탈…)를 타이틀 앞에 살린다. 안 그러면 다른 제품이
+        --   같은 타이틀로 합쳐져 남의 정산에 딸려 들어간다(2026-08-07, ip_classify 주석 참고).
+        --   IP명은 접두어 없이 두므로 같은 IP 롤업·필터는 그대로 묶인다.
         CASE WHEN "_ip"='' THEN ''
-             WHEN "_date"='' THEN "_ip"
-             ELSE "_date" || ' ' || "_ip" END AS "타이틀",
+             WHEN "_date"='' THEN NULLIF(TRIM("_pfx" || ' ' || "_ip"), '')
+             ELSE TRIM("_pfx" || ' ' || "_date" || ' ' || "_ip") END AS "타이틀",
         CAST(SUM("건수")           AS BIGINT) AS "건수",
         CAST(SUM("취소금액")       AS BIGINT) AS "취소금액",
         CAST(SUM("취소건수")       AS BIGINT) AS "취소건수",

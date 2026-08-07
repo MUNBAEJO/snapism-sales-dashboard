@@ -83,6 +83,18 @@ IP_NAMECORE_SQL = (
 # 접두어만 뗀 전체(날짜+이름) — 세부검색 '타이틀' 그룹용
 IP_TITLE_RAW_SQL = f"TRIM({_PREFIX_STRIPPED_SQL})"
 
+# ★접두어 자체(렌탈/PW/L7/L/P/B/SP). 없으면 ''.
+#   왜 남기나 — 접두어를 떼고 별칭까지 통합하면 **다른 제품이 한 타이틀로 합쳐진다.**
+#   'PW 260701 피원하모니'(PICK·EVENT) 가 '260701 P1Harmony'(아티스트·WITH) 로 흡수돼
+#   피원하모니 정산에 56프레임·₩928,296 이 남의 매출로 딸려 들어갔다(2026-08-07 발견).
+#   전 기간으로는 타이틀 250개에 원본 526개가 뭉쳐 있었다.
+#   그래서 **타이틀에는 접두어를 붙여 갈라 두고**(정산 후보로 따로 뜬다),
+#   IP명은 접두어 없이 둔다(같은 IP 롤업·필터는 그대로 묶여야 하므로).
+IP_PREFIX_SQL = (
+    f"COALESCE(regexp_extract(TRIM(CAST({_IP_SRC_SQL} AS VARCHAR)), "
+    f"'^(렌탈|PW|L7|L|P|B|SP)\\s', 1), '')"
+)
+
 _DATE_NAME_RE = re.compile(r"^([0-9]{5,8})\s*(.*)$")
 
 
