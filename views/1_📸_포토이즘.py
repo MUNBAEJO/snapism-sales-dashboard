@@ -23,6 +23,7 @@ from guide_content import render_guide
 import ip_classify  # IP구분/IP명 분류 공용 모듈
 import photoism_rules  # 매출액 가산 규칙(쿠폰·코인 국가)
 import auth
+import trend_chart  # '매출 추이' 카드(두 대시보드 공용)
 
 # ══════════════════════════════════════════════════════════════
 #  디자인 시스템 (시안 토큰 이식 — 스내피즘과 동일)
@@ -170,6 +171,10 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .col{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }
 .stack{ width:58%; max-width:70px; display:flex; flex-direction:column; justify-content:flex-end;
         border-radius:5px 5px 0 0; overflow:hidden; }
+/* 추이 카드 요약 줄 — 그래프를 못 봐도(터치 기기) 답이 되게 항상 띄운다 */
+.tsum{ display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; font-size:12.5px;
+       color:var(--text-2); margin:2px 0 6px; }
+.tsum b{ font-size:15px; color:var(--text); font-weight:800; }
 .xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
 .vlab{ font-size:10.5px; color:var(--text-2); font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* 면적 선그래프 — 주·일처럼 점이 많을 때. 막대로 그리면 341개가 서로 붙어 못 읽는다. */
@@ -1599,15 +1604,7 @@ with tab_runs:
 with tab_home:
     sec("1", "매출 동향", "잘 가고 있나? — 기간별 IP구분 매출 흐름")
     with card():
-        _th, _tg = st.columns([2.4, 1])
-        with _th:
-            st.markdown('<div class="ct" style="margin-bottom:0">📈 매출 추이 '
-                        '<span class="muted">IP구분별 · 최근 1년</span></div>',
-                        unsafe_allow_html=True)
-        with _tg:
-            gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
-                                        key="ph_trend_gran", label_visibility="collapsed") or "월"
-        # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07 요청).
+        # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07).
         #   흐름은 길게 봐야 읽히는데, 기간을 좁히면 막대 서너 개만 남아 추이가 안 보였다.
         #   국가·브랜드·매장·IP 필터는 그대로 적용된다(scope = 날짜만 빠진 프레임).
         _t_end = last_date
@@ -1615,37 +1612,39 @@ with tab_home:
                     - pd.DateOffset(months=11)).replace(day=1).date()
         _tw = scope[(scope["날짜"] >= _t_start) & (scope["날짜"] <= _t_end)]
         _tsales = paid_sales(_tw)
-        # ★시리즈 목록은 **1년 창에서** 뽑는다. present 는 조회 기간 기준이라, 이번 달에만
-        #   안 팔린 구분이 1년 차트에서 통째로 사라진다(막대는 있는데 범례가 없어 보인다).
-        _tpresent = []
-        if "IP구분" in _tsales.columns and not _tsales.empty:
-            _tset = set(_tsales.loc[_tsales["IP구분"] != "제외", "IP구분"].astype(str))
-            _tpresent = [g for g in IP_GUBUN_VIEW if g in _tset]
-        _tsrc = (_tsales[_tsales["IP구분"].astype(str).isin(_tpresent)].copy()
-                 if _tpresent else pd.DataFrame())
-        if _tsrc.empty:
-            css_stack([], {}, [], gran)
+        if _tsales.empty:
+            st.info("선택한 조건에 맞는 데이터가 없어요. 필터를 바꿔 보세요.")
         else:
-            _tsrc["_p"] = _pkey(_tsrc["날짜"], gran)
-            g2 = (_tsrc.groupby(["_p", "IP구분"], observed=True)["매출액"].sum()
-                  .rename("매출").reset_index())
-            periods = sorted(g2["_p"].unique())
-            labels = [_plabel(p, gran) for p in periods]
-            pidx = {p: i for i, p in enumerate(periods)}
-            data = {g: [0] * len(periods) for g in _tpresent}
-            for _, r in g2.iterrows():
-                _g = str(r["IP구분"])
-                if _g in data:
-                    data[_g][pidx[r["_p"]]] = int(r["매출"])
-            css_stack(labels, data, _tpresent, gran)
-            st.caption(f"막대는 IP구분(아티스트·캐릭터·PICK·오리지널·렌탈)별로 쌓았어요. "
-                       f"이 차트는 조회 기간과 무관하게 **{_t_start} ~ {_t_end}** 최근 1년이에요. "
-                       "전체 순위는 '구좌타입 분석' 탭에서 봐요.")
+            # ★구분 목록은 **1년 창에서** 뽑는다. present 는 조회 기간 기준이라,
+            #   이번 달에만 안 팔린 구분이 1년 차트에서 통째로 빠진다.
+            _tset = (set(_tsales.loc[_tsales["IP구분"] != "제외", "IP구분"].astype(str))
+                     if "IP구분" in _tsales.columns else set())
+            _tpresent = [g for g in IP_GUBUN_VIEW if g in _tset]
+            _tsales = _tsales.assign(_d=pd.to_datetime(_tsales["날짜"]))
+            _g = _tsales.groupby("_d")["매출액"].sum().rename("total").to_frame()
+            # 구분별 값은 **툴팁용**으로만 붙인다. 5계열을 쌓으면 아래 계열이 위를
+            # 통째로 밀어올려 어느 것도 자기 값으로 안 읽힌다(구성은 아래 비중 카드 몫).
+            for _gb in _tpresent:
+                _g[_gb] = (_tsales[_tsales["IP구분"].astype(str) == _gb]
+                           .groupby("_d")["매출액"].sum().reindex(_g.index).fillna(0))
+            if "국가" in _tsales.columns:
+                _g["한국"] = (_tsales[_tsales["국가"] == "한국"]
+                              .groupby("_d")["매출액"].sum().reindex(_g.index).fillna(0))
+            # 빈 날을 0으로 — 안 채우면 이동평균·주 집계가 날짜를 건너뛴다.
+            _g = _g.asfreq("D").fillna(0) if len(_g) > 1 else _g
+            trend_chart.render(st, _g, key="ph_trend", color="#4f46e5",
+                               parts_cols=_tpresent,
+                               kr_col="한국" if "한국" in _g.columns else None)
         helpbox("""
-**매출 추이 (IP구분별 스택)**
-- ★**이 차트만 상단 조회 기간을 안 따라요 — 항상 최근 1년(12개월)이에요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. **국가·브랜드·매장·IP 필터는 그대로 적용돼요.**
-- 막대가 많아지면(일 단위 1년이면 365개) x축 라벨은 26개쯤만 남기고 막대 위 금액은 빼요. 값은 막대에 마우스를 올리면 나와요.
-- 매출액(실결제 + 쿠폰기여 + 코인기여)을 기간(월/주/일)·`IP구분`으로 묶어 쌓은 막대.
+**매출 추이**
+- ★**이 차트만 상단 조회 기간을 안 따라요 — 항상 최근 1년이에요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. **국가·브랜드·매장·IP 필터는 그대로 적용돼요.**
+- **보기 3가지** — `12개월·월`(막대 12개) · `12개월·주`(선 48점) · `최근 90일·일`(선 90점 + 7일 이동평균). 뭘 골라도 점이 12~90개예요.
+  - ★**12개월을 일 단위로는 안 그려요.** 점이 341개라 화면 폭(점당 3px)보다 많아 읽을 수가 없고, 주말이 평일의 1.5배라 요일 흔들림이 추세보다 커서 오히려 방해가 돼요.
+  - `주` 보기는 **양 끝의 잘린 주를 빼요.** 안 빼면 실제로 없는 U자 모양이 항상 생겨요.
+  - `월` 보기의 마지막 달은 **사선**이에요 — 아직 진행 중인 부분 집계라 '급락'으로 오해하기 쉬워서요.
+- **선은 하나(매출액 합계)**예요. 예전엔 IP구분 5개를 쌓았는데, 스택은 아래 계열이 위를 통째로 밀어올려서 **어느 구분도 자기 값으로 안 읽혀요.** 구분별 금액은 **툴팁에 숫자로** 나오고, 구성 비교는 바로 아래 '무엇이 매출을 만드나' 카드가 답해요.
+- **위쪽 요약 줄**(최근 4주 · 직전 4주 대비)은 그래프를 안 봐도 답이 되게 항상 띄워요. 터치 기기에선 툴팁을 못 띄우거든요.
+- 매출액 = 실결제 + 쿠폰기여 + 코인기여.
 - IP구분 = **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본) · 렌탈** (`IP_GUBUN_SHOWN`).
   - **렌탈·팝업도 2026-08-04 부터 포함**돼요. 다만 **'키오스크 1대당 매출' 카드에서만 빠져요** — 행사 기간만 도는 장비라 분모에 남으면 대당 매출이 실제보다 낮게 나와요.
   - 목록을 바꾸려면 `ip_classify.IP_GUBUN_SHOWN` 만 고치고 서버를 재시작하면 돼요(재집계 불필요).

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
 import data_io
 import auth
+import trend_chart
 
 # ══════════════════════════════════════════════════════════════
 #  디자인 시스템 (시안 토큰 이식)
@@ -175,6 +176,10 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .stack{ width:58%; max-width:70px; display:flex; flex-direction:column; justify-content:flex-end;
         border-radius:5px 5px 0 0; overflow:hidden; }
 .seg-real{ background:var(--brand-2); } .seg-cp{ background:var(--sky); }
+/* 추이 카드 요약 줄 — 그래프를 못 봐도(터치 기기) 답이 되게 항상 띄운다 */
+.tsum{ display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; font-size:12.5px;
+       color:var(--text-2); margin:2px 0 6px; }
+.tsum b{ font-size:15px; color:var(--text); font-weight:800; }
 .xlab{ font-size:11px; color:var(--text-3); margin-top:7px; font-weight:600; }
 .vlab{ font-size:10.5px; color:var(--text-2); font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* 면적 선그래프 — 주·일처럼 점이 많을 때. 막대로 그리면 341개가 서로 붙어 못 읽는다. */
@@ -1278,63 +1283,43 @@ with tab_home:
         # @st.fragment — 기간(월·주·일) 토글을 눌러도 이 조각만 다시 그린다.
         # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
         @st.fragment
-        def _trend():  # 기간 토글 → 매출 추이 차트
-            _th, _tg = st.columns([2.4, 1])
-            with _th:
-                st.markdown('<div class="ct" style="margin-bottom:0">📈 매출 추이 '
-                            '<span class="muted">최근 1년</span></div>', unsafe_allow_html=True)
-            with _tg:
-                gran = st.segmented_control("기간", ["월", "주", "일"], default="월",
-                                            key="trend_gran", label_visibility="collapsed") or "월"
-
-            def _pkey(dates, g):
-                d = pd.to_datetime(dates)
-                return d.dt.to_period("M") if g == "월" else (d.dt.to_period("W") if g == "주" else d.dt.date)
-
-            # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07 요청).
+        def _trend():  # 프리셋 토글 → 매출 추이 차트
+            # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07).
             #   흐름은 길게 봐야 읽히는데, 기간을 좁히면 막대 서너 개만 남아 추이가 안 보였다.
             #   국가·매장·카테고리 필터는 그대로 적용된다(scope = 날짜만 빠진 프레임).
             _t_end = last_date
             _t_start = (pd.Timestamp(_t_end).normalize()
                         - pd.DateOffset(months=11)).replace(day=1).date()
             _tw = scope[(scope["날짜"] >= _t_start) & (scope["날짜"] <= _t_end)]
-            _t_sales = paid_sales(_tw)
-            _t_cpn = pd.concat([coupon_txns(_tw), _t_sales[_t_sales["쿠폰 할인 금액"] > 0]])
-            s_paid = _t_sales.assign(_p=_pkey(_t_sales["날짜"], gran)).groupby("_p")["KRW환산금액"].sum().rename("실결제")
-            _cp = _t_cpn.assign(_p=_pkey(_t_cpn["날짜"], gran)).groupby("_p")["쿠폰KRW"].sum().rename("쿠폰")
-            trend = pd.concat([s_paid, _cp], axis=1).fillna(0).sort_index()
-            if trend.empty:
-                css_trend([], gran)
-            else:
-                trend = trend.reset_index()
-                if gran == "월":
-                    trend["label"] = trend["_p"].apply(lambda p: f"{p.year}.{p.month:02d}")
-                elif gran == "주":
-                    trend["label"] = trend["_p"].apply(lambda p: p.start_time.strftime("%m/%d") + "주")
-                else:
-                    trend["label"] = trend["_p"].astype(str)
-                css_trend(list(zip(trend["label"], trend["실결제"].astype(int),
-                                   trend["쿠폰"].astype(int))), gran)
-                # 시안: 차트 아래 인사이트 한 줄 (예: 월 단위 · 6월 ₩329M → 7월(10일) ₩45M, 월초라 낮아요)
-                if gran == "월" and len(trend) >= 2:
-                    _pp, _lp = trend["_p"].iloc[-2], trend["_p"].iloc[-1]
-                    _pv, _cv = int(trend["실결제"].iloc[-2]), int(trend["실결제"].iloc[-1])
-                    _end = _t_end            # 차트가 최근 1년 고정이라 조회 기간과 무관하다
-                    _partial = (_lp.year == _end.year and _lp.month == _end.month
-                                and _end.day < _lp.days_in_month)
-                    _txt = (f"월 단위 · {_pp.month}월 ₩{_pv / 1e6:,.0f}M → "
-                            f"{_lp.month}월{f'({_end.day}일)' if _partial else ''} ₩{_cv / 1e6:,.0f}M")
-                    if _partial and _cv < _pv:
-                        _txt += ", 월초라 낮아요" if _end.day <= 12 else " (진행 중이에요)"
-                    st.caption(_txt)
+            _r = revenue_txns(_tw)          # 정산금액 = 실결제 + 쿠폰 (다른 카드와 같은 기준)
+            if _r.empty:
+                st.info("선택한 조건에 맞는 데이터가 없어요. 필터를 바꿔 보세요.")
+                return
+            _r = _r.assign(_d=pd.to_datetime(_r["날짜"]))
+            _g = _r.groupby("_d").agg(
+                total=("정산금액", "sum"),
+                실결제=("KRW환산금액", "sum"),
+                쿠폰=("쿠폰KRW", "sum"),
+                한국=("정산금액", lambda s: 0)).sort_index()
+            # 한국분은 따로 — 한국이 88%라 '전체' 흐름이 사실상 한국 흐름이다.
+            _kr = (_r[_r["국가"] == "대한민국"].groupby("_d")["정산금액"].sum()
+                   if "국가" in _r.columns else pd.Series(dtype=float))
+            _g["한국"] = _kr.reindex(_g.index).fillna(0)
+            # 빈 날을 0으로 채운다 — 안 채우면 이동평균·주 집계가 날짜를 건너뛴다.
+            _g = _g.asfreq("D").fillna(0) if len(_g) > 1 else _g
+            trend_chart.render(st, _g, key="sn_trend", color="#4f46e5",
+                               parts_cols=["실결제", "쿠폰"], kr_col="한국")
             helpbox("""
-    **매출 추이 (실결제 + 쿠폰, 월/주/일)**
-    - ★**이 차트만 상단 조회 기간을 안 따라요 — 항상 최근 1년(12개월)이에요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. **국가·매장·카테고리 필터는 그대로 적용돼요.**
-    - 막대가 많아지면(일 단위 1년이면 365개) x축 라벨은 26개쯤만 남기고 막대 위 금액은 빼요. 값은 막대에 마우스를 올리면 나와요.
-    - **실결제 막대** = `실결제` 거래를 기간(월=`to_period('M')`, 주=`to_period('W')`, 일=날짜)으로 묶어 `KRW환산금액` 합.
-    - **쿠폰 할인 막대** = 같은 기간으로 `cpn_all`의 `쿠폰KRW` 합. 실결제 위에 쌓아 정가 대비 할인 규모를 표시.
-    - **하단 인사이트** = '월' 보기에서 직전월 → 최근월 실결제 증감. 최근월이 진행 중이면 `(N일)`로 부분집계임을 표기.
-    - ※ 공통 기준(원본·환율·실결제 정의)은 상단 'KPI 카드' 설명 참고.
+    **매출 추이**
+    - ★**이 차트만 상단 조회 기간을 안 따라요 — 항상 최근 1년이에요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. **국가·매장·카테고리 필터는 그대로 적용돼요.**
+    - **보기 3가지** — `12개월·월`(막대 12개) · `12개월·주`(선 48점) · `최근 90일·일`(선 90점 + 7일 이동평균). 뭘 골라도 점이 12~90개예요.
+      - ★**12개월을 일 단위로는 안 그려요.** 점이 341개라 화면 폭(점당 3px)보다 많아 읽을 수가 없고, 주말이 평일의 1.5배라 요일 흔들림이 추세보다 커서 오히려 방해가 돼요.
+      - `주` 보기는 **양 끝의 잘린 주를 빼요.** 안 빼면 실제로 없는 U자 모양이 항상 생겨요.
+      - `월` 보기의 마지막 달은 **사선**이에요 — 아직 진행 중인 부분 집계라 '급락'으로 오해하기 쉬워서요.
+    - **선은 하나(정산금액 = 실결제 + 쿠폰)**예요. 예전엔 실결제 위에 쿠폰을 쌓았는데, 그러면 제일 또렷한 위쪽 선이 '정가 총액'이 돼서 정작 봐야 할 값이 가려졌어요. 실결제·쿠폰 내역은 **툴팁에 숫자로** 나와요.
+    - **위쪽 요약 줄**(최근 4주 · 직전 4주 대비)은 그래프를 안 봐도 답이 되게 항상 띄워요. 터치 기기에선 툴팁을 못 띄우거든요. 4주 이동합이라 '이번 달이 아직 안 끝나서 낮아 보이는' 문제도 안 생겨요.
+    - **한국 제외** 토글 — 한국이 88%라 '전체'가 사실상 한국이에요. 해외만 보려면 켜세요.
+    - ※ 공통 기준(원본·환율·정산금액 정의)은 상단 'KPI 카드' 설명 참고.
     """)
 
         _trend()
