@@ -26,6 +26,33 @@ ACCESS_LOG_PATH    = BASE_DIR / "logs" / "dashboard_access.log"
 
 # 소유자 — 전체 권한 + 계정 승인 권한 (deploy-checker ALLOWED_EMAILS 와 동일)
 OWNER_EMAILS = {"ansqo34@seobuk.kr", "kyung@seobuk.kr", "cbi9406@seobuk.kr"}
+
+# ── 2단계 가입 승인 (2026-08-07) ─────────────────────────────────
+# 신규 가입 → 1차 승인 → 2차 승인 → 접속 가능. **둘 다 끝나야** 열린다.
+# 값은 config.json 의 approval 섹션으로 덮어쓸 수 있다(코드 수정 없이 담당자 교체).
+#   "approval": {"stage1": "...", "stage2": "...", "dashboard_url": "https://..."}
+_APPROVAL_DEFAULT = {"stage1": "kyung@seobuk.kr",    # 1차 · 유경민
+                     "stage2": "cbi9406@seobuk.kr"}  # 2차 · 최병인
+
+
+def approval_cfg() -> dict:
+    try:
+        c = json.loads((BASE_DIR / "config.json").read_text(encoding="utf-8"))
+        v = dict(_APPROVAL_DEFAULT)
+        v.update({k: s for k, s in (c.get("approval") or {}).items() if s})
+        return v
+    except Exception:
+        return dict(_APPROVAL_DEFAULT)
+
+
+def approver_of(stage: int) -> str:
+    return (approval_cfg().get(f"stage{stage}") or "").strip().lower()
+
+
+def can_approve(email: str | None, stage: int) -> bool:
+    """그 단계를 누를 수 있는 사람인가. 소유자는 두 단계 다 가능(비상시 대행)."""
+    e = (email or "").strip().lower()
+    return bool(e) and (e == approver_of(stage) or is_owner(e))
 # (선택) 도메인 통째 허용. 비우면 승인제만. 예: "seobuk.kr"
 ALLOWED_DOMAIN = ""
 
@@ -51,6 +78,18 @@ def _normalize_users(v: dict) -> dict:
     else:
         ap = {}
     pend = [str(e).strip().lower() for e in v.get("pending", []) if str(e).strip()]
+    # 2단계 승인(2026-08-07) — 1차를 통과했지만 2차가 남은 계정.
+    # {"email": {"role": "viewer", "by": "1차승인자", "at": "..."}}
+    # ★stage1 에 있어도 can_access 는 여전히 False 다. 둘 다 끝나야 approved 로 간다.
+    st1 = {}
+    for e, meta in (v.get("stage1") or {}).items():
+        e2 = str(e).strip().lower()
+        if not e2 or e2 in ap:
+            continue
+        meta = meta if isinstance(meta, dict) else {}
+        st1[e2] = {"role": meta.get("role") if meta.get("role") in ROLES else "viewer",
+                   "by": str(meta.get("by") or ""), "at": str(meta.get("at") or "")}
+    pend = [e for e in pend if e not in st1]      # 같은 계정이 두 줄에 걸치지 않게
 
     # 팀: {"팀이름": {"pages": ["kpi", ...]}} — 없는 페이지 키는 버린다
     # (registry 에서 페이지를 지웠는데 팀에 남아 있으면 유령 권한이 된다)
@@ -69,14 +108,15 @@ def _normalize_users(v: dict) -> dict:
         if e2 in ap and t2 in teams:
             memb[e2] = t2
 
-    return {"approved": ap, "pending": pend, "teams": teams, "member_team": memb}
+    return {"approved": ap, "pending": pend, "stage1": st1,
+            "teams": teams, "member_team": memb}
 
 
 def _load_users() -> dict:
     try:
         return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
     except FileNotFoundError:
-        return {"approved": {}, "pending": [], "teams": {}, "member_team": {}}
+        return {"approved": {}, "pending": [], "stage1": {}, "teams": {}, "member_team": {}}
     except Exception:
         # 파싱 실패(쓰기 도중 등). 원자적 저장으로 거의 없지만, 만약 발생하면 짧게 재시도해
         # 반쯤 쓰인 파일 때문에 승인된 사용자가 '승인 대기'로 튕기는 사고를 막는다.
@@ -86,10 +126,10 @@ def _load_users() -> dict:
                 return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
             except Exception:
                 continue
-        # ★위 FileNotFoundError 분기와 **같은 4키**여야 한다. teams/member_team 을
+        # ★위 FileNotFoundError 분기와 **같은 5키**여야 한다. teams/member_team 을
         #   빼면 list_teams()·allowed_pages() 가 u["teams"] 로 직접 인덱싱하다
         #   KeyError → 로그인 전원이 에러 화면이 된다(2026-07-31 확인).
-        return {"approved": {}, "pending": [], "teams": {}, "member_team": {}}
+        return {"approved": {}, "pending": [], "stage1": {}, "teams": {}, "member_team": {}}
 
 
 def _save_users(u: dict) -> None:
@@ -243,15 +283,70 @@ def can_access(email: str | None) -> bool:
     return e in _load_users()["approved"]
 
 
+def _notify(to: str, subject: str, lines: list[str]) -> None:
+    """승인 흐름 알림 메일. **실패해도 절대 화면을 죽이지 않는다.**
+
+    ★로그인 도중에 불리므로 별도 스레드로 보낸다. Gmail SMTP 가 1~2초 걸리는데
+      그동안 로그인 화면이 멈춰 있으면 '느린 대시보드'가 된다.
+    ★메일 안에서 바로 승인시키지 않는다(사용자 결정). 링크는 대시보드로만 보내고
+      승인은 구글 로그인을 거친 화면에서 누른다 — 메일이 전달되거나 새도 남이
+      대신 누를 수 없다.
+    """
+    to = (to or "").strip()
+    if not to:
+        return
+
+    def _run():
+        try:
+            import settlement_mail as sm
+            from email.message import EmailMessage
+            ok, sender = sm.config_ready()
+            if not ok:
+                return
+            url = (approval_cfg().get("dashboard_url") or "").strip()
+            body = list(lines)
+            body.append("")
+            body.append(f"승인하러 가기: {url}" if url
+                        else "대시보드 → 🔐 접속·계정 관리 → 계정 승인 에서 처리해 주세요.")
+            body.append("")
+            body.append("— CMS 매출 대시보드")
+            msg = EmailMessage()
+            msg["Subject"] = subject
+            msg["From"] = f"CMS 매출 대시보드 <{sender}>"
+            msg["To"] = to
+            msg.set_content("\n".join(body))
+            sm.send(msg, [to], [])
+        except Exception as ex:                 # 메일 실패로 로그인이 막히면 안 된다
+            try:
+                _log_access("system", f"mailfail:{subject}:{type(ex).__name__}")
+            except Exception:
+                pass
+
+    try:
+        import threading
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        pass
+
+
 def _add_pending(email: str) -> None:
     e = email.strip().lower()
+    _added = False
 
     def _fn(u):
-        if e in u["approved"] or e in u["pending"]:
+        nonlocal _added
+        if e in u["approved"] or e in u["pending"] or e in u.get("stage1", {}):
             return
         u["pending"].append(e)
+        _added = True
 
     _mutate_users(_fn)
+    if _added:                       # 같은 사람이 새로고침할 때마다 메일이 가면 안 된다
+        _notify(approver_of(1), f"[대시보드] 새 가입 요청 — {e}",
+                [f"{e} 님이 대시보드 접속을 요청했어요.",
+                 "",
+                 "1차 승인이 필요합니다. 승인하시면 2차 승인자에게 자동으로 넘어가요.",
+                 "둘 다 승인해야 접속할 수 있어요."])
 
 
 def _user_claim(key: str):
@@ -438,7 +533,9 @@ def _render_pending_page(email: str) -> None:
         <div class="pend-card">
           <div class="lock">🔒</div>
           <h2>승인 대기 중</h2>
-          <p><b>{email}</b><br>관리자 승인 후 로그인할 수 있어요.<br>승인 요청이 접수되었습니다.</p>
+          <p><b>{email}</b><br>승인 요청이 접수됐어요. 담당자에게 메일이 갔어요.<br>
+             승인은 <b>2단계</b>로 진행돼요 — 1차·2차가 모두 승인하면 바로 쓸 수 있어요.<br>
+             완료되면 이 메일 주소로 알려드려요.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -662,9 +759,15 @@ def render_admin_console() -> None:
     _ROLE_LABEL = {"editor": "✏️ 에디터(편집)", "viewer": "👁 뷰어(열람)"}
     with tab_users:
         u = _load_users()
+        _cfg = approval_cfg()
+        _can1, _can2 = can_approve(email, 1), can_approve(email, 2)
+        st.caption(f"가입 승인은 **2단계**예요 — 1차 {_cfg.get('stage1', '(미지정)')} → "
+                   f"2차 {_cfg.get('stage2', '(미지정)')}. 둘 다 승인해야 접속할 수 있어요. "
+                   "각 단계에서 메일이 자동으로 나가요.")
+
+        # ── 1차 대기 ──
         with st.container(border=True):
-            pend_n = len(u["pending"])
-            st.markdown(f"**승인 대기**  ({pend_n}건)")
+            st.markdown(f"**1차 승인 대기**  ({len(u['pending'])}건)")
             if u["pending"]:
                 for e in u["pending"]:
                     c1, c2, c3, c4 = st.columns([3.4, 1.7, 1, 1])
@@ -672,12 +775,38 @@ def render_admin_console() -> None:
                     _r = c2.selectbox("역할", list(ROLES), key=f"aprole_{e}",
                                       format_func=lambda x: _ROLE_LABEL.get(x, x),
                                       label_visibility="collapsed")
-                    if c3.button("승인", key=f"ap_{e}", type="primary"):
-                        _approve(e, _r); _log_access(email, f"approve:{e}={_r}"); st.rerun()
-                    if c4.button("거절", key=f"rj_{e}"):
+                    if c3.button("1차 승인", key=f"ap1_{e}", type="primary",
+                                 disabled=not _can1,
+                                 help=None if _can1 else "1차 승인자만 누를 수 있어요."):
+                        _approve_stage1(e, _r, email)
+                        _log_access(email, f"approve1:{e}={_r}"); st.rerun()
+                    if c4.button("거절", key=f"rj_{e}", disabled=not (_can1 or _can2)):
                         _reject(e); _log_access(email, f"reject:{e}"); st.rerun()
             else:
-                st.caption("대기 중인 계정이 없어요.")
+                st.caption("1차 대기 중인 계정이 없어요.")
+
+        # ── 2차 대기 ──
+        _s1 = u.get("stage1", {})
+        with st.container(border=True):
+            st.markdown(f"**2차 승인 대기**  ({len(_s1)}건)")
+            if _s1:
+                for e, meta in _s1.items():
+                    c1, c2, c3, c4 = st.columns([3.4, 1.7, 1, 1])
+                    c1.write(e)
+                    c1.caption(f"1차 {meta.get('by', '')} · {meta.get('at', '')[:16].replace('T', ' ')}")
+                    _r2 = c2.selectbox("역할", list(ROLES), key=f"ap2role_{e}",
+                                       index=list(ROLES).index(meta.get("role", "viewer")),
+                                       format_func=lambda x: _ROLE_LABEL.get(x, x),
+                                       label_visibility="collapsed")
+                    if c3.button("최종 승인", key=f"ap2_{e}", type="primary",
+                                 disabled=not _can2,
+                                 help=None if _can2 else "2차 승인자만 누를 수 있어요."):
+                        _approve(e, _r2)
+                        _log_access(email, f"approve2:{e}={_r2}"); st.rerun()
+                    if c4.button("거절", key=f"rj2_{e}", disabled=not (_can1 or _can2)):
+                        _reject(e); _log_access(email, f"reject2:{e}"); st.rerun()
+            else:
+                st.caption("2차 대기 중인 계정이 없어요.")
 
         with st.container(border=True):
             st.markdown(f"**승인된 계정**  ({len(u['approved'])}명)")
@@ -784,20 +913,52 @@ def render_admin_console() -> None:
                 st.caption("해당하는 기록이 없어요.")
 
 
+def _approve_stage1(email: str, role: str, by: str) -> None:
+    """1차 승인 — pending 에서 빼서 stage1 로. **아직 접속은 안 된다.**"""
+    e = email.strip().lower()
+    role = role if role in ROLES else "viewer"
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+
+    def _fn(u):
+        u["pending"] = [x for x in u["pending"] if x != e]
+        u.setdefault("stage1", {})[e] = {"role": role, "by": by, "at": now}
+
+    _mutate_users(_fn)
+    _notify(approver_of(2), f"[대시보드] 2차 승인 요청 — {e}",
+            [f"{e} 님의 가입 요청이 1차 승인을 통과했어요.",
+             f"1차 승인: {by}",
+             f"부여 예정 권한: {'편집' if role == 'editor' else '열람'}",
+             "",
+             "2차 승인을 하면 그때부터 접속할 수 있어요."])
+
+
 def _approve(email: str, role: str = "viewer") -> None:
+    """최종(2차) 승인 — 여기서 비로소 접속이 열린다."""
     e = email.strip().lower()
     role = role if role in ROLES else "viewer"
 
     def _fn(u):
         u["pending"] = [x for x in u["pending"] if x != e]
+        u.get("stage1", {}).pop(e, None)
         u["approved"][e] = role
 
     _mutate_users(_fn)
+    _notify(e, "[대시보드] 접속이 승인됐어요",
+            ["요청하신 CMS 매출 대시보드 접속이 승인됐어요.",
+             f"권한: {'편집' if role == 'editor' else '열람'}",
+             "",
+             "이제 구글 계정으로 로그인하면 바로 쓸 수 있어요."])
 
 
 def _reject(email: str) -> None:
+    """거절 — 어느 단계에 있든 목록에서 뺀다."""
     e = email.strip().lower()
-    _mutate_users(lambda u: u.__setitem__("pending", [x for x in u["pending"] if x != e]))
+
+    def _fn(u):
+        u["pending"] = [x for x in u["pending"] if x != e]
+        u.get("stage1", {}).pop(e, None)
+
+    _mutate_users(_fn)
 
 
 def _revoke(email: str) -> None:
