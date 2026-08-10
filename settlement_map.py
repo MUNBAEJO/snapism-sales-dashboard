@@ -175,6 +175,59 @@ def _jira_map(brand: str) -> dict:
     return {}
 
 
+def _sched(brand: str) -> list:
+    """티켓 1건당 1개인 일정 목록(로컬 캐시만). 없으면 빈 목록.
+
+    ★`_jira_map` 만으로는 부족하다 — 저건 **타이틀이 키**라 같은 WBS 를 쓰는 티켓이
+      서로를 덮는다. 실제로 티켓 2,226장이 조회에서 통째로 빠져 있었다.
+      이쪽(`fetch_ip_schedule`)은 티켓별 리스트라 덮일 일이 없다.
+    """
+    try:
+        cache = json.loads(JIRA_CACHE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    for key in (f"sched_v2_{brand}", "sched_v2_all"):
+        blk = cache.get(key)
+        if not blk:
+            continue
+        rows = blk.get("data", blk) or []
+        if key.endswith(f"_{brand}"):
+            return rows
+        # all 캐시를 쓸 땐 브랜드로 걸러낸다(브랜드 필드는 다중값 문자열).
+        want = ("photoism",) if brand == "photoism" else ("snapism", "sticker")
+        return [r for r in rows
+                if any(w in str(r.get("brand", "")).lower() for w in want)]
+    return []
+
+
+def _jira_pairs(brand: str) -> list:
+    """색인의 원본 — `(타이틀, 엔트리)` 쌍. 타이틀 중복을 허용한다.
+
+    타이틀 키 맵(`_jira_map`)에 일정 목록(`_sched`)을 덧댄다. 덮이지 않게 쌍으로 쌓고,
+    (타이틀, 티켓) 조합이 같을 때만 건너뛴다.
+    """
+    pairs = [(t, e) for t, e in _jira_map(brand).items()]
+    seen = {(t, str(e.get("ticket_key") or "").strip().upper()) for t, e in pairs}
+    for s in _sched(brand):
+        tk = str(s.get("ticket_key") or "").strip().upper()
+        if not tk:
+            continue
+        titles = [t for t in (s.get("wbs_titles") or []) if t]
+        if not titles and s.get("parent"):      # WBS 가 비면 부모 제목으로 (수집기와 같은 규칙)
+            titles = [s["parent"]]
+        for t in titles:
+            if (t, tk) in seen:
+                continue
+            seen.add((t, tk))
+            pairs.append((t, {
+                "startdate": s.get("startdate"), "duedate": s.get("duedate"),
+                "ticket_key": tk, "parent": s.get("parent", ""),
+                "brand": s.get("brand", ""), "status": s.get("status", ""),
+                "title": t, "wbs_raw": " ".join(titles),
+            }))
+    return pairs
+
+
 def ticket_index(brand: str) -> dict:
     """{티켓번호: 대표 엔트리}. 캐시는 **타이틀이 키**라 티켓으로 찾으려면 뒤집어야 한다.
 
@@ -182,7 +235,7 @@ def ticket_index(brand: str) -> dict:
     타이틀을 모아 `titles` 로 넘기고, 날짜는 있는 쪽을 남긴다.
     """
     out: dict = {}
-    for title, e in _jira_map(brand).items():
+    for title, e in _jira_pairs(brand):
         tk = str(e.get("ticket_key") or "").strip().upper()
         if not tk:
             continue
@@ -224,7 +277,7 @@ def _indexes(brand: str) -> tuple[dict, dict]:
     key = (brand, mt)
     hit = _IDX.get(key)
     if hit is None:
-        jm = _jira_map(brand)
+        jm = _jira_pairs(brand)     # dict 가 아니라 쌍 목록 — 타이틀이 겹쳐도 안 덮인다
         hit = (title_runs._jira_by_key(jm), title_runs._token_prefix_index(jm))
         # 캐시가 갱신되면 옛 mtime 키는 쓸모없다. 브랜드별 최신 것만 남긴다.
         for k in [k for k in _IDX if k[0] == brand]:

@@ -312,13 +312,20 @@ def run_jira_cache_warm():
     """
     log("Jira 일정 캐시 예열 시작...")
     try:
-        from jira_ip_dates import fetch_ip_dates
+        from jira_ip_dates import fetch_ip_dates, fetch_ip_schedule
         for brand in ("all", "photoism", "snapism"):
             try:
                 n = len(fetch_ip_dates(brand=brand, force_refresh=True))
                 log(f"  {brand}: {n:,}건")
             except Exception as e:
                 log(f"  {brand}: 실패 ({e})")   # 한 브랜드 실패해도 나머지는 계속
+        # ★티켓별 목록도 같이 채운다 — 정산의 티켓 조회가 이걸 쓴다.
+        #   예전엔 오픈캘린더를 열어야만 갱신돼, 아무도 안 열면 며칠씩 낡은 채로 있었다.
+        try:
+            n = len(fetch_ip_schedule(brand="all", force_refresh=True))
+            log(f"  일정(티켓별): {n:,}건")
+        except Exception as e:
+            log(f"  일정(티켓별): 실패 ({e})")
         log("Jira 일정 캐시 예열 완료.")
     except Exception as e:
         log(f"Jira 캐시 예열 오류: {e}")

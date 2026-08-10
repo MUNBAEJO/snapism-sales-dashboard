@@ -85,10 +85,23 @@ def _exact_key(name):
     return f"{m.group(2)}|{rest}" if rest else None
 
 
+def _pairs(jira_map):
+    """`{타이틀: 엔트리}` 도, `[(타이틀, 엔트리), ...]` 도 받는다.
+
+    ★쌍 목록을 받아야 하는 이유 — **같은 타이틀을 여러 티켓이 공유**한다.
+      한 상품에 '프로그램 및 검수' 서브테스크가 추가로 열리면(선수 추가 등) WBS 가
+      같은 티켓이 둘이 되는데, dict 로 담으면 나중 것이 앞 것을 덮어 티켓 하나가
+      색인에서 통째로 사라진다(2026-08-10, CANDIP-22548 이 그렇게 안 잡혔다).
+    """
+    if not jira_map:
+        return []
+    return list(jira_map.items()) if isinstance(jira_map, dict) else list(jira_map)
+
+
 def _jira_by_key(jira_map):
     """Jira 매핑 → {정규화키: [엔트리...]} (한 IP에 회차별 티켓이 여러 개일 수 있음)"""
     out = {}
-    for title, entry in (jira_map or {}).items():
+    for title, entry in _pairs(jira_map):
         e = dict(entry)
         e.setdefault("title", title)
         out.setdefault(normalize_title(title), []).append(e)
@@ -160,7 +173,7 @@ def _entries_for(jira_keyed, title, token_index=None):
 def _token_prefix_index(jira_map):
     """{매출쪽 토큰열: [엔트리...]} — Jira 타이틀의 앞부분 토큰열을 전부 키로 등록."""
     out = {}
-    for title, entry in (jira_map or {}).items():
+    for title, entry in _pairs(jira_map):
         toks = _tokens(title)
         e = dict(entry)
         e.setdefault("title", title)
