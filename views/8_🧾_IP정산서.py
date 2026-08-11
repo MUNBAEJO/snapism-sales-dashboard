@@ -169,7 +169,7 @@ def _ticket_box(brand: str):
         "티켓번호 또는 IP명", key=f"tk_{brand}", label_visibility="collapsed",
         placeholder="CANDIP-12345 · 여러 장이면 쉼표로 · IP명으로 찾아도 돼요").strip()
     if not q:
-        return [], [], {}
+        return [], [], {}, []
 
     typed = []
     for m in _TK_RE.findall(q.upper()):
@@ -188,48 +188,69 @@ def _ticket_box(brand: str):
         if not tickets:
             st.caption("그 이름으로는 티켓을 못 찾았어요.")
     if not tickets:
-        return [], [], {}
+        return [], [], {}, []
 
     tt = _title_tickets(brand, S, E, E, fx.version(), sm.mapping_version())
     rev = dict(zip(*_rev_index(brand)))          # 타이틀 → (매출액, 국가수)
 
-    # 티켓별로 붙을 타이틀을 모은다. 한 타이틀이 여러 티켓의 후보일 수 있어
-    # **먼저 잡은 티켓**에만 붙인다(중복 정산 방지).
-    taken, blocks = set(), []
+    # 티켓별로 붙을 타이틀을 모은다.
+    # ★한 타이틀을 여러 티켓이 후보로 물고 있는 일이 흔하다 — 스내피즘 '베이온' 은
+    #   티켓 6장이 물고 있다(회차·상품별로 티켓이 쪼개져 있어서). 그래서 타이틀을
+    #   **먼저 잡은 티켓에만** 붙였더니, 나머지 티켓은 붙을 게 없어 **블록째 사라졌다**
+    #   (CANDIP-27208 이 이름 검색에서 안 보였다). 티켓을 숨기면 안 된다 —
+    #   **물고 있는 티켓 전부에 보여주고**, 어디에 담을지는 사람이 고른다.
+    #   대신 두 곳에 체크하면 중복 정산이므로 아래에서 막는다.
+    blocks, claimed = [], {}
     for tk in tickets:
         rows = []
         for t, (fixed, cands) in tt.items():
-            if t in taken or fixed == "__excluded__":
+            if fixed == "__excluded__":
                 continue
             if (fixed == tk) if fixed else (tk in cands):
                 rows.append((t, fixed == tk))
-                taken.add(t)
+                claimed.setdefault(t, []).append(tk)
         if rows:
             blocks.append((tk, rows))
 
     if not blocks:
         st.warning("이 기간에 그 티켓으로 잡히는 매출이 없어요.")
-        return tickets, [], {}
+        return tickets, [], {}, []
 
-    chosen, tmap = [], {}
+    # 기본 선택은 **먼저 물은 티켓에서 한 번만** — 안 그러면 켜자마자 중복이 된다.
+    first = {t: tks[0] for t, tks in claimed.items()}
+    chosen, tmap, hits = [], {}, {}
     for tk, rows in blocks:
         e = sm.lookup_ticket(brand, tk) or {}
         st.caption(f"📌 `{tk}` {e.get('parent') or ' / '.join(e.get('titles') or [])} · "
                    f"{e.get('startdate') or '?'} ~ {e.get('duedate') or '?'}")
         for t, done in rows:
             amt, ncc = rev.get(t, (0, 0))
+            multi = len(claimed.get(t, [])) > 1
             on = st.checkbox(
-                f"{t} · {_fmt(amt)}원 · {ncc}개국" + ("  ✅" if done else ""),
-                value=default_on or done, key=f"ck_{brand}_{tk}_{t}",
-                disabled=not CAN_EDIT)
+                f"{t} · {_fmt(amt)}원 · {ncc}개국"
+                + ("  ✅" if done else "") + ("  ⚖️" if multi else ""),
+                value=(done or (default_on and first.get(t) == tk)),
+                key=f"ck_{brand}_{tk}_{t}", disabled=not CAN_EDIT)
             if on:
-                chosen.append(t)
-                tmap[t] = tk
-    used = [tk for tk, _ in blocks if any(tmap.get(t) == tk for t in chosen)]
+                hits.setdefault(t, []).append(tk)
+    for t, tks in hits.items():
+        chosen.append(t)
+        tmap[t] = tks[0]
+    dup = {t: tks for t, tks in hits.items() if len(tks) > 1}
+    if dup:
+        ui_theme.nbox("err", "⚖️ <b>같은 타이틀을 두 티켓에 체크했어요</b><div class='sub'>"
+                      + "<br>".join(f"<b>{t}</b> → " + " · ".join(f"<code>{x}</code>"
+                                                                  for x in tks)
+                                    for t, tks in dup.items())
+                      + "<br>한 곳에만 남겨 주세요 — 그대로 두면 같은 매출을 두 번 "
+                        "정산해요.</div>")
+    if any(len(v) > 1 for v in claimed.values()) and not dup:
+        st.caption("⚖️ 표시된 타이틀은 여러 티켓이 후보예요. 담을 곳 한 군데만 체크하세요.")
+    used = [tk for tk, _ in blocks if tk in set(tmap.values())]
     if len(used) > 1:
         st.caption(f"🧾 티켓 {len(used)}장을 **한 장으로** 정산해요 — "
                    + " · ".join(f"`{t}`" for t in used))
-    return used, chosen, tmap
+    return used, chosen, tmap, [f"{t} → {' · '.join(tks)}" for t, tks in dup.items()]
 
 
 @st.cache_data(ttl=900, max_entries=8, show_spinner=False)
@@ -245,12 +266,13 @@ def _rev_index(brand):
 
 @st.fragment
 def make_panel():
-    picks, tmaps = {}, {}
+    picks, tmaps, dups = {}, {}, []
     cols = st.columns(2)
     for col, b in zip(cols, sm.BRANDS):
         with col:
-            tks, titles, tmap = _ticket_box(b)
+            tks, titles, tmap, dup = _ticket_box(b)
             picks[b], tmaps[b] = (tks, titles), tmap
+            dups += dup
 
     if not any(t for t, _ in picks.values()):
         st.info("위에 티켓번호나 IP명을 넣어 주세요. 포토이즘·스내피즘 중 한쪽만 있어도 돼요.")
@@ -266,7 +288,7 @@ def make_panel():
             want = {t for t in titles if tmap.get(t) == tk}
             if set(sc.titles_for_ticket(b, tk)) != want:
                 need_save.append((b, tk, sorted(want)))
-    if need_save and CAN_EDIT:
+    if need_save and CAN_EDIT and not dups:
         n = sum(len(t) for _, _, t in need_save)
         if st.button(f"✔️ 위 구성으로 확정 ({n}개 타이틀)", use_container_width=True):
             for b, tk, titles in need_save:
@@ -459,6 +481,9 @@ def make_panel():
         reason = st.text_input("정정 사유 (문서 첫 장에 표기돼요)", key="reason")
 
     stop = []
+    if dups:
+        # 같은 타이틀을 두 티켓에 담으면 같은 매출을 두 번 정산한다. 발행 자체를 막는다.
+        stop.append("타이틀 중복 체크(" + " / ".join(dups) + ")")
     if warns:
         stop.append("환율 검증 실패")
     if miss:
