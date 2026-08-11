@@ -1612,23 +1612,38 @@ with tab_home:
         _t_end = last_date
         _t_start = (pd.Timestamp(_t_end).normalize()
                     - pd.DateOffset(months=11)).replace(day=1).date()
-        _tw = scope[(scope["날짜"] >= _t_start) & (scope["날짜"] <= _t_end)]
+        # ★★쓰는 컬럼만 떼어 복사한다 (2026-08-11, OOM 대응).
+        #   캐시 프레임은 694만 행 × 26열 = 835MB 다. 통째로 마스킹하면 1년 창
+        #   433만 행 × 26열이 새로 복사되고, 뒤이은 paid_sales·assign 이 또 복사해
+        #   한 rerun 에 2~3GB 가 겹친다. 실제로 여기서 ArrayMemoryError 가 났다.
+        #   이 카드가 보는 건 다섯 열뿐이다(취소 여부는 paid_sales 가 본다).
+        _TREND_COLS = [c for c in ("날짜", "IP구분", "매출액", "국가", "취소 여부")
+                       if c in scope.columns]
+        _tw = scope.loc[(scope["날짜"] >= _t_start) & (scope["날짜"] <= _t_end),
+                        _TREND_COLS]
         _tsales = paid_sales(_tw)
         if _tsales.empty:
             st.info("선택한 조건에 맞는 데이터가 없어요. 필터를 바꿔 보세요.")
         else:
             # ★구분 목록은 **1년 창에서** 뽑는다. present 는 조회 기간 기준이라,
             #   이번 달에만 안 팔린 구분이 1년 차트에서 통째로 빠진다.
-            _tset = (set(_tsales.loc[_tsales["IP구분"] != "제외", "IP구분"].astype(str))
+            # ★유니크만 문자열로 바꾼다 — .astype(str) 을 열 전체에 걸면 433만 개
+            #   파이썬 문자열 객체가 생긴다(categorical 을 푸는 셈).
+            _tset = ({str(x) for x in _tsales["IP구분"].unique()} - {"제외"}
                      if "IP구분" in _tsales.columns else set())
             _tpresent = [g for g in IP_GUBUN_VIEW if g in _tset]
             _tsales = _tsales.assign(_d=pd.to_datetime(_tsales["날짜"]))
             _g = _tsales.groupby("_d")["매출액"].sum().rename("total").to_frame()
             # 구분별 값은 **툴팁용**으로만 붙인다. 5계열을 쌓으면 아래 계열이 위를
             # 통째로 밀어올려 어느 것도 자기 값으로 안 읽힌다(구성은 아래 비중 카드 몫).
-            for _gb in _tpresent:
-                _g[_gb] = (_tsales[_tsales["IP구분"].astype(str) == _gb]
-                           .groupby("_d")["매출액"].sum().reindex(_g.index).fillna(0))
+            # ★구분마다 전체를 훑지 않고 **groupby 한 번**으로 전 구분을 동시에 낸다.
+            #   예전엔 구분 수(6)만큼 433만 행 문자열 변환 + 스캔을 반복했다.
+            if _tpresent:
+                _tp = (_tsales.groupby(["_d", "IP구분"], observed=True)["매출액"]
+                       .sum().unstack(fill_value=0))
+                for _gb in _tpresent:
+                    _g[_gb] = (_tp[_gb].reindex(_g.index).fillna(0)
+                               if _gb in _tp.columns else 0)
             if "국가" in _tsales.columns:
                 _g["한국"] = (_tsales[_tsales["국가"] == "한국"]
                               .groupby("_d")["매출액"].sum().reindex(_g.index).fillna(0))
@@ -1662,7 +1677,9 @@ with tab_home:
             #   바로 위 '매출 추이'가 IP구분(아티스트·캐릭터·PICK·오리지널 2종)으로
             #   쌓이는데 그 아래 도넛만 다른 축이라, 같은 화면에서 두 분류를 눈으로
             #   맞춰야 했다. 색도 _GUB_COLORS 로 통일해 추이 막대와 그대로 짝이 맞는다.
-            gz = (sales[sales["IP구분"].astype(str).isin(present)]
+            # ★categorical 에 .astype(str) 을 걸면 행 수만큼 문자열 객체가 생긴다.
+            #   카테고리가 이미 문자열이라 그냥 isin 으로 같은 결과다(실측 동일·3배 빠름).
+            gz = (sales[sales["IP구분"].isin(present)]
                   .groupby("IP구분", observed=True)["매출액"].sum()
                   .rename("매출").reset_index()) if present else pd.DataFrame()
             gz = gz[gz["매출"] > 0] if not gz.empty else gz
@@ -2188,7 +2205,7 @@ def _store_tab(sales, date_range, sel_countries):
         #   칸별 비중 합이 100%가 안 되고 표 합계가 위 '매장 전체 순위'와 어긋난다 →
         #   여기서만 걷어내고 얼마를 뺐는지 캡션에 밝힌다(조용히 사라지게 두지 않는다).
         if "IP구분" in _sc.columns and _segs:
-            _gsrc = _sc[_sc["IP구분"].astype(str).isin(_segs)]
+            _gsrc = _sc[_sc["IP구분"].isin(_segs)]   # astype(str) 불필요(위 주석 참고)
         else:
             _gsrc = _sc.iloc[0:0]
         _drop_rev = int(_sc["매출액"].sum()) - int(_gsrc["매출액"].sum())
