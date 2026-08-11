@@ -222,7 +222,11 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
     amts = _alloc_settle([int(r["매출액"]) for r in rows], rs, _rates)
     tq = tk = ts = 0
     # 한 페이지에 들어갈 만큼 자동으로 조인다(기본 27행까지 여유).
-    dens = " d2" if len(rows) > 33 else (" d1" if len(rows) > 26 else "")
+    # ★항목별로 묶으면 머리글 + 소계가 묶음마다 2행씩 더 붙는다. 그걸 안 세면
+    #   페이지를 뚫는다(실제로 잘렸다).
+    _ngrp = len({r.get("구분") for r in rows if r.get("구분")})
+    _eff = len(rows) + _ngrp * 2
+    dens = " d2" if _eff > 33 else (" d1" if _eff > 26 else "")
     h = (f'<table class="t2 num{dens}"><tr><th>국가</th><th>통화</th>'
          f'<th>{qty_label}</th><th>현지 매출</th><th>적용 환율</th>'
          '<th>매출(KRW)</th><th>요율</th><th>정산액</th>'
@@ -679,8 +683,12 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
     # ── 브랜드별 계산 (행 단위 반올림 → 합) ──────────────────────────────
     calc = {}
     for b in used:
-        rows = ctx["details"][b].sort_values("매출액", ascending=False) \
-            .to_dict("records")
+        _d = ctx["details"][b]
+        # ★판매 항목별로 묶은 표는 **다시 정렬하면 안 된다.** 매출액 순으로 재정렬하면
+        #   와이드 스티커 → 포토카드 → 와이드 스티커 … 로 뒤섞여 묶음이 깨진다
+        #   (country_detail 이 이미 '항목 순 → 항목 안에서 매출 순' 으로 정렬해 둔다).
+        rows = (_d if "구분" in _d.columns
+                else _d.sort_values("매출액", ascending=False)).to_dict("records")
         tbl, krw, setl, qty = _country_table(rows, QTY_LABEL[b],
                                              rate_pct, rs, rs_cc)
         calc[b] = {"rows": rows, "tbl": tbl, "krw": krw, "set": setl, "qty": qty}
@@ -814,7 +822,16 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
     # ── 2p·3p 브랜드별 상세 ────────────────────────────────────────────
     for i, b in enumerate(used):
         c = calc[b]
-        pos = [r for r in c["rows"] if r["매출액"] > 0]
+        # 비중 그래프는 **나라 단위**다. 항목별로 쪼갠 행을 그대로 넘기면 같은
+        # 나라가 여러 번 나와 범례에 '한국'이 두 줄로 찍힌다(실제로 그랬다).
+        _agg = {}
+        for r in c["rows"]:
+            if int(r["매출액"]) <= 0:
+                continue
+            k = r["국가"]
+            _agg[k] = {"국가": k, "unit": r["unit"],
+                       "매출액": _agg.get(k, {}).get("매출액", 0) + int(r["매출액"])}
+        pos = sorted(_agg.values(), key=lambda r: -r["매출액"])
         bars = (CHARTS.get(chart) or _share_chart)(pos, c["krw"])
         d = ctx["details"][b]
         top = pos[0] if pos else None
