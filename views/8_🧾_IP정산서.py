@@ -319,10 +319,10 @@ def make_panel():
                     + f" <span class='muted'>{tag}</span>", unsafe_allow_html=True)
         # ★티켓마다 요율이 따로 저장돼 있다. 합쳐서 정산하면 대표 티켓 값만 쓰이므로
         #   다른 값이 들어 있으면 조용히 무시된다 — 그건 알려 줘야 한다.
-        _diff = [t for t in tks[1:]
-                 if (lambda o: (o["agency"], o["mgmt"]))(sc.get_rs(b, t))
-                 != (cur["agency"], cur["mgmt"])
-                 and sc.get_rs(b, t)["source"] != "없음"]
+        _others = {t: sc.get_rs(b, t) for t in tks[1:]}      # 티켓당 한 번만 조회
+        _diff = [t for t, o in _others.items()
+                 if o["source"] != "없음"
+                 and (o["agency"], o["mgmt"]) != (cur["agency"], cur["mgmt"])]
         if _diff:
             ui_theme.nbox("warn", "⚠️ <b>티켓마다 요율이 달라요</b> — "
                           + " · ".join(f"<code>{t}</code>" for t in _diff)
