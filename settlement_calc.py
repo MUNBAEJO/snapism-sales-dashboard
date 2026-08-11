@@ -264,8 +264,17 @@ def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
       한 멤버가 여러 단가로 팔렸어도 평균으로 한 번 나눈다 — 단가별로 또 쪼개면
       담당자 값과 어긋난다.
     """
+    # ★스내피즘은 한 IP 안에 판매 항목이 여러 가지다(와이드 스티커·포토카드·폴라릿).
+    #   단가가 서로 달라 문서에 따로 적어야 한다 → '구분' 열이 있으면 절사도
+    #   (구분 × 국가 × 멤버) 로 내려간다. 합계 차이는 반올림 수준이다(베이온 +1원).
+    by_cat = "구분" in df.columns
+    keys = (["구분", "국가"] if by_cat else ["국가"])
     out = []
-    for nat, g in df.groupby("국가", sort=False):
+    for key, g in df.groupby(keys, sort=False):
+        # ★키가 하나여도 pandas 는 튜플로 준다(2.x). isinstance 로 갈라 보면
+        #   국가명이 '구분' 으로 둔갑한다 — 실제로 포토이즘에 구분 열이 생겼었다.
+        key = key if isinstance(key, tuple) else (key,)
+        cat, nat = (key[0], key[1]) if by_cat else (None, key[0])
         unit = g["unit"].iloc[0]
         up = pd.to_numeric(g["up"], errors="coerce")
         q = (g["현지"] / up.where(up > 0)).map(_trunc)     # 멤버별 몫
@@ -274,11 +283,14 @@ def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
         loc = loc.where(up > 0, g["현지"])
         _tot = int(round(float(loc.sum())))
         _big = g.loc[g["현지"].abs().idxmax(), "up"] if len(g) else None
-        out.append({"국가": nat, "unit": unit, "수량": int(q.fillna(0).sum()),
-                    "현지": _tot,
-                    "매출액": _round_half_up(_tot * float(rates.get(unit, 1))),
-                    "건수": int(g["건수"].sum()),
-                    "단가": (float(_big) if _big and _big == _big else None)})
+        rec = {"국가": nat, "unit": unit, "수량": int(q.fillna(0).sum()),
+               "현지": _tot,
+               "매출액": _round_half_up(_tot * float(rates.get(unit, 1))),
+               "건수": int(g["건수"].sum()),
+               "단가": (float(_big) if _big and _big == _big else None)}
+        if cat is not None:
+            rec["구분"] = cat
+        out.append(rec)
     return pd.DataFrame(out)
 
 
@@ -328,6 +340,9 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
             df = con.execute(f"""
                 WITH t AS (
                   SELECT "국가", "결제 단위" AS unit, {rate} AS r,
+                         -- ★판매 항목(와이드 스티커·포토카드·폴라릿)을 축으로 남긴다.
+                         --   같은 IP 라도 상품마다 단가가 달라 문서에 따로 적어야 한다.
+                         NULLIF(trim(CAST("상품 카테고리" AS VARCHAR)), '') AS 구분,
                          trim(CAST("상품 이름" AS VARCHAR)) AS mem,
                          CAST("최종 결제 금액" AS BIGINT)
                          + CAST("쿠폰 할인 금액" AS BIGINT) AS num,
@@ -337,11 +352,12 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                     AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
                     AND NOT COALESCE("취소 여부", FALSE)
                 )
-                SELECT "국가", any_value(unit) AS unit, mem,
+                SELECT COALESCE(구분, '기타') AS 구분, "국가",
+                       any_value(unit) AS unit, mem,
                        AVG(NULLIF(up, 0)) AS up,
                        CAST(SUM(num) AS BIGINT) AS 현지,
                        CAST(SUM(CASE WHEN num < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수
-                FROM t WHERE num <> 0 GROUP BY 1, 3
+                FROM t WHERE num <> 0 GROUP BY 1, 2, 4
             """).df()
     finally:
         con.close()
@@ -351,6 +367,13 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     df["국가"] = df["국가"].map(lambda x: NAT_KO.get(x, x))
     # ★절사는 현지통화끼리 한다. 환산 후 나누면 환율배수만큼 부푼다.
     df = _fold_prices(df, rates)
+    if "구분" in df.columns:
+        # 판매 항목 묶음이 흩어지지 않게: 큰 항목부터, 그 안에서 매출 큰 나라부터.
+        order = (df.groupby("구분")["매출액"].sum().sort_values(ascending=False)
+                 .index.tolist())
+        df["_o"] = df["구분"].map({c: i for i, c in enumerate(order)})
+        return (df.sort_values(["_o", "매출액"], ascending=[True, False])
+                .drop(columns="_o").reset_index(drop=True))
     return df.sort_values("매출액", ascending=False).reset_index(drop=True)
 
 
@@ -403,18 +426,27 @@ def open_countries(brand: str, start: str, end: str) -> pd.DataFrame:
 
 
 def fill_open(detail: pd.DataFrame, opened: pd.DataFrame) -> pd.DataFrame:
-    """매출 0인 오픈 국가를 0행으로 채운다."""
+    """매출 0인 오픈 국가를 0행으로 채운다.
+
+    ★판매 항목별로 나눠 적는 문서(스내피즘)에서는 **항목마다 반복하지 않는다.**
+      3개 항목 × 안 팔린 20개국 = 60줄이 되면 표가 못 읽게 된다. 0원 국가는
+      맨 뒤 '매출 없음' 묶음에 한 번만 적는다.
+    """
+    NOSALE = "매출 없음"
     have = set(detail["국가"])
-    add = [{"국가": r["국가"], "unit": r["unit"], "수량": 0, "현지": 0,
-            "매출액": 0, "건수": 0, "단가": None}
+    base = {"수량": 0, "현지": 0, "매출액": 0, "건수": 0, "단가": None}
+    add = [{"국가": r["국가"], "unit": r["unit"], **base,
+            **({"구분": NOSALE} if "구분" in detail.columns else {})}
            for _, r in opened.iterrows() if r["국가"] not in have]
     if not add:
-        return detail.sort_values("매출액", ascending=False).reset_index(drop=True)
+        return detail.reset_index(drop=True)
     # 빈/전부-NA 열이 섞이면 concat 이 dtype 을 흔든다 → 원본 열 구성에 맞춰 붙인다.
     extra = pd.DataFrame(add).reindex(columns=detail.columns)
-    detail = pd.concat([detail, extra.astype(detail.dtypes.to_dict(), errors="ignore")],
-                       ignore_index=True)
-    return detail.sort_values("매출액", ascending=False).reset_index(drop=True)
+    out = pd.concat([detail, extra.astype(detail.dtypes.to_dict(), errors="ignore")],
+                    ignore_index=True)
+    if "구분" in out.columns:
+        return out.reset_index(drop=True)      # 항목 순서는 country_detail 이 이미 잡았다
+    return out.sort_values("매출액", ascending=False).reset_index(drop=True)
 
 
 # ── 멤버별 상세 ────────────────────────────────────────────────────────────
@@ -891,7 +923,12 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
                       open_countries(brand, start, end))
         ctx["details"][brand] = d
         # 별첨 합계를 본문 국가 소계에 맞춘다 — 같은 문서에서 두 숫자가 다르면 안 된다.
-        _tg = {r["국가"]: (int(r["수량"]), int(r["매출액"])) for _, r in d.iterrows()}
+        # ★판매 항목별로 나뉘면 한 나라가 여러 행이다. 나라별로 더해야 한다
+        #   (그냥 dict 로 만들면 마지막 항목만 남아 별첨 합계가 어긋난다).
+        _tg = {}
+        for _, r in d.iterrows():
+            q, k = _tg.get(r["국가"], (0, 0))
+            _tg[r["국가"]] = (q + int(r["수량"]), k + int(r["매출액"]))
         ctx["pivots"][brand], ctx["pivots_rev"][brand] = member_pivot(
             brand, titles, start, end, rates, _tg)
         ctx["titles"][brand] = titles

@@ -227,9 +227,32 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
          f'<th>{qty_label}</th><th>현지 매출</th><th>적용 환율</th>'
          '<th>매출(KRW)</th><th>요율</th><th>정산액</th>'
          '<th>비중</th></tr>')
+    # ★판매 항목('구분')이 있으면 항목마다 머리글 + 소계를 넣는다. 스내피즘은 한 IP 를
+    #   와이드 스티커·포토카드·폴라릿으로 나눠 파는데 단가가 서로 달라, 한 덩어리로
+    #   적으면 무엇으로 얼마가 났는지 안 보인다(담당자 요청). 총 매출은 맨 아래 합계.
+    cats = [r.get("구분") for r in rows]
+    grouped = any(c for c in cats)
+    _sub = {}
+    if grouped:
+        for _i, r in enumerate(rows):
+            k = r.get("구분") or "기타"
+            a, b_, c_ = _sub.get(k, (0, 0, 0))
+            _sub[k] = (a + int(r["수량"]), b_ + int(r["매출액"]), c_ + amts[_i])
+    _cur = None
     for _i, r in enumerate(rows):
         krw, loc, q = int(r["매출액"]), int(r["현지"]), int(r["수량"])
         amt = amts[_i]
+        if grouped:
+            k = r.get("구분") or "기타"
+            if k != _cur:
+                if _cur is not None:            # 앞 묶음 소계
+                    sq, sk, ss = _sub[_cur]
+                    h += (f'<tr class="csum"><td>{_cur} 소계</td><td></td>'
+                          f'<td>{_f(sq)}</td><td></td><td></td><td>{_f(sk)}</td>'
+                          f'<td></td><td>{_f(ss)}</td><td></td></tr>')
+                _cur = k
+                h += (f'<tr class="cathd"><td colspan="9">{k}'
+                      f'<span>{_f(_sub[k][1])}원</span></td></tr>')
         tq += q; tk += krw; ts += amt
         p = krw / tot_krw * 100
         zero = krw == 0
@@ -246,7 +269,13 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
               '<td><span class="sharecell"><span class="bar">'
               f'<i style="width:{max(p, 1.2):.1f}%"></i></span>{p:.1f}%</span>'
               '</td></tr>')
-    h += (f'<tr class="sum"><td>소계</td><td></td><td>{_f(tq)}</td><td></td>'
+    if grouped and _cur is not None:            # 마지막 묶음 소계
+        sq, sk, ss = _sub[_cur]
+        h += (f'<tr class="csum"><td>{_cur} 소계</td><td></td><td>{_f(sq)}</td>'
+              f'<td></td><td></td><td>{_f(sk)}</td><td></td><td>{_f(ss)}</td>'
+              '<td></td></tr>')
+    h += (f'<tr class="sum"><td>{"합계" if grouped else "소계"}</td><td></td>'
+          f'<td>{_f(tq)}</td><td></td>'
           f'<td></td><td>{_f(tk)}</td><td></td><td>{_f(ts)}</td><td></td>'
           '</tr></table>')
     return h, tk, ts, tq
@@ -517,6 +546,15 @@ text-align:right;white-space:nowrap}
 .t2 td.dim{color:var(--text-2)}
 .t2 tr.sum td{font-weight:800;color:var(--ink);background:var(--surface-2);
 border-bottom:1.5px solid var(--ink)}
+/* 판매 항목 머리글 — 표 안에서 묶음이 눈에 바로 들어오게. 소계는 한 톤 눌러
+   전체 합계(tr.sum)와 구분한다. */
+.t2 tr.cathd td{background:var(--surface-2);color:var(--ink);font-weight:800;
+font-size:10.5px;padding:6px 8px;border-top:1.5px solid var(--ink);
+border-bottom:1px solid var(--border);letter-spacing:-0.01em}
+.t2 tr.cathd td span{float:right;font-weight:700;color:var(--text-2);
+font-size:10px}
+.t2 tr.csum td{font-weight:700;color:var(--text-1);background:#fbfbfd;
+border-bottom:1px solid var(--ink)}
 /* ★매출 0인 오픈 국가도 행으로 넣기 때문에 국가 수가 스펙 예시(27)보다 늘어난다.
    페이지 높이가 고정(1123px)이라 그대로 두면 소계 행이 푸터를 뚫는다.
    행이 많으면 자동으로 조인다. */
