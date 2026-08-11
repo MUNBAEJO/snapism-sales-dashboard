@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 """IP 정산서.
 
-화면은 **티켓번호 하나로 끝나게** 짰다.
-  ① 티켓번호 넣기 → ② 찾아온 타이틀 확인 → ③ 요율 확인 → ④ 만들기
+화면은 **한 칸에 넣고 체크만 하면 끝나게** 짰다.
+  ① 티켓번호 또는 IP명 넣기 → ② 붙일 타이틀 체크 → ③ 요율 확인 → ④ 만들기
+
+★한 IP 가 티켓 여러 장으로 쪼개져 있는 일이 잦다(회차·전환·렌탈). 같이 정산하는
+  건이면 **한 문서에 담아야** 하므로, 이름으로 찾아 필요한 티켓의 타이틀만 고른다.
+  번호를 직접 적으면 그 티켓만(기본 선택), 이름으로 찾으면 관련 티켓 전부를
+  펼쳐 주되 **기본 해제**다 — 렌탈처럼 따로 정산하는 건이 섞여 나오기 때문.
 
 한 IP 정산에 464개 대기열을 먼저 다 처리하라고 요구하면 실무자가 납득하기 어렵다.
 전체 매출이 빠짐없이 귀속됐는지 보는 '월 마감 점검' 은 별도 탭으로 분리했다.
@@ -122,74 +127,145 @@ if not CAN_EDIT:
 # ══════════════════════════════════════════════════════════════════════════
 # 정산서 만들기
 # ══════════════════════════════════════════════════════════════════════════
+# 'CANDIP-27201' 같은 티켓번호 꼴. 쉼표·공백·줄바꿈 아무거나로 나눠 담아도 잡힌다.
+_TK_RE = re.compile(r"[A-Za-z]{2,}-\d+")
+
+
+@st.cache_data(ttl=900, max_entries=8, show_spinner=False)
+def _title_tickets(brand, start, end, rate_key, fx_key, mapver):
+    """{타이틀: (확정티켓|None, [후보티켓...])} — 전 타이틀을 **한 번만** 훑는다.
+
+    ★티켓마다 `suggest_titles` 를 부르면 그때마다 매출을 다시 집계한다.
+      티켓 4장이면 4번이라 화면이 눈에 띄게 느려진다. 한 번 훑어 캐시한다.
+    """
+    df, _, _ = _titles(brand, start, end, rate_key, fx_key)
+    mp = sm.load_mapping()["mappings"].get(brand, {})
+    out = {}
+    for t in df["타이틀"]:
+        rec = mp.get(t) or {}
+        if rec.get("excluded"):
+            out[t] = ("__excluded__", [])
+            continue
+        fixed = str(rec.get("ticket") or "").upper()
+        out[t] = (fixed or None, [c["ticket_key"] for c in sm.candidates(brand, t)])
+    return out
+
+
 def _ticket_box(brand: str):
-    """티켓번호 입력 + 찾은 타이틀 확인. 반환: 확정에 쓸 (티켓, [타이틀])."""
+    """티켓번호 **또는 IP명**으로 찾아 붙일 타이틀을 고른다.
+
+    반환: (쓰인 티켓 목록, 고른 타이틀 목록, {타이틀: 그 타이틀이 붙을 티켓})
+
+    ★한 IP 를 회차별로 나눠 등록하면 티켓이 여러 장이 된다(예: 베이온 —
+      데뷔 기념 CANDIP-27201 + 전지점 전환 CANDIP-31739). 같이 정산하는 건이라
+      **한 문서에 담아야** 한다. 이름으로 찾으면 관련 티켓이 다 나오니 필요한
+      것만 체크하면 된다.
+    ★단, 이름 검색은 **기본 해제**다. 렌탈처럼 같은 IP 라도 따로 정산하는 건이
+      섞여 나오는데, 기본 선택이면 모르고 같이 넣게 된다.
+    """
     icon = "📸" if brand == "photoism" else "📊"
-    key = f"tk_{brand}"
     st.markdown(f"**{icon} {sm.BRAND_LABEL[brand]}**")
-    tk = st.text_input("티켓번호", key=key, placeholder="CANDIP-12345",
-                       label_visibility="collapsed").strip().upper()
+    q = st.text_input(
+        "티켓번호 또는 IP명", key=f"tk_{brand}", label_visibility="collapsed",
+        placeholder="CANDIP-12345 · 여러 장이면 쉼표로 · IP명으로 찾아도 돼요").strip()
+    if not q:
+        return [], [], {}
 
-    with st.popover("🔍 번호를 모르겠어요", use_container_width=True):
-        q = st.text_input("IP명 일부", key=f"q_{brand}", placeholder="예: TREASURE")
-        if q.strip():
-            found = sc.find_tickets(brand, q)
-            if not found:
-                st.caption("못 찾았어요.")
-            for f in found[:8]:
-                st.markdown(f"`{f['ticket']}` · {' / '.join(f['titles'][:2])}  \n"
-                            f"<span class='muted'>{f['start'] or '?'} ~ "
-                            f"{f['due'] or '?'}</span>", unsafe_allow_html=True)
+    typed = []
+    for m in _TK_RE.findall(q.upper()):
+        if m not in typed:
+            typed.append(m)
 
-    if not tk:
-        return None, []
+    if typed:                       # 번호를 직접 적었으면 그것만, 기본 선택
+        tickets, default_on = typed, True
+        missing = [t for t in tickets if not sm.lookup_ticket(brand, t)]
+        if missing:
+            st.error(f"못 찾은 번호: {', '.join(missing)} — 확인해 주세요.")
+        tickets = [t for t in tickets if t not in missing]
+    else:                           # 이름 검색 — 관련 티켓을 늘어놓고 고르게
+        tickets = [f["ticket"] for f in sc.find_tickets(brand, q, limit=12)]
+        default_on = False
+        if not tickets:
+            st.caption("그 이름으로는 티켓을 못 찾았어요.")
+    if not tickets:
+        return [], [], {}
 
-    info = sm.lookup_ticket(brand, tk)
-    if not info:
-        st.error("그 번호를 못 찾았어요. 번호를 확인해 주세요.")
-        return None, []
-    st.caption(f"📌 {' / '.join(info['titles'][:3])} · "
-               f"{info.get('startdate') or '?'} ~ {info.get('duedate') or '?'}")
+    tt = _title_tickets(brand, S, E, E, fx.version(), sm.mapping_version())
+    rev = dict(zip(*_rev_index(brand)))          # 타이틀 → (매출액, 국가수)
 
-    sug = sc.suggest_titles(brand, tk, S, E, RATES)
-    if sug.empty:
-        st.warning("이 기간에 이 티켓으로 잡히는 매출이 없어요.")
-        return tk, []
+    # 티켓별로 붙을 타이틀을 모은다. 한 타이틀이 여러 티켓의 후보일 수 있어
+    # **먼저 잡은 티켓**에만 붙인다(중복 정산 방지).
+    taken, blocks = set(), []
+    for tk in tickets:
+        rows = []
+        for t, (fixed, cands) in tt.items():
+            if t in taken or fixed == "__excluded__":
+                continue
+            if (fixed == tk) if fixed else (tk in cands):
+                rows.append((t, fixed == tk))
+                taken.add(t)
+        if rows:
+            blocks.append((tk, rows))
 
-    chosen = []
-    for _, r in sug.iterrows():
-        t = r["타이틀"]
-        done = r["상태"] == "확정"
-        on = st.checkbox(
-            f"{t} · {_fmt(r['매출액'])}원 · {r['국가수']}개국"
-            + ("  ✅" if done else ""),
-            value=True, key=f"ck_{brand}_{t}", disabled=not CAN_EDIT)
-        if on:
-            chosen.append(t)
-    return tk, chosen
+    if not blocks:
+        st.warning("이 기간에 그 티켓으로 잡히는 매출이 없어요.")
+        return tickets, [], {}
+
+    chosen, tmap = [], {}
+    for tk, rows in blocks:
+        e = sm.lookup_ticket(brand, tk) or {}
+        st.caption(f"📌 `{tk}` {e.get('parent') or ' / '.join(e.get('titles') or [])} · "
+                   f"{e.get('startdate') or '?'} ~ {e.get('duedate') or '?'}")
+        for t, done in rows:
+            amt, ncc = rev.get(t, (0, 0))
+            on = st.checkbox(
+                f"{t} · {_fmt(amt)}원 · {ncc}개국" + ("  ✅" if done else ""),
+                value=default_on or done, key=f"ck_{brand}_{tk}_{t}",
+                disabled=not CAN_EDIT)
+            if on:
+                chosen.append(t)
+                tmap[t] = tk
+    used = [tk for tk, _ in blocks if any(tmap.get(t) == tk for t in chosen)]
+    if len(used) > 1:
+        st.caption(f"🧾 티켓 {len(used)}장을 **한 장으로** 정산해요 — "
+                   + " · ".join(f"`{t}`" for t in used))
+    return used, chosen, tmap
+
+
+@st.cache_data(ttl=900, max_entries=8, show_spinner=False)
+def _rev_index_cached(brand, start, end, rate_key, fx_key):
+    df, _, _ = _titles(brand, start, end, rate_key, fx_key)
+    return (list(df["타이틀"]),
+            list(zip(df["매출액"].astype(int), df["국가수"].astype(int))))
+
+
+def _rev_index(brand):
+    return _rev_index_cached(brand, S, E, E, fx.version())
 
 
 @st.fragment
 def make_panel():
-    picks = {}
+    picks, tmaps = {}, {}
     cols = st.columns(2)
     for col, b in zip(cols, sm.BRANDS):
         with col:
-            picks[b] = _ticket_box(b)
+            tks, titles, tmap = _ticket_box(b)
+            picks[b], tmaps[b] = (tks, titles), tmap
 
     if not any(t for t, _ in picks.values()):
-        st.info("위에 티켓번호를 넣어 주세요. 포토이즘·스내피즘 중 한쪽만 있어도 돼요.")
+        st.info("위에 티켓번호나 IP명을 넣어 주세요. 포토이즘·스내피즘 중 한쪽만 있어도 돼요.")
         return
 
     # ── 확정 저장 ─────────────────────────────────────────────────────
-    # 체크한 타이틀을 그 티켓에 확정한다. 여기서 저장해야 다음 달에도 자동 적용된다.
+    # 체크한 타이틀을 **그 타이틀이 속한 티켓에** 확정한다. 티켓이 여러 장이면
+    # 타이틀마다 주인이 다르므로 티켓 단위로 나눠서 비교·저장한다.
     need_save = []
-    for b, (tk, titles) in picks.items():
-        if not tk:
-            continue
-        cur = set(sc.titles_for_ticket(b, tk))
-        if set(titles) != cur:
-            need_save.append((b, tk, titles))
+    for b, (tks, titles) in picks.items():
+        tmap = tmaps.get(b, {})
+        for tk in tks:
+            want = {t for t in titles if tmap.get(t) == tk}
+            if set(sc.titles_for_ticket(b, tk)) != want:
+                need_save.append((b, tk, sorted(want)))
     if need_save and CAN_EDIT:
         n = sum(len(t) for _, _, t in need_save)
         if st.button(f"✔️ 위 구성으로 확정 ({n}개 타이틀)", use_container_width=True):
@@ -207,15 +283,29 @@ def make_panel():
     # ★get_rs 는 저장값이 없으면 지라를 부른다(네트워크). 아래에서 또 부르면
     #   화면이 눈에 띄게 느려진다 — 여기서 한 번 부른 결과를 재사용한다.
     saved_rs = {}
-    for b, (tk, titles) in picks.items():
-        if not tk or not titles:
+    for b, (tks, titles) in picks.items():
+        if not tks or not titles:
             continue
+        tk = tks[0]                      # 대표 티켓 — 문서·저장의 기준
         cur = sc.get_rs(b, tk)
         saved_rs[b] = cur
         tag = {"화면 입력": "🖊 저장된 값", "지라": "🔗 지라",
                "없음": "⚠️ 없음 — 직접 넣어 주세요"}[cur["source"]]
-        st.markdown(f"**{sm.BRAND_LABEL[b]}** `{tk}` <span class='muted'>{tag}</span>",
-                    unsafe_allow_html=True)
+        st.markdown(f"**{sm.BRAND_LABEL[b]}** `{tk}`"
+                    + (f" <span class='muted'>외 {len(tks) - 1}장</span>"
+                       if len(tks) > 1 else "")
+                    + f" <span class='muted'>{tag}</span>", unsafe_allow_html=True)
+        # ★티켓마다 요율이 따로 저장돼 있다. 합쳐서 정산하면 대표 티켓 값만 쓰이므로
+        #   다른 값이 들어 있으면 조용히 무시된다 — 그건 알려 줘야 한다.
+        _diff = [t for t in tks[1:]
+                 if (lambda o: (o["agency"], o["mgmt"]))(sc.get_rs(b, t))
+                 != (cur["agency"], cur["mgmt"])
+                 and sc.get_rs(b, t)["source"] != "없음"]
+        if _diff:
+            ui_theme.nbox("warn", "⚠️ <b>티켓마다 요율이 달라요</b> — "
+                          + " · ".join(f"<code>{t}</code>" for t in _diff)
+                          + f"<div class='sub'>아래 값(<b>{tk}</b> 기준)으로 "
+                            "한 장을 만들어요. 맞는지 확인해 주세요.</div>")
         k1, k2, k3, k4 = st.columns([1, 1, 1, 1.2])
         a = k1.number_input("소속사 %", 0.0, 100.0, float((cur["agency"] or 0) * 100),
                             0.5, key=f"ra_{b}")
@@ -274,9 +364,12 @@ def make_panel():
 
         if st.button(f"💾 {sm.BRAND_LABEL[b]} 저장", key=f"sv_{b}",
                      disabled=not CAN_EDIT):
-            sc.set_rs(b, tk, a / 100 or None, m / 100 or None, _email, _cc_new)
-            sc.set_mg(b, tk, has, amt, mg_cur.get("note", ""), _email)
-            sc.set_partner(b, tk, an, mn, vt, _email)
+            # 여러 장을 합쳐 정산하는 건이면 **전부에 같은 값을 저장**한다.
+            # 대표 티켓에만 넣으면, 다음에 순서를 바꿔 넣었을 때 요율이 비어 보인다.
+            for _t in tks:
+                sc.set_rs(b, _t, a / 100 or None, m / 100 or None, _email, _cc_new)
+                sc.set_mg(b, _t, has, amt, mg_cur.get("note", ""), _email)
+                sc.set_partner(b, _t, an, mn, vt, _email)
             _rerun()
         rs[b] = (a / 100 or None, m / 100 or None)
         rs_cc[b] = _cc_new or dict(_saved_cc)
@@ -285,8 +378,8 @@ def make_panel():
     ui_theme.sec(3, "금액 확인")
     tot_base = tot_a = tot_m = 0
     warns, miss, shown = [], [], []
-    for b, (tk, titles) in picks.items():
-        if not tk or not titles:
+    for b, (tks, titles) in picks.items():
+        if not tks or not titles:
             continue
         d = sc.fill_open(sc.country_detail(b, titles, S, E, RATES),
                          sc.open_countries(b, S, E))
@@ -329,7 +422,7 @@ def make_panel():
     ], cls="k3")
 
     # 세금계산서용 분해 — 문서 하단 표와 같은 값을 미리 보여준다.
-    _pt = next((sc.get_partner(b, t) for b, (t, _) in picks.items() if t), None)
+    _pt = next((sc.get_partner(b, t[0]) for b, (t, _) in picks.items() if t), None)
     if _pt and _pt["vat"] and (tot_a or tot_m):
         rows = []
         for lab, v in (("소속사", tot_a), ("대행사", tot_m)):
@@ -392,6 +485,7 @@ def make_panel():
     if st.button("📄 정산서 만들기", type="primary", use_container_width=True,
                  disabled=not CAN_EDIT or bool(stop)):
         with st.spinner("PDF 를 만드는 중이에요…"):
+            # 티켓 목록을 그대로 넘긴다 — build_context 가 타이틀을 합쳐 한 장으로 만든다.
             ctx = sc.build_context({b: t for b, (t, _) in picks.items() if t},
                                    S, E, ipn, RATES, EFF or E,
                                    date.today().isoformat(), SRC)

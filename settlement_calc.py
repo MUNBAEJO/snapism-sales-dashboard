@@ -905,7 +905,21 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
             if not cur[f] and p[f]:
                 cur[f] = p[f]
         cur["vat"] = cur["vat"] and p["vat"]
-        ctx["tickets"][brand] = smap.lookup_ticket(brand, ticket)
+        # 판매기간은 **넘긴 티켓 전체를 감싸게** 잡는다. 한 IP를 회차별로 나눠
+        # 등록하면(예: 데뷔 기념 + 전지점 전환) 첫 티켓만 보고 적을 경우 문서의
+        # 판매기간이 실제보다 짧게 찍힌다.
+        _ents = [e for e in (smap.lookup_ticket(brand, t) for t in tickets) if e]
+        if _ents:
+            _st = [e["startdate"] for e in _ents if e.get("startdate")]
+            _du = [e["duedate"] for e in _ents if e.get("duedate")]
+            ctx["tickets"][brand] = {
+                **_ents[0],
+                "startdate": min(_st) if _st else None,
+                "duedate": max(_du) if _du else None,
+                "ticket_keys": [e["ticket_key"] for e in _ents],
+            }
+        else:
+            ctx["tickets"][brand] = None
         for _, r in d.iterrows():
             ctx["units"].setdefault(r["국가"], r["unit"])
         pt = price_table(brand, titles, start, end)
