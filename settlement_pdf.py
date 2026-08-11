@@ -211,6 +211,9 @@ def _pct(v) -> str:
     return "—" if v is None else f"{v * 100:g}%"
 
 
+NOSALE = "매출 없음"        # settlement_calc.fill_open 이 붙이는 표식
+
+
 def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
     """국가 | 통화 | 수량 | 현지 매출 | 적용 환율 | 매출(KRW) | 요율 | 정산액 | 비중
 
@@ -224,7 +227,8 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
     # 한 페이지에 들어갈 만큼 자동으로 조인다(기본 27행까지 여유).
     # ★항목별로 묶으면 머리글 + 소계가 묶음마다 2행씩 더 붙는다. 그걸 안 세면
     #   페이지를 뚫는다(실제로 잘렸다).
-    _ngrp = len({r.get("구분") for r in rows if r.get("구분")})
+    _ngrp = len({r.get("구분") for r in rows
+                 if r.get("구분") and r.get("구분") != NOSALE})
     _eff = len(rows) + _ngrp * 2
     dens = " d2" if _eff > 33 else (" d1" if _eff > 26 else "")
     h = (f'<table class="t2 num{dens}"><tr><th>국가</th><th>통화</th>'
@@ -234,12 +238,13 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
     # ★판매 항목('구분')이 있으면 항목마다 머리글 + 소계를 넣는다. 스내피즘은 한 IP 를
     #   와이드 스티커·포토카드·폴라릿으로 나눠 파는데 단가가 서로 달라, 한 덩어리로
     #   적으면 무엇으로 얼마가 났는지 안 보인다(담당자 요청). 총 매출은 맨 아래 합계.
-    cats = [r.get("구분") for r in rows]
-    grouped = any(c for c in cats)
+    grouped = any(c and c != NOSALE for c in (r.get("구분") for r in rows))
     _sub = {}
     if grouped:
         for _i, r in enumerate(rows):
             k = r.get("구분") or "기타"
+            if k == NOSALE:
+                continue
             a, b_, c_ = _sub.get(k, (0, 0, 0))
             _sub[k] = (a + int(r["수량"]), b_ + int(r["매출액"]), c_ + amts[_i])
     _cur = None
@@ -248,7 +253,16 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
         amt = amts[_i]
         if grouped:
             k = r.get("구분") or "기타"
-            if k != _cur:
+            # ★매출 0인 나라는 묶음으로 만들지 않는다 — 포토이즘처럼 표 안에 그냥
+            #   한 줄로 둔다('매출 없음' 머리글·소계까지 붙이면 정신없다는 지적).
+            if k == NOSALE:
+                if _cur is not None:
+                    sq, sk, ss = _sub[_cur]
+                    h += (f'<tr class="csum"><td>{_cur} 소계</td><td></td>'
+                          f'<td>{_f(sq)}</td><td></td><td></td><td>{_f(sk)}</td>'
+                          f'<td></td><td>{_f(ss)}</td><td></td></tr>')
+                    _cur = None
+            elif k != _cur:
                 if _cur is not None:            # 앞 묶음 소계
                     sq, sk, ss = _sub[_cur]
                     h += (f'<tr class="csum"><td>{_cur} 소계</td><td></td>'
