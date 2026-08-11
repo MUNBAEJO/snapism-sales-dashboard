@@ -857,15 +857,24 @@ def render_admin_console() -> None:
                 _mem = [e for e, t in u["member_team"].items() if t == tname]
                 h1, h2 = st.columns([4, 1])
                 h1.markdown(f"**{tname}**  ·  {len(_mem)}명")
+                # ★사이드바에서 감춘 페이지는 체크박스에도 안 띄운다 — 켜 봐야 안 열려
+                #   혼란만 준다. 다만 **저장된 권한은 건드리지 않는다**(_hidden 으로
+                #   그대로 되돌려 넣는다). 나중에 감춤을 풀면 예전 설정이 살아난다.
+                _hidden = [k for k in cfg["pages"] if k in pages_registry.HIDDEN]
                 _sel = []
+                _keys = [p[0] for p in pages_registry.VISIBLE_PAGES]
                 cols = st.columns(4)
-                for i, k in enumerate(pages_registry.PAGE_KEYS):
+                for i, k in enumerate(_keys):
                     lbl = f"{pages_registry.PAGE_ICON[k]} {pages_registry.PAGE_TITLE[k]}"
                     if cols[i % 4].checkbox(lbl, value=(k in cfg["pages"]), key=f"tp_{tname}_{k}"):
                         _sel.append(k)
+                # 감춘 것까지 합친 뒤 **목록 순서로 정렬**한다 — 안 그러면 저장값과
+                # 순서만 달라 '저장' 버튼이 늘 켜져 있다.
+                _sel = [k for k in pages_registry.PAGE_KEYS if k in set(_sel + _hidden)]
                 b1, b2, _ = st.columns([1, 1, 3])
                 if b1.button("저장", key=f"tsave_{tname}", type="primary",
-                             disabled=(_sel == cfg["pages"])):
+                             disabled=(_sel == [k for k in pages_registry.PAGE_KEYS
+                                                if k in cfg["pages"]])):
                     set_team_pages(tname, _sel)
                     _log_access(email, f"teamset:{tname}={','.join(_sel)}"); st.rerun()
                 if b2.button("팀 삭제", key=f"tdel_{tname}"):

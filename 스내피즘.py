@@ -237,13 +237,16 @@ _is_owner = auth.is_owner(_email)
 _allowed  = set(auth.allowed_pages(_email))
 
 pages = []
-for _key, _file, _title, _icon, _url, _default_on in pages_registry.PAGES:
+# ★첫 화면은 **목록의 첫 페이지**다(예전엔 kpi 고정). 순서를 바꾸면 첫 화면도
+#   같이 따라오게 — 목록 한 곳만 고치면 되도록.
+_first = next((p[0] for p in pages_registry.VISIBLE_PAGES if p[0] in _allowed), None)
+for _key, _file, _title, _icon, _url, _default_on in pages_registry.VISIBLE_PAGES:
     if _key in _allowed:
         pages.append(st.Page(_file, title=_title, icon=_icon, url_path=_url,
-                             default=(_key == "kpi")))
+                             default=(_key == _first)))
 
 if not pages:      # 팀 설정이 꼬여 한 장도 안 남는 경우 대비 — 빈 네비게이션은 예외를 던진다
-    _k, _f, _t, _i, _u, _d = pages_registry.PAGES[0]
+    _k, _f, _t, _i, _u, _d = pages_registry.VISIBLE_PAGES[0]
     pages.append(st.Page(_f, title=_t, icon=_i, url_path=_u, default=True))
 
 if _is_owner:      # 관리 화면은 언제나 소유자 전용 — 팀 권한으로 열 수 없다
