@@ -193,61 +193,63 @@ def _ticket_box(brand: str):
     tt = _title_tickets(brand, S, E, E, fx.version(), sm.mapping_version())
     rev = dict(zip(*_rev_index(brand)))          # 타이틀 → (매출액, 국가수)
 
-    # 티켓별로 붙을 타이틀을 모은다.
-    # ★한 타이틀을 여러 티켓이 후보로 물고 있는 일이 흔하다 — 스내피즘 '베이온' 은
-    #   티켓 6장이 물고 있다(회차·상품별로 티켓이 쪼개져 있어서). 그래서 타이틀을
-    #   **먼저 잡은 티켓에만** 붙였더니, 나머지 티켓은 붙을 게 없어 **블록째 사라졌다**
-    #   (CANDIP-27208 이 이름 검색에서 안 보였다). 티켓을 숨기면 안 된다 —
-    #   **물고 있는 티켓 전부에 보여주고**, 어디에 담을지는 사람이 고른다.
-    #   대신 두 곳에 체크하면 중복 정산이므로 아래에서 막는다.
-    blocks, claimed = [], {}
+    # ★★목록의 축은 **타이틀**이다(티켓이 아니라).
+    #   전엔 티켓마다 블록을 그렸는데, 스내피즘 '베이온' 은 티켓 6장이 같은 타이틀을
+    #   물고 있어 **똑같은 줄이 6번** 나왔다. 금액도 구성도 다 같아서 무엇을 고르라는
+    #   건지 알 수 없다는 지적을 받았다(2026-08-11).
+    #   확정 매핑이 '타이틀 1 : 티켓 1' 이므로 화면도 그 모양이어야 한다 —
+    #   **타이틀 한 줄 + 그 타이틀을 담을 티켓 고르기.**
+    claimed = {}                       # 타이틀 → [그 타이틀을 무는 티켓...]
     for tk in tickets:
-        rows = []
         for t, (fixed, cands) in tt.items():
             if fixed == "__excluded__":
                 continue
             if (fixed == tk) if fixed else (tk in cands):
-                rows.append((t, fixed == tk))
                 claimed.setdefault(t, []).append(tk)
-        if rows:
-            blocks.append((tk, rows))
-
-    if not blocks:
+    if not claimed:
         st.warning("이 기간에 그 티켓으로 잡히는 매출이 없어요.")
         return tickets, [], {}, []
 
-    # ★같은 타이틀을 여러 티켓에 체크해도 **금액은 한 번만** 센다.
-    #   정산액은 티켓별 합이 아니라 **중복 제거된 타이틀 목록**에서 한 번에 뽑는다
-    #   (`country_detail(titles=[...])`). 그래서 막을 이유가 없다 — 오히려 막으면
-    #   베이온처럼 티켓 여러 장이 한 타이틀을 나눠 맡는 건을 아예 담을 수 없다.
-    #   체크된 티켓은 전부 '이 정산서에 걸린 티켓' 으로 문서에 남는다.
+    # 매출 큰 타이틀부터
+    order = sorted(claimed, key=lambda t: -rev.get(t, (0, 0))[0])
     breakdown = _cat_breakdown(brand)
-    chosen, tmap, hits = [], {}, {}
-    for tk, rows in blocks:
-        e = sm.lookup_ticket(brand, tk) or {}
-        st.caption(f"📌 `{tk}` {e.get('parent') or ' / '.join(e.get('titles') or [])} · "
-                   f"{e.get('startdate') or '?'} ~ {e.get('duedate') or '?'}")
-        for t, done in rows:
-            amt, ncc = rev.get(t, (0, 0))
-            on = st.checkbox(
-                f"{t} · {_fmt(amt)}원 · {ncc}개국" + ("  ✅" if done else ""),
-                value=(done or default_on),
-                key=f"ck_{brand}_{tk}_{t}", disabled=not CAN_EDIT)
-            # 스내피즘은 한 타이틀 안에 판매 항목이 여러 가지다. 무엇이 들어 있는지
-            # 보여줘야 어느 티켓에 담을지 판단할 수 있다.
-            if breakdown.get(t):
-                st.caption("　└ " + " · ".join(f"{c} {_fmt(v)}원"
-                                              for c, v in breakdown[t]))
-            if on:
-                hits.setdefault(t, []).append(tk)
-    for t, tks in hits.items():
-        chosen.append(t)
-        tmap[t] = tks[0]              # 확정은 대표(첫) 티켓에 — 매핑은 1:1 이다
-    used = [tk for tk, _ in blocks if any(tk in v for v in hits.values())]
+    chosen, tmap = [], {}
+    for t in order:
+        cands = claimed[t]
+        fixed = tt[t][0]
+        amt, ncc = rev.get(t, (0, 0))
+        on = st.checkbox(
+            f"{t} · {_fmt(amt)}원 · {ncc}개국" + ("  ✅" if fixed in cands else ""),
+            value=(fixed in cands) or default_on,
+            key=f"ck_{brand}_{t}", disabled=not CAN_EDIT)
+        # 스내피즘은 한 타이틀 안에 판매 항목이 여러 가지다(단가가 서로 다르다).
+        # 무엇이 들어 있는지 보여야 어느 티켓에 담을지 판단할 수 있다.
+        if breakdown.get(t):
+            st.caption("　└ " + " · ".join(f"{c} {_fmt(v)}원"
+                                          for c, v in breakdown[t]))
+
+        def _lab(x, _b=brand):
+            e = sm.lookup_ticket(_b, x) or {}
+            p = (e.get("parent") or " / ".join(e.get("titles") or []))[:34]
+            return f"{x} · {p} · {(e.get('startdate') or '?')[5:]}~{(e.get('duedate') or '?')[5:]}"
+
+        idx = cands.index(fixed) if fixed in cands else 0
+        pick = st.selectbox("담을 티켓", cands, index=idx, format_func=_lab,
+                            key=f"tkpick_{brand}_{t}", disabled=not CAN_EDIT,
+                            label_visibility="collapsed",
+                            help="이 타이틀 매출을 어느 티켓으로 정산할지 골라요. "
+                                 "후보가 여럿이면 계약 티켓이 아니라 실제 상품 "
+                                 "티켓을 고르세요.")
+        if len(cands) > 1:
+            st.caption(f"　　후보 {len(cands)}장")
+        if on:
+            chosen.append(t)
+            tmap[t] = pick
+
+    used = list(dict.fromkeys(tmap.values()))
     if len(used) > 1:
-        st.caption(f"🧾 티켓 {len(used)}장을 **한 장으로** 정산해요 — "
-                   + " · ".join(f"`{t}`" for t in used)
-                   + " · 같은 타이틀을 여러 곳에 체크해도 매출은 한 번만 세요.")
+        st.caption("🧾 티켓 " + f"{len(used)}장을 **한 장으로** 정산해요 — "
+                   + " · ".join(f"`{x}`" for x in used))
     return used, chosen, tmap, []
 
 
