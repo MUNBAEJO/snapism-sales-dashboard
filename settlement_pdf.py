@@ -601,9 +601,14 @@ padding:12px 16px;font-size:11px;color:var(--text-2);line-height:1.85}
 CHARTS = {"donut": _chart_donut, "bar": None, "column": _chart_column}
 
 
-def build_html(ctx: dict, kind: str, sample: bool = True,
+def build_html(ctx: dict, kind: str, sample: bool = False,
                marks: bool = False, chart: str = "donut") -> str:
-    """kind='agency'(소속사) | 'mgmt'(대행사). **자기 요율만** 문서에 넣는다."""
+    """kind='agency'(소속사) | 'mgmt'(대행사). **자기 요율만** 문서에 넣는다.
+
+    sample — '샘플 · 검토용' 배지와 각주. 레이아웃을 검토하던 동안 기본값이 True
+    였는데, 값이 실제와 맞는 걸 확인해 **2026-08-11 부터 기본 꺼짐**이다.
+    시안을 다시 돌려볼 일이 있으면 True 로 부르면 된다.
+    """
     # ★수취처 구분(소속사/대행사)은 **문서에 쓰지 않는다.** 요율이 다른 두 부를
     #   따로 만들지만 그건 내부 사정이고, 받는 쪽은 자기 정산서만 보면 된다.
     #   구분은 파일명·문서번호(L/A)에만 남긴다.
