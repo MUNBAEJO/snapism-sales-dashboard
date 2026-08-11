@@ -1052,9 +1052,14 @@ def render_watermark(email: str | None = None) -> None:
     #   덮어 여백에서만 보인다. background-color 위에 background-image 가 얹히므로
     #   config.toml 의 배경색(#f4f5f7)과 같이 쓸 수 있다.
     #   attachment:fixed — 스크롤해도 무늬가 제자리에 있어 눈에 덜 거슬린다.
+    # ★stMain 에도 같이 깐다 — 컨테이너에만 깔면 그 위의 stMain 이 불투명한 회색
+    #   (#f4f5f7)으로 덮어 무늬가 통째로 가려진다. 2026-08-07~11 두 메인 화면에서
+    #   실제로 안 보였다(AppTest 는 CSS 를 렌더하지 않아 검증에서 놓쳤다).
+    #   덧붙여 화면 쪽 CSS 는 `background:` 축약형을 쓰면 안 된다 —
+    #   축약형은 background-image 까지 none 으로 되돌린다(background-color 를 쓸 것).
     st.markdown(
         f"""<style>
-        [data-testid="stAppViewContainer"] {{
+        [data-testid="stAppViewContainer"], [data-testid="stMain"] {{
             background-image: url("{src}") !important;
             background-repeat: repeat !important;
             background-attachment: fixed !important;

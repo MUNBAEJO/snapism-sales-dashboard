@@ -52,7 +52,7 @@ button, input, select, textarea, label, p, span, div, h1, h2, h3, h4, li, a,
               'Segoe UI','Malgun Gothic','Apple SD Gothic Neo',sans-serif !important;
 }
 html, body{ letter-spacing:-0.02em; }
-.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stMain, section.main{ background:var(--bg) !important; }
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stMain, section.main{ background-color:var(--bg) !important; }  /* ★축약형 background: 금지 — 워터마크(background-image)가 지워진다 */
 [data-testid="stMainBlockContainer"], .block-container{ background:transparent !important;
   max-width:1680px !important; padding-top:1.6rem !important; padding-bottom:3rem !important; }
 h1{ font-size:24px !important; font-weight:800 !important; letter-spacing:-0.03em !important; color:var(--text) !important; }

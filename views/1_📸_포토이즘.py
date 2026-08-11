@@ -48,7 +48,9 @@ button, input, select, textarea, label, p, span, div, h1, h2, h3, h4, li, a,
 html, body{ letter-spacing:-0.02em; }
 /* 페이지 배경 회색(#f4f5f7) — 흰 카드가 떠 보이게(시안 표면 분리). */
 .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stMain, section.main{
-  background:var(--bg) !important; }
+  /* ★축약형 `background:` 금지 — background-image 까지 none 으로 지워
+     auth.render_watermark 의 워터마크가 통째로 사라진다. 색만 지정할 것. */
+  background-color:var(--bg) !important; }
 [data-testid="stMainBlockContainer"], .block-container{ background:transparent !important; }
 [data-testid="stMainBlockContainer"], .stMainBlockContainer, section.main .block-container, .block-container{
   max-width:1680px !important; margin-left:auto !important; margin-right:auto !important;

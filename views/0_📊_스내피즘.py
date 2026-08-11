@@ -45,7 +45,9 @@ html, body{ letter-spacing:-0.02em; }
 /* 페이지 배경 회색(#f4f5f7) — 흰 카드가 떠 보이게(시안 표면 분리).
    ※ config.toml 의 테마 backgroundColor=#fff 가 stMain 을 흰색으로 덮으므로 메인영역까지 회색 강제. */
 .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stMain, section.main{
-  background:var(--bg) !important; }
+  /* ★축약형 `background:` 금지 — background-image 까지 none 으로 지워
+     auth.render_watermark 의 워터마크가 통째로 사라진다. 색만 지정할 것. */
+  background-color:var(--bg) !important; }
 [data-testid="stMainBlockContainer"], .block-container{ background:transparent !important; }
 /* 본문 가운데 정렬 + 시안 폭(~1060px) — layout=wide 를 강제로 좁힘 */
 [data-testid="stMainBlockContainer"], .stMainBlockContainer, section.main .block-container, .block-container{
