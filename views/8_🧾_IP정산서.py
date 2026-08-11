@@ -216,8 +216,12 @@ def _ticket_box(brand: str):
         st.warning("이 기간에 그 티켓으로 잡히는 매출이 없어요.")
         return tickets, [], {}, []
 
-    # 기본 선택은 **먼저 물은 티켓에서 한 번만** — 안 그러면 켜자마자 중복이 된다.
-    first = {t: tks[0] for t, tks in claimed.items()}
+    # ★같은 타이틀을 여러 티켓에 체크해도 **금액은 한 번만** 센다.
+    #   정산액은 티켓별 합이 아니라 **중복 제거된 타이틀 목록**에서 한 번에 뽑는다
+    #   (`country_detail(titles=[...])`). 그래서 막을 이유가 없다 — 오히려 막으면
+    #   베이온처럼 티켓 여러 장이 한 타이틀을 나눠 맡는 건을 아예 담을 수 없다.
+    #   체크된 티켓은 전부 '이 정산서에 걸린 티켓' 으로 문서에 남는다.
+    breakdown = _cat_breakdown(brand)
     chosen, tmap, hits = [], {}, {}
     for tk, rows in blocks:
         e = sm.lookup_ticket(brand, tk) or {}
@@ -225,32 +229,60 @@ def _ticket_box(brand: str):
                    f"{e.get('startdate') or '?'} ~ {e.get('duedate') or '?'}")
         for t, done in rows:
             amt, ncc = rev.get(t, (0, 0))
-            multi = len(claimed.get(t, [])) > 1
             on = st.checkbox(
-                f"{t} · {_fmt(amt)}원 · {ncc}개국"
-                + ("  ✅" if done else "") + ("  ⚖️" if multi else ""),
-                value=(done or (default_on and first.get(t) == tk)),
+                f"{t} · {_fmt(amt)}원 · {ncc}개국" + ("  ✅" if done else ""),
+                value=(done or default_on),
                 key=f"ck_{brand}_{tk}_{t}", disabled=not CAN_EDIT)
+            # 스내피즘은 한 타이틀 안에 판매 항목이 여러 가지다. 무엇이 들어 있는지
+            # 보여줘야 어느 티켓에 담을지 판단할 수 있다.
+            if breakdown.get(t):
+                st.caption("　└ " + " · ".join(f"{c} {_fmt(v)}원"
+                                              for c, v in breakdown[t]))
             if on:
                 hits.setdefault(t, []).append(tk)
     for t, tks in hits.items():
         chosen.append(t)
-        tmap[t] = tks[0]
-    dup = {t: tks for t, tks in hits.items() if len(tks) > 1}
-    if dup:
-        ui_theme.nbox("err", "⚖️ <b>같은 타이틀을 두 티켓에 체크했어요</b><div class='sub'>"
-                      + "<br>".join(f"<b>{t}</b> → " + " · ".join(f"<code>{x}</code>"
-                                                                  for x in tks)
-                                    for t, tks in dup.items())
-                      + "<br>한 곳에만 남겨 주세요 — 그대로 두면 같은 매출을 두 번 "
-                        "정산해요.</div>")
-    if any(len(v) > 1 for v in claimed.values()) and not dup:
-        st.caption("⚖️ 표시된 타이틀은 여러 티켓이 후보예요. 담을 곳 한 군데만 체크하세요.")
-    used = [tk for tk, _ in blocks if tk in set(tmap.values())]
+        tmap[t] = tks[0]              # 확정은 대표(첫) 티켓에 — 매핑은 1:1 이다
+    used = [tk for tk, _ in blocks if any(tk in v for v in hits.values())]
     if len(used) > 1:
         st.caption(f"🧾 티켓 {len(used)}장을 **한 장으로** 정산해요 — "
-                   + " · ".join(f"`{t}`" for t in used))
-    return used, chosen, tmap, [f"{t} → {' · '.join(tks)}" for t, tks in dup.items()]
+                   + " · ".join(f"`{t}`" for t in used)
+                   + " · 같은 타이틀을 여러 곳에 체크해도 매출은 한 번만 세요.")
+    return used, chosen, tmap, []
+
+
+@st.cache_data(ttl=900, max_entries=4, show_spinner=False)
+def _cat_breakdown_cached(brand, start, end):
+    """{타이틀: [(판매항목, 현지합), ...]} — 스내피즘만. 어느 티켓에 담을지 고를 때
+    한 타이틀 안에 무엇이 들어 있는지 보이게 한다(와이드 스티커·포토카드·폴라릿).
+
+    ※원화 환산 전 현지통화 합이라 정산 기준액과는 다르다 — 구성만 보는 용도다.
+    """
+    if brand != "snapism":
+        return {}
+    con = sm.duck()
+    try:
+        d = con.execute(f"""
+            SELECT "프레임 이름" t, "상품 카테고리" c,
+                   CAST(SUM(TRY_CAST("최종 결제 금액" AS BIGINT)
+                            + TRY_CAST("쿠폰 할인 금액" AS BIGINT)) AS BIGINT) v
+            FROM read_parquet('{sm.SN_MASTER.as_posix()}')
+            WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              AND NOT COALESCE("취소 여부", FALSE)
+            GROUP BY 1, 2 HAVING v > 0
+        """).df()
+    finally:
+        con.close()
+    out = {}
+    for t, g in d.groupby("t"):
+        g = g.sort_values("v", ascending=False)
+        if len(g) > 1:                    # 항목이 하나면 굳이 안 적는다
+            out[t] = [(str(c), int(v)) for c, v in zip(g["c"], g["v"])]
+    return out
+
+
+def _cat_breakdown(brand):
+    return _cat_breakdown_cached(brand, S, E)
 
 
 @st.cache_data(ttl=900, max_entries=8, show_spinner=False)
@@ -266,37 +298,44 @@ def _rev_index(brand):
 
 @st.fragment
 def make_panel():
-    picks, tmaps, dups = {}, {}, []
+    picks, tmaps = {}, {}
     cols = st.columns(2)
     for col, b in zip(cols, sm.BRANDS):
         with col:
-            tks, titles, tmap, dup = _ticket_box(b)
+            tks, titles, tmap, _ = _ticket_box(b)
             picks[b], tmaps[b] = (tks, titles), tmap
-            dups += dup
 
     if not any(t for t, _ in picks.values()):
         st.info("위에 티켓번호나 IP명을 넣어 주세요. 포토이즘·스내피즘 중 한쪽만 있어도 돼요.")
         return
 
     # ── 확정 저장 ─────────────────────────────────────────────────────
-    # 체크한 타이틀을 **그 타이틀이 속한 티켓에** 확정한다. 티켓이 여러 장이면
-    # 타이틀마다 주인이 다르므로 티켓 단위로 나눠서 비교·저장한다.
-    need_save = []
+    # ★확정 매핑은 **타이틀 하나에 티켓 하나**다. 티켓을 여러 장 담아도 저장은
+    #   대표 티켓 한 곳에만 한다 — 나머지는 이번 문서에 같이 실릴 뿐이다.
+    #   (타이틀별로 티켓을 쪼개 저장하려 들면 다른 티켓의 확정을 지워 버린다)
+    need_save = []                       # (brand, title, ticket|None) — None 은 해제
     for b, (tks, titles) in picks.items():
         tmap = tmaps.get(b, {})
-        for tk in tks:
-            want = {t for t in titles if tmap.get(t) == tk}
-            if set(sc.titles_for_ticket(b, tk)) != want:
-                need_save.append((b, tk, sorted(want)))
-    if need_save and CAN_EDIT and not dups:
-        n = sum(len(t) for _, _, t in need_save)
-        if st.button(f"✔️ 위 구성으로 확정 ({n}개 타이틀)", use_container_width=True):
-            for b, tk, titles in need_save:
-                for t in set(sc.titles_for_ticket(b, tk)) - set(titles):
-                    sm.unapprove(b, t)
-                for t in titles:
+        mp = sm.load_mapping()["mappings"].get(b, {})
+        for t in titles:
+            tk = tmap.get(t)
+            if tk and str((mp.get(t) or {}).get("ticket") or "").upper() != tk:
+                need_save.append((b, t, tk))
+        for tk in tks:                   # 체크를 뺀 타이틀은 확정도 푼다
+            for t in sc.titles_for_ticket(b, tk):
+                if t not in titles:
+                    need_save.append((b, t, None))
+    if need_save and CAN_EDIT:
+        if st.button(f"✔️ 위 구성으로 확정 ({len(need_save)}개 타이틀)",
+                     use_container_width=True):
+            for b, t, tk in need_save:
+                if tk:
                     sm.approve(b, t, tk, _email)
-                auth.log_event(_email, f"settlemap:{b}:{tk}({len(titles)})")
+                else:
+                    sm.unapprove(b, t)
+            for b, t, tk in need_save:
+                if tk:
+                    auth.log_event(_email, f"settlemap:{b}:{tk}:{t}")
             _rerun()
         st.caption("확정하면 다음 달부터 같은 티켓에 자동으로 붙어요.")
 
@@ -481,9 +520,6 @@ def make_panel():
         reason = st.text_input("정정 사유 (문서 첫 장에 표기돼요)", key="reason")
 
     stop = []
-    if dups:
-        # 같은 타이틀을 두 티켓에 담으면 같은 매출을 두 번 정산한다. 발행 자체를 막는다.
-        stop.append("타이틀 중복 체크(" + " / ".join(dups) + ")")
     if warns:
         stop.append("환율 검증 실패")
     if miss:
