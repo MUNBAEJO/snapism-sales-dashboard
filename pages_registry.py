@@ -30,7 +30,7 @@ PAGES = [
 #   **지우지 않고 감춘다** — 파일·데이터·권한 설정을 그대로 두고 여기서만 빼면
 #   되돌릴 때 이 집합에서 key 를 지우기만 하면 된다.
 #   라우터가 st.navigation 에 안 올리므로 url 직접 접근도 같이 막힌다.
-HIDDEN = {"weekly", "expired"}
+HIDDEN = {"weekly", "expired", "settlement"}
 
 # 사이드바에 실제로 오르는 목록(순서 유지).
 VISIBLE_PAGES = [p for p in PAGES if p[0] not in HIDDEN]

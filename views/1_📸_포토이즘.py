@@ -1297,6 +1297,17 @@ def cbfilter(col, label, options, key, fmt=None):
     def _sel():
         return [o for o in options if st.session_state.get(pfx + str(o), False)]
 
+    # ★상위 필터가 바뀌어 **목록에서 빠진 항목의 체크를 끈다**(2026-08-11).
+    #   예: 국가=한국 → 매장 '전체' → 국가 해제. 매장 목록은 전 세계로 넓어지는데
+    #   한국 매장 체크가 세션에 남아, 사용자는 국가만 풀었는데 매장 필터가 몰래
+    #   걸린 상태가 됐다. 지금 목록에 없는 선택은 어차피 본문에도 안 먹으므로
+    #   여기서 끊어 화면과 상태를 일치시킨다.
+    _valid = {pfx + str(o) for o in options}
+    for _k in [k for k in st.session_state
+               if str(k).startswith(pfx) and k not in _valid
+               and st.session_state.get(k)]:
+        st.session_state[_k] = False
+
     sel = _sel()
     cap = "전체" if not sel else (_lab(sel[0]) if len(sel) == 1 else f"{len(sel)}개 선택")
     col.markdown(f'<div class="fbl">{label}</div>', unsafe_allow_html=True)
@@ -1306,16 +1317,24 @@ def cbfilter(col, label, options, key, fmt=None):
             q = st.text_input("검색", key=f"{key}__q", placeholder=f"🔍 {label} 검색",
                               label_visibility="collapsed").strip().lower()
         pool = [o for o in options if q in str(o).lower() or q in _lab(o).lower()] if q else list(options)
-        merged = list(dict.fromkeys([*sel, *pool]))
-        shown = merged[:200]
-        over = len(merged) - len(shown)
+        # ★목록 순서를 **고정**한다(2026-08-11). 예전엔 고른 항목을 맨 위로 끌어올려
+        #   (`[*sel, *pool]`) 체크하면 위로 튀고 풀면 제자리로 내려갔다 — 연달아
+        #   고를 때 방금 누른 줄이 사라져 다른 걸 잘못 누르게 된다.
+        #   대신 상위 200개 밖으로 밀린 '이미 고른' 항목만 뒤에 붙여 안 놓치게 한다.
+        shown = pool[:200]
+        _off = [o for o in sel if o not in shown]
+        over = len(pool) - len(shown)
+        shown = shown + _off
         _b = st.columns(2)
         if _b[0].button("전체", key=f"{key}__all", use_container_width=True, disabled=not pool):
             for o in pool:
                 st.session_state[pfx + str(o)] = True     # 체크박스 생성 前이라 초기값 설정 OK
         if _b[1].button("해제", key=f"{key}__clr", use_container_width=True, disabled=not sel):
-            for o in options:
-                st.session_state[pfx + str(o)] = False
+            # ★목록에 지금 보이는 것만 지우면 안 된다 — 매장·IP명은 상위 필터(국가·
+            #   IP구분)에 따라 목록이 좁아지므로, 좁아진 사이에 빠진 항목이 True 로
+            #   남아 있으면 '해제' 를 눌러도 안 없어진다. 접두어가 같은 키를 전부 끈다.
+            for _k in [k for k in st.session_state if str(k).startswith(pfx)]:
+                st.session_state[_k] = False
         if not shown:
             st.caption("옵션이 없어요.")
         elif over:
@@ -1604,7 +1623,9 @@ with tab_runs:
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
 with tab_home:
-    sec("1", "매출 동향", "잘 가고 있나? — 기간별 IP구분 매출 흐름")
+    sec("1", "매출 동향",
+        "잘 가고 있나? — <b>조회 기간과 무관하게 항상 최근 1년</b>이에요 "
+        "(국가·매장·상품·IP 필터는 그대로 적용돼요)")
     with card():
         # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07).
         #   흐름은 길게 봐야 읽히는데, 기간을 좁히면 막대 서너 개만 남아 추이가 안 보였다.
@@ -1669,7 +1690,9 @@ with tab_home:
 - ※ 공통 기준(원본·환율·매출액 정의)은 상단 'KPI 카드' 설명 참고.
 """)
 
-    sec("2", "무엇이 매출을 만드나", "비중 — 어떤 구좌 타입·브랜드가 매출을 끄나")
+    sec("2", "무엇이 매출을 만드나",
+        f"비중 — 어떤 구좌 타입·브랜드가 매출을 끄나 · "
+        f"<b>조회 기간 {_dr}</b> 기준이에요")
     _c1, _c2 = st.columns(2)
     with _c1:
         with card("🎫 구좌 타입별 비중 <span class='muted'>IP구분별</span>"):
@@ -1728,7 +1751,8 @@ with tab_home:
 - `타이틀`(날짜+IP 기준, 한·영 통합)별 매출액 합 → 상위 5개.
 """)
 
-    sec("3", "어디서 파나", "지역 — 국가·매장별 매출 (원화 기준)")
+    sec("3", "어디서 파나",
+        f"지역 — 국가·매장별 매출(원화) · <b>조회 기간 {_dr}</b> 기준이에요")
     _n1, _n2 = st.columns(2)
     with _n1:
         with card("🌏 국가별 매출 TOP 6"):

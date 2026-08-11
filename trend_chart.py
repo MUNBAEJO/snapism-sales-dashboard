@@ -115,8 +115,13 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
            kr_col: str | None = None):
     """daily: 날짜 인덱스(일 단위, 빈 날 0) · 'total' 컬럼 필수 · parts_cols 는 툴팁용.
 
-    kr_col 을 주면 한국 비중 배지와 '한국 제외' 토글이 붙는다 — 한국이 88%라
-    '전체'라고 써 있어도 사실상 한국 그래프이기 때문이다.
+    kr_col 을 주면 **한국 비중 배지**가 붙는다 — 한국이 88%라 '전체'라고 써 있어도
+    사실상 한국 그래프이기 때문이다.
+
+    ★'한국 제외' 토글은 뺐다(2026-08-11, 사용자 요청). 상단 국가 필터에서 한국을
+      빼면 같은 걸 볼 수 있어 중복이었고, 토글을 켜면 구성(툴팁) 값이 한국을 못
+      덜어내 아예 사라지는 부작용도 있었다. 배지는 남긴다 — '전체'가 사실상
+      한국이라는 사실은 계속 알려줘야 하니까.
     """
     parts_cols = [c for c in (parts_cols or []) if c in daily.columns]
     if daily.empty or float(daily["total"].sum()) == 0:
@@ -140,19 +145,7 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
                                       key=f"{key}_preset",
                                       label_visibility="collapsed") or PRESETS[0]
 
-    ex_kr = False
-    if kr_share is not None and kr_share > 0.5:
-        ex_kr = st.checkbox("한국 제외", key=f"{key}_exkr",
-                            help="한국이 대부분이라 '전체' 흐름이 곧 한국 흐름이에요. "
-                                 "해외만 따로 보려면 켜세요.")
-    d = daily.copy()
-    if ex_kr and kr_col:
-        d["total"] = d["total"] - d[kr_col]
-        # ★구성 값(parts)은 한국이 섞인 채라 빼고 나면 합계와 안 맞는다.
-        #   나라별로 다시 쪼갠 값이 없으니, 숫자가 틀리게 보이느니 아예 안 보여준다.
-        parts_cols = []
-        d = d[[c for c in d.columns if c != kr_col]]
-
+    d = daily
     end = d.index.max()
 
     # ── 항상 보이는 요약 — 그래프를 못 봐도 답이 되게 ──────────────────
