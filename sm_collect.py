@@ -38,6 +38,9 @@ except Exception:
 BASE_DIR = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.json"
 OUT_PARQUET = BASE_DIR / "data" / "sm_shoot_daily.parquet"
+# 테마별 전량 (2026-08-12 신설). 같은 응답에서 함께 만든다 — CMS 요청은 안 늘어난다.
+# 단위: 날짜 · 국가 · 타이틀 · 테마 · 프레임.  ※오리지널은 이 API 에 안 온다.
+THEME_PARQUET = BASE_DIR / "data" / "theme_daily.parquet"
 LOG_DIR = BASE_DIR / "logs"
 
 SM_REGEX = re.compile(r"sm\s*ent", re.I)
@@ -108,7 +111,19 @@ def _post(url, body, token, timeout=90):
 
 
 def fetch_day(cmsapi, token, cc, d: date, off: int):
-    """그 국가/그날 SM ent 타이틀의 (테마, 프레임)별 촬영수 행 리스트."""
+    """그 국가/그날의 (타이틀, 테마, 프레임)별 행 **전부**.
+
+    ★예전엔 여기서 `is_sm_title` 로 SM 것만 남기고 나머지를 버렸다. 그런데 요청
+      본문에 타이틀 필터가 없어 **CMS 는 이미 전 타이틀을 보내주고 있었다** —
+      한국 하루 1,132행 중 SM 은 41행뿐이라 96%를 그냥 버린 셈이다(2026-08-12 실측).
+      그래서 전부 돌려주고, 나눠 담는 건 collect() 가 한다. **요청 수는 그대로다.**
+
+    ★금액이 우리 매출 원장과 맞는 것도 확인했다 — 한국 2025-01-15 기준
+      결제 48,268,000 · 쿠폰 108,000 · 코인 276,000 이 **1원까지 일치**한다.
+      (어제 날짜는 아직 정착 전이라 조금 어긋날 수 있다)
+
+    ※오리지널(자사 프레임)은 이 API 에 안 들어온다 — 타이틀이 없는 거래라서다.
+    """
     s, e = _utc_window(d, off)
     rows_out = []
     page = 0
@@ -123,16 +138,18 @@ def fetch_day(cmsapi, token, cc, d: date, off: int):
         ct = j.get("content") or {}
         rows = ct.get("revenueList") or []
         for x in rows:
-            ti = str(x.get("titleName", ""))
-            if not is_sm_title(ti):
-                continue
             rows_out.append({
                 "날짜": d.isoformat(), "국가코드": cc.lower(),
+                "타이틀": str(x.get("titleName", "")).strip(),
                 "테마": str(x.get("themeName", "")).strip(),
                 "프레임": str(x.get("frameName", "")).strip(),
                 "촬영수": int(x.get("totalShootCount") or 0),
                 "주문수": int(x.get("totalOrderCount") or 0),
                 "최종결제금액": float(x.get("totalPrice") or 0),
+                "쿠폰할인금액": float(x.get("totalCouponDiscount") or 0),
+                "서비스코인": float(x.get("totalServiceCoin") or 0),
+                "종이수": int(x.get("totalPaperCount") or 0),
+                "프레임단가": float(x.get("framePrice") or 0),
             })
         if ct.get("last", True) or page + 1 >= (ct.get("totalPages") or 1):
             break
@@ -147,7 +164,13 @@ def daterange(a: date, b: date):
         d += timedelta(days=1)
 
 
-def collect(start: date, end: date, codes, delay: int):
+def collect(start: date, end: date, codes, delay: int, write_sm: bool = True):
+    """수집 후 저장. write_sm=False 면 **테마 파일만** 쓴다.
+
+    ★백필용 안전장치 — 2025년을 훑으면 그때의 SM 타이틀까지 sm_shoot_daily 에
+      들어가 **SM 리포트의 과거가 갑자기 늘어난다**. 담당자에게 나가는 문서라
+      말없이 바뀌면 안 되므로, 백필은 기본으로 테마 파일만 채운다.
+    """
     cfg = json.load(open(CONFIG_FILE, encoding="utf-8"))["photoism"]
     user, pw, countries = cfg["username"], cfg["password"], cfg["countries"]
     dates = list(daterange(start, end))
@@ -194,27 +217,62 @@ def collect(start: date, end: date, codes, delay: int):
         log(f"[{cc.upper()}] 일별 촬영수합 {day_tot}")
         time.sleep(delay)
 
-    new = pd.DataFrame(all_rows)
-    if new.empty:
+    raw = pd.DataFrame(all_rows)
+    if raw.empty:
         log("수집 결과 없음 — 저장 생략")
-        return new
-    # (날짜·국가·테마·프레임) 단위로 합산(타이틀 전환 시 같은 멤버 합치기)
-    new = (new.groupby(["날짜", "국가코드", "테마", "프레임"], as_index=False)
-              .agg({"촬영수": "sum", "주문수": "sum", "최종결제금액": "sum"}))
+        return raw
 
-    OUT_PARQUET.parent.mkdir(exist_ok=True)
-    if OUT_PARQUET.exists():
-        old = pd.read_parquet(OUT_PARQUET)
-        # 이번에 받은 (날짜·국가) 조합은 덮어쓰기 — 시차/정착 변동 반영
+    # ── ① 테마별 전량 (신규) ────────────────────────────────────────────
+    # 타이틀까지 남긴 전량. 같은 응답으로 만드는 것이라 **요청은 더 안 나간다.**
+    theme = (raw.groupby(["날짜", "국가코드", "타이틀", "테마", "프레임"], as_index=False)
+             .agg({"촬영수": "sum", "주문수": "sum", "최종결제금액": "sum",
+                   "쿠폰할인금액": "sum", "서비스코인": "sum", "종이수": "sum",
+                   "프레임단가": "max"}))
+    _upsert(THEME_PARQUET, theme, ["날짜", "국가코드", "타이틀", "테마", "프레임"])
+
+    # ── ② SM 촬영수 (기존 그대로) ───────────────────────────────────────
+    # ★스키마·집계 단위를 바꾸지 않는다 — SM 리포트가 이 파일을 그대로 읽는다.
+    if not write_sm:
+        return theme
+    sm = raw[raw["타이틀"].map(is_sm_title)]
+    if sm.empty:
+        log("SM 타이틀 없음 — sm_shoot_daily 저장 생략")
+        return theme
+    # (날짜·국가·테마·프레임) 단위로 합산(타이틀 전환 시 같은 멤버 합치기)
+    sm = (sm.groupby(["날짜", "국가코드", "테마", "프레임"], as_index=False)
+          .agg({"촬영수": "sum", "주문수": "sum", "최종결제금액": "sum"}))
+    _upsert(OUT_PARQUET, sm, ["날짜", "국가코드", "테마", "프레임"])
+    return sm
+
+
+def _upsert(path, new, sort_keys):
+    """이번에 받은 (날짜·국가) 조합을 통째로 갈아끼운다 — 시차·정착 변동 반영.
+
+    ★부분 갱신이 아니라 **조합 단위 교체**다. 그 날·그 나라에서 사라진 행
+      (취소로 0이 된 테마 등)이 옛 값으로 남지 않게 하려는 것.
+    """
+    path.parent.mkdir(exist_ok=True)
+    if path.exists():
+        try:
+            old = pd.read_parquet(path)
+        except Exception as ex:                       # noqa: BLE001
+            log(f"[경고] {path.name} 읽기 실패({ex}) — 이번 수집분만 저장한다")
+            old = pd.DataFrame(columns=new.columns)
+        if not old.empty:
+            # 옛 파일에 없는 열(타이틀 등)이 생겼어도 concat 이 깨지지 않게 맞춰 준다
+            for c in new.columns:
+                if c not in old.columns:
+                    old[c] = 0 if new[c].dtype.kind in "if" else ""
+            old = old[new.columns]
         pulled = set(zip(new["날짜"], new["국가코드"]))
-        mask = [(dd, cc) not in pulled for dd, cc in zip(old["날짜"], old["국가코드"])]
-        merged = pd.concat([old[mask], new], ignore_index=True)
+        keep = [(dd, cc) not in pulled for dd, cc in zip(old["날짜"], old["국가코드"])] \
+            if not old.empty else []
+        merged = pd.concat([old[keep], new], ignore_index=True) if not old.empty else new
     else:
         merged = new
-    merged = merged.sort_values(["날짜", "국가코드", "테마", "프레임"]).reset_index(drop=True)
-    merged.to_parquet(OUT_PARQUET, index=False)
-    log(f"=== 저장: {OUT_PARQUET.name} (총 {len(merged):,}행, 이번 {len(new):,}행) ===")
-    return new
+    merged = merged.sort_values(sort_keys).reset_index(drop=True)
+    merged.to_parquet(path, index=False)
+    log(f"=== 저장: {path.name} (총 {len(merged):,}행, 이번 {len(new):,}행) ===")
 
 
 def main():
