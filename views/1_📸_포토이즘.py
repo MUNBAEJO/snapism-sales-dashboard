@@ -1224,6 +1224,19 @@ def _md(dt):
     return f"{dt.month:02d}-{dt.day:02d}" if dt else ""
 
 
+def _frag_rerun():
+    """조각만 다시 그린다. 조각 밖(전체 실행) 이면 통째로 다시 그린다.
+
+    ★`st.rerun(scope="fragment")` 는 **조각 재실행 중일 때만** 된다 — 전체 실행
+      도중에 부르면 StreamlitAPIException 이다. 성공하면 RerunException(BaseException)
+      이라 아래 except 에 안 걸리고, 실패했을 때만 전체 재실행으로 넘어간다.
+    """
+    try:
+        st.rerun(scope="fragment")
+    except Exception:          # noqa: BLE001 — 위 주석 참고(성공 경로는 안 걸린다)
+        st.rerun()
+
+
 def _period_str(o, e):
     """판매기간 '오픈 ~ 종료' 문자열. 두 날짜의 연도가 다르면 연도(YY)를 붙인다 —
     안 붙이면 해를 넘긴 티켓이 '05-05 ~ 03-31' 처럼 거꾸로 읽힌다."""
@@ -1989,16 +2002,22 @@ with tab_ip:
                 _mm = st.session_state.get(_dlm)
                 _per = f"{date_range[0]}_{date_range[1]}" if len(date_range) == 2 else "전체기간"
                 if st.session_state.get(_dlb) is not None and _mm and _mm[1] == _sig:
-                    auth.download_button(
-                        f"⬇ {_mm[0]:,}줄", st.session_state[_dlb],
-                        f"photoism_구좌별상세_{_per}.csv", "text/csv",
-                        key="ph_slot_dl_get", use_container_width=True,
-                        page="photoism", rows=_mm[0])
+                    # ★받고 나면 '내려받기' 로 되돌린다 — 안 그러면 다 받은 뒤에도
+                    #   '⬇ 4,436줄' 인 채로 남아 방금 만든 건지 헷갈린다(요청).
+                    #   들고 있던 바이트도 같이 버려서 메모리도 돌려준다.
+                    if auth.download_button(
+                            f"⬇ {_mm[0]:,}줄", st.session_state[_dlb],
+                            f"photoism_구좌별상세_{_per}.csv", "text/csv",
+                            key="ph_slot_dl_get", use_container_width=True,
+                            page="photoism", rows=_mm[0]):
+                        st.session_state.pop(_dlb, None)
+                        st.session_state.pop(_dlm, None)
+                        _frag_rerun()
                 elif st.button("⬇ 내려받기", key="ph_slot_dl_make", use_container_width=True):
                     _d = _slot_export()
                     st.session_state[_dlb] = _d.to_csv(index=False).encode("utf-8-sig")
                     st.session_state[_dlm] = (len(_d), _sig)
-                    st.rerun(scope="fragment")
+                    _frag_rerun()
 
             _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])
             for _i, _g in enumerate(_gall):

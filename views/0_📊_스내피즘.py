@@ -539,6 +539,19 @@ def load_data():
     return _load_data(data_io.file_version(MASTER_FILE))
 
 
+def _frag_rerun():
+    """조각만 다시 그린다. 조각 밖(전체 실행) 이면 통째로 다시 그린다.
+
+    ★`st.rerun(scope="fragment")` 는 **조각 재실행 중일 때만** 된다 — 전체 실행
+      도중에 부르면 StreamlitAPIException 이다. 성공하면 RerunException(BaseException)
+      이라 아래 except 에 안 걸리고, 실패했을 때만 전체 재실행으로 넘어간다.
+    """
+    try:
+        st.rerun(scope="fragment")
+    except Exception:          # noqa: BLE001 — 위 주석 참고(성공 경로는 안 걸린다)
+        st.rerun()
+
+
 def paid_sales(df):
     return df[~df["취소 여부"] & (df["최종 결제 금액"] > 0)]
 
@@ -1565,16 +1578,21 @@ with tab_cat:
                 _mm = st.session_state.get(_dm)
                 _pf = f"{date_range[0]}_{date_range[1]}" if len(date_range) == 2 else "전체기간"
                 if st.session_state.get(_db) is not None and _mm and _mm[1] == _sig:
-                    auth.download_button(
-                        f"⬇ {_mm[0]:,}줄", st.session_state[_db],
-                        f"snapism_프레임순위_{_pf}.csv", "text/csv",
-                        key="sn_fr_dl_get", use_container_width=True,
-                        page="snapism", rows=_mm[0])
+                    # ★받고 나면 '내려받기' 로 되돌린다(포토이즘 views/1 과 같음).
+                    #   들고 있던 바이트도 같이 버려 메모리를 돌려준다.
+                    if auth.download_button(
+                            f"⬇ {_mm[0]:,}줄", st.session_state[_db],
+                            f"snapism_프레임순위_{_pf}.csv", "text/csv",
+                            key="sn_fr_dl_get", use_container_width=True,
+                            page="snapism", rows=_mm[0]):
+                        st.session_state.pop(_db, None)
+                        st.session_state.pop(_dm, None)
+                        _frag_rerun()
                 elif st.button("⬇ 내려받기", key="sn_fr_dl_make", use_container_width=True):
                     _d = _fr_export()
                     st.session_state[_db] = _d.to_csv(index=False).encode("utf-8-sig")
                     st.session_state[_dm] = (len(_d), _sig)
-                    st.rerun(scope="fragment")
+                    _frag_rerun()
 
             # 스2: 상태값(신규/확인필요/종료 등) 필터·배지 제거. 판매기간은 지라 오픈~종료로만 표기.
             st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
