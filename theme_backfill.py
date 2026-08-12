@@ -12,11 +12,16 @@
   그때 SM 타이틀이 sm_shoot_daily 에 새로 들어가 **담당자에게 나가는 리포트의
   과거가 말없이 늘어난다.** 그건 따로 판단할 일이라 여기서 섞지 않는다.
 
+- ★국가가 통째로 빠진 달은 `partial` 로 따로 적는다. 예전엔 로그인 타임아웃으로
+  유럽 7개국이 빠져도 그 달을 '완료'로 찍었다(2025-01). 유럽이 열린 뒤였으면
+  그 나라 테마 매출이 **말없이 사라진 채 완료로 남았을 것**이다.
+
 실행:
   python theme_backfill.py --status              # 진행 상황만
   python theme_backfill.py                       # 안 끝난 달부터 이어서
   python theme_backfill.py --months 2            # 이번 실행은 2개월만
   python theme_backfill.py --from 2025-01        # 시작 월 지정(기본 2025-01)
+  python theme_backfill.py --retry               # 빠진 국가만 다시 (그 국가만 받는다)
 """
 import json
 import sys
@@ -38,9 +43,13 @@ DELAY = 8                      # 국가 사이 간격(초) — CMS 부담을 낮
 
 def _load():
     try:
-        return json.loads(STATE.read_text(encoding="utf-8"))
+        st = json.loads(STATE.read_text(encoding="utf-8"))
     except Exception:
-        return {"done": [], "failed": {}}
+        st = {}
+    st.setdefault("done", [])
+    st.setdefault("failed", {})
+    st.setdefault("partial", {})     # {월: [못 받은 국가코드…]} — --retry 대상
+    return st
 
 
 def _save(st):
@@ -83,9 +92,50 @@ def status(since):
     print(f"  완료 {len(done)}개월 · 남음 {len(left)}개월")
     if st["failed"]:
         print(f"  실패 이력: {st['failed']}")
+    if st["partial"]:
+        n = sum(len(v) for v in st["partial"].values())
+        print(f"  ⚠ 국가가 빠진 달 {len(st['partial'])}개 (총 {n}건) — `--retry` 로 그 국가만 다시 받아요")
+        for m, cs in sorted(st["partial"].items()):
+            print(f"     {m}: {','.join(sorted(cs))}")
     if left:
         print(f"  다음: {left[0]}")
     print(f"  현재 {S.THEME_PARQUET.name} {_rows():,}행")
+
+
+def _run(ym, codes, st):
+    """한 달치 수집 후 상태 갱신. codes 를 좁혀 주면 그 국가만 받는다."""
+    s, e = _span(ym)
+    S.log(f"########## 테마 백필 {ym} ({s} ~ {e}) · {len(codes)}개국 ##########")
+    try:
+        # ★write_sm=False — SM 촬영수 파일은 안 건드린다(위 주석 참고).
+        S.collect(s, e, codes, DELAY, write_sm=False)
+        miss = sorted(set(S.LAST_SKIPPED))
+        if miss:
+            st["partial"][ym] = miss
+            S.log(f"########## {ym} ⚠ 국가 {len(miss)}개 빠짐: {','.join(miss)} ##########")
+        else:
+            st["partial"].pop(ym, None)
+        if ym not in st["done"]:
+            st["done"].append(ym)
+        st["failed"].pop(ym, None)      # 재시도로 성공하면 실패 목록에서 뺀다
+    except Exception as ex:             # noqa: BLE001
+        st["failed"][ym] = str(ex)[:200]
+        S.log(f"########## {ym} 실패: {str(ex)[:200]} ##########")
+    _save(st)                            # 한 달 끝날 때마다 기록 — 죽어도 여기까진 남는다
+    S.log(f"########## {ym} 끝 · 누적 {_rows():,}행 ##########")
+
+
+def retry(limit):
+    """빠진 국가만 다시. 전체를 다시 받지 않는다 — CMS 부담과 시간 모두 줄인다."""
+    st = _load()
+    todo = sorted(st["partial"].items())[:limit]
+    if not todo:
+        print("다시 받을 국가가 없어요.")
+        return
+    print(f"재시도: {len(todo)}개월 · {sum(len(c) for _, c in todo)}건")
+    for ym, codes in todo:
+        _run(ym, list(codes), st)
+    status(DEFAULT_FROM)
 
 
 def main():
@@ -97,6 +147,9 @@ def main():
         status(since)
         return
     limit = int(a[a.index("--months") + 1]) if "--months" in a else 999
+    if "--retry" in a:
+        retry(limit)
+        return
 
     cfg = json.load(open(S.CONFIG_FILE, encoding="utf-8"))["photoism"]
     codes = list(cfg["countries"].keys())
@@ -109,18 +162,7 @@ def main():
     print(f"이번 실행: {len(todo)}개월 ({todo[0]} ~ {todo[-1]}) · {len(codes)}개국 · 간격 {DELAY}s")
 
     for ym in todo:
-        s, e = _span(ym)
-        S.log(f"########## 테마 백필 {ym} ({s} ~ {e}) ##########")
-        try:
-            # ★write_sm=False — SM 촬영수 파일은 안 건드린다(위 주석 참고).
-            S.collect(s, e, codes, DELAY, write_sm=False)
-            st["done"].append(ym)
-            st["failed"].pop(ym, None)      # 재시도로 성공하면 실패 목록에서 뺀다
-        except Exception as ex:             # noqa: BLE001
-            st["failed"][ym] = str(ex)[:200]
-            S.log(f"########## {ym} 실패: {str(ex)[:200]} ##########")
-        _save(st)                            # 한 달 끝날 때마다 기록 — 죽어도 여기까진 남는다
-        S.log(f"########## {ym} 끝 · 누적 {_rows():,}행 ##########")
+        _run(ym, codes, st)
 
     status(since)
 

@@ -43,6 +43,10 @@ OUT_PARQUET = BASE_DIR / "data" / "sm_shoot_daily.parquet"
 THEME_PARQUET = BASE_DIR / "data" / "theme_daily.parquet"
 LOG_DIR = BASE_DIR / "logs"
 
+# 직전 collect() 에서 **로그인이 안 돼 통째로 빠진** 국가코드. 호출부(백필)가
+# 이걸 보고 그 달을 '완료'로 찍을지 정한다. 자세한 이유는 collect() 주석 참고.
+LAST_SKIPPED: list = []
+
 SM_REGEX = re.compile(r"sm\s*ent", re.I)
 EXCLUDE_TITLE = ("렌탈", "test", "테스트")
 ARTISTS_FILE = BASE_DIR / "sm_artists.json"
@@ -171,6 +175,13 @@ def collect(start: date, end: date, codes, delay: int, write_sm: bool = True):
       들어가 **SM 리포트의 과거가 갑자기 늘어난다**. 담당자에게 나가는 문서라
       말없이 바뀌면 안 되므로, 백필은 기본으로 테마 파일만 채운다.
     """
+    # ★못 받은 국가를 호출부가 알 수 있게 남긴다 — 예전엔 로그인 타임아웃으로
+    #   국가가 통째로 빠져도 함수는 조용히 성공했고, 백필은 그 달을 '완료'로
+    #   찍었다. 2025-01 에서 유럽 7개국이 그렇게 빠졌다(그 달은 독일 ₩14,910
+    #   뿐이라 티가 안 났을 뿐, 유럽이 열린 뒤였으면 통째로 사라졌다).
+    global LAST_SKIPPED
+    LAST_SKIPPED = []
+
     cfg = json.load(open(CONFIG_FILE, encoding="utf-8"))["photoism"]
     user, pw, countries = cfg["username"], cfg["password"], cfg["countries"]
     dates = list(daterange(start, end))
@@ -192,9 +203,11 @@ def collect(start: date, end: date, codes, delay: int, write_sm: bool = True):
             token = tc.get_token(url, user, pw)
         except Exception as ex:
             log(f"[{cc.upper()}] 로그인 오류: {str(ex)[:80]} — 건너뜀")
+            LAST_SKIPPED.append(cc)      # 일시적 장애 — 재시도 대상
             continue
         if not token:
             log(f"[{cc.upper()}] 로그인 실패 — 건너뜀")
+            LAST_SKIPPED.append(cc)
             continue
         cc_rows, day_tot = [], {}
         for d in dates:
