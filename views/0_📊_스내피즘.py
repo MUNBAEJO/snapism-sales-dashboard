@@ -1560,18 +1560,40 @@ with tab_cat:
                 st.info("데이터가 없어요.")
                 return
             _d = "미니스티커" if "미니스티커" in cats else cats[0]
-            pick = st.selectbox("카테고리", cats, index=cats.index(_d),
-                                key="prod_rank_pick", label_visibility="collapsed")
-            pr = (rev[rev["상품 카테고리"] == pick].groupby("상품 이름")
-                  .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count")).reset_index())
+            _c1, _c2 = st.columns([3, 2])
+            pick = _c1.selectbox("카테고리", cats, index=cats.index(_d),
+                                 key="prod_rank_pick", label_visibility="collapsed")
+            # ★어느 타이틀에서 팔린 건지 안 보였다(2026-08-11). 상품 이름만으로는
+            #   '센'·'마사토' 가 어느 IP 것인지 알 수 없다 → 타이틀(프레임 이름)을 앞에 붙인다.
+            #   ※'테마' 는 거래 원장에 없다 — CMS 촬영수 리포트에만 있는 값이라
+            #     타이틀 → 상품 2단이 데이터로 가능한 최대다.
+            _lvl = _c2.segmented_control(
+                "묶기", ["타이틀 · 상품", "타이틀"], default="타이틀 · 상품",
+                key="prod_rank_lvl", label_visibility="collapsed") or "타이틀 · 상품"
+            _src = rev[rev["상품 카테고리"] == pick]
+            _fr = _src["프레임 이름"].astype(str).str.strip().replace("nan", "")
+            if _lvl == "타이틀":
+                pr = (_src.assign(_n=_fr.where(_fr.ne(""), "(타이틀 없음)"))
+                      .groupby("_n").agg(매출=("정산금액", "sum"),
+                                         건수=("정산금액", "count")).reset_index()
+                      .rename(columns={"_n": "이름"}))
+            else:
+                _nm = _src["상품 이름"].astype(str).str.strip()
+                pr = (_src.assign(_n=_fr.where(_fr.ne(""), "(타이틀 없음)") + " · " + _nm)
+                      .groupby("_n").agg(매출=("정산금액", "sum"),
+                                         건수=("정산금액", "count")).reset_index()
+                      .rename(columns={"_n": "이름"}))
             pr = pr[pr["매출"] > 0]
             if pr.empty:
                 st.info("이 카테고리에는 데이터가 없어요.")
             else:
-                rank_table(pr, "상품 이름", collapse_after=10)
+                rank_table(pr, "이름", collapse_after=10)
             helpbox("""
 **카테고리별 상품 순위**
-- 위에서 고른 `상품 카테고리`에 속한 매출 거래를 `상품 이름`으로 묶어 `정산금액`(실결제+쿠폰) 합·건수 → 순위. TOP 10 + 나머지 접기.
+- 위에서 고른 `상품 카테고리`에 속한 매출 거래를 `정산금액`(실결제+쿠폰) 합·건수로 묶어 순위. TOP 10 + 나머지 접기.
+- **`타이틀 · 상품`**(기본) = `프레임 이름`(타이틀/IP) + `상품 이름`. 같은 이름의 멤버가 여러 IP에 있어서, 타이틀을 같이 봐야 어느 IP 것인지 알 수 있어요.
+- **`타이틀`** = 타이틀 단위로만 합산. 어느 IP가 이 카테고리에서 잘 팔리는지 볼 때 써요.
+- ※ **'테마'는 이 표에 없어요.** 테마는 CMS 촬영수 리포트에만 있는 값이라 거래 원장으로는 못 나눠요.
 """)
 
     _prod_rank()
