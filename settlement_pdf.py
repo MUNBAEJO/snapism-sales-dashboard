@@ -384,7 +384,7 @@ def _fx_table(items, rates):
             for i in range(0, n, k)) + "</div>")
 
 
-def _price_table(items, used):
+def _price_table(items, used, split=True):
     """국가별 단가. **정산에 들어간 브랜드의 열만** 만든다.
 
     ★스내피즘은 상품 형태(미니 스티커·와이드 스티커·포토카드…)마다 단가가 다르다.
@@ -394,11 +394,18 @@ def _price_table(items, used):
     multi = len(used) > 1
     head = "".join(f"<th>{(BRAND_LABEL[b] + ' ') if multi else ''}"
                    f"{PRICE_HEAD[b]}</th>" for b in used)
-    # 국가가 많으면 세로로 길어져 페이지를 넘긴다 → 2단으로 접는다.
-    if len(items) > 14:
-        k = -(-len(items) // 2)
-        return ('<div class="pricegrid">' + _price_table(items[:k], used)
-                + _price_table(items[k:], used) + "</div>")
+    # 국가가 많으면 세로로 길어져 페이지를 넘긴다 → 여러 단으로 접는다.
+    # ★★한 번만 쪼갠다(split=False). 예전엔 재귀라 30개국이 15/15 로 갈린 뒤
+    #   15도 14보다 커서 또 8/7 로 갈렸고, 2단 그리드 칸 안에 2단 그리드가 겹쳐
+    #   사실상 4단이 됐다 → 페이지 폭을 넘어 **맨 오른쪽 단이 잘렸다**(실측).
+    if split and len(items) > 14:
+        # 스내피즘이 섞이면 '형태별 단가' 칸이 넓어 3단은 안 들어간다.
+        ncol = 3 if (not multi and len(items) > 30) else 2
+        k = -(-len(items) // ncol)
+        cols = [items[i:i + k] for i in range(0, len(items), k)]
+        return (f'<div class="pricegrid c{len(cols)}">'
+                + "".join(_price_table(c, used, split=False) for c in cols)
+                + "</div>")
     h = f'<table class="t4 num"><tr><th>국가</th><th>통화</th>{head}</tr>'
     for nat, unit, pv in items:
         tds = ""
@@ -615,7 +622,11 @@ border-bottom:1.5px solid var(--ink)}
 /* 표 우측 상단 단위 표기 */
 .sechead{display:flex;justify-content:space-between;align-items:baseline}
 .unit{font-size:10px;color:var(--text-2);font-weight:600;white-space:nowrap}
-.pricegrid{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}
+.pricegrid{display:grid;gap:0 24px;align-items:start}
+.pricegrid.c2{grid-template-columns:1fr 1fr}
+.pricegrid.c3{grid-template-columns:1fr 1fr 1fr;gap:0 16px}
+/* 단이 늘어도 폭을 넘지 않게 — 칸 안에서 표가 스스로 줄어들게 둔다. */
+.pricegrid > table{width:100%;min-width:0;table-layout:fixed}
 .t4 th{font-size:10px;font-weight:700;color:var(--text-2);background:var(--surface-2);
 border-top:1.5px solid var(--ink);border-bottom:1px solid var(--border-2);
 padding:6px 8px;text-align:right;white-space:nowrap}
