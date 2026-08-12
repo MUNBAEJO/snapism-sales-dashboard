@@ -343,6 +343,14 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-scard-filter [data-testid="stDateInput"] div[data-baseweb="input"],
 .st-key-scard-filter [data-testid="stButton"] button{ height:34px !important; min-height:34px !important; }
 .st-key-scard-filter [data-testid="stColumn"]{ display:block !important; }
+/* 엑셀 다운로드 버튼 — 카드 머리줄에 얹히는 보조 버튼이라 작게(요청 2026-08-12) */
+.st-key-dlbtn [data-testid="stButton"] button,
+.st-key-dlbtn [data-testid="stDownloadButton"] button{
+  min-height:0 !important; height:27px !important; padding:0 8px !important;
+  border-radius:7px !important; }
+.st-key-dlbtn [data-testid="stButton"] button p,
+.st-key-dlbtn [data-testid="stDownloadButton"] button p{
+  font-size:11px !important; font-weight:700 !important; letter-spacing:-.01em !important; }
 .st-key-scard-filter label{
   font-size:11px !important; font-weight:700 !important; color:var(--text-2) !important;
   margin:0 0 3px 2px !important; padding:0 !important; min-height:0 !important; line-height:1.2 !important; }
@@ -1521,7 +1529,7 @@ with tab_cat:
             #   눌리는데 그 시점에 fr_all 이 없으면 빈 파일이 나간다(같은 함정을
             #   필터바·구좌별 상세에서 한 번씩 밟았다).
             # 마지막 칸이 엑셀 다운로드 — 버튼이 크다는 얘기가 있어 폭을 줄였다(1.6 → 1.25)
-            _hh, _tt, _dlc = st.columns([3.3, 5.45, 1.25], vertical_alignment="center")
+            _hh, _tt, _dlc = st.columns([3.3, 5.65, 1.05], vertical_alignment="center")
             with _hh:
                 st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
                             '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
@@ -1575,7 +1583,7 @@ with tab_cat:
                         .sort_values(["IP 매출 합계", "이름", "매출"], ascending=[False, True, False])
                         .reset_index(drop=True))
 
-            with _dlc:
+            with _dlc, st.container(key="dlbtn"):
                 _db, _dm = "sn_fr_dl_b", "sn_fr_dl_m"
                 _sig = (_tog, str(date_range), tuple(sel_country), tuple(sel_store),
                         tuple(sel_prod), tuple(sel_cat), tuple(sel_ip))

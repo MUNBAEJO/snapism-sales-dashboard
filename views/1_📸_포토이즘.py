@@ -329,6 +329,15 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p{
   color:var(--brand) !important; font-weight:700 !important; }
 
+/* 엑셀 다운로드 버튼 — 카드 머리줄에 얹히는 보조 버튼이라 작게(요청 2026-08-12) */
+.st-key-dlbtn [data-testid="stButton"] button,
+.st-key-dlbtn [data-testid="stDownloadButton"] button{
+  min-height:0 !important; height:27px !important; padding:0 8px !important;
+  border-radius:7px !important; }
+.st-key-dlbtn [data-testid="stButton"] button p,
+.st-key-dlbtn [data-testid="stDownloadButton"] button p{
+  font-size:11px !important; font-weight:700 !important; letter-spacing:-.01em !important; }
+
 /* 셀렉트박스 = 시안 .minisel (컴팩트·글자 세로중앙) */
 [data-testid="stSelectbox"]{ max-width:240px !important; }
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
@@ -1905,7 +1914,7 @@ with tab_ip:
             #   같은 IP 인데 줄이 흩어져 규모가 안 보였다 → 'IP명' 으로 합칠 수 있게.
             #   기간 구분은 상단 조회 기간이 하므로 합쳐도 헷갈리지 않는다(사용자 확인).
             # 마지막 칸이 내려받기 — 버튼이 크다는 얘기가 있어 폭을 줄였다(1.0 → 0.78)
-            _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.62, 0.78])
+            _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.74, 0.66])
             #   ★기본을 'IP명(회차 합산)' 으로 뒀다(요청) — 평소 보고 싶은 건 IP 규모지
             #     회차별로 쪼개진 줄이 아니다. 회차를 봐야 할 때만 '타이틀' 로 바꾼다.
             _grp = (_q1.segmented_control(
@@ -2000,7 +2009,7 @@ with tab_ip:
                         .sort_values(["IP 매출 합계", "이름", "매출"], ascending=[False, True, False])
                         .reset_index(drop=True))
 
-            with _q3:
+            with _q3, st.container(key="dlbtn"):
                 _dlb, _dlm = "ph_slot_dl_b", "ph_slot_dl_m"
                 _sig = (_KEY, _kw, str(date_range), tuple(sel_countries), tuple(sel_stores))
                 _mm = st.session_state.get(_dlm)
