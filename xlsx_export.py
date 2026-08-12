@@ -1,0 +1,89 @@
+# -*- coding: utf-8 -*-
+"""표 하나를 **엑셀 파일(.xlsx)** 바이트로. 화면 내려받기 버튼 전용.
+
+왜 CSV 가 아니라 xlsx 인가 (2026-08-12)
+    "매출액에 쉼표가 들어가면 좋겠다" 는 요청 때문이다. **CSV 로는 못 한다** —
+    `673,958,779` 처럼 쉼표를 박아 넣으면 값 안에 구분자가 생겨 따옴표로 묶이고,
+    엑셀은 그걸 **글자로 읽는다.** 보기엔 맞는데 합계·피벗이 안 된다.
+    xlsx 는 값은 숫자로 두고 **표시 형식만** `#,##0` 으로 준다 — 보이는 건 쉼표,
+    계산은 그대로. 버튼 이름이 '엑셀 다운로드' 인 것과도 맞다.
+
+받는 사람이 바로 쓰도록 몇 가지를 더 해 둔다 — 머리줄 고정·자동 필터·열 너비.
+"""
+from __future__ import annotations
+
+import io
+
+import pandas as pd
+
+# 열 이름 → 표시 형식. 이름으로 고르므로 새 열이 생겨도 규칙만 맞으면 따라온다.
+_MONEY = ("매출", "IP 매출 합계", "건당 평균", "정산금액", "금액")
+_COUNT = ("건수", "매장수", "회차수", "판매 국가 수")
+_RATE = ("국가 비중(%)", "비중(%)")
+
+_FMT_MONEY = "#,##0"
+_FMT_COUNT = "#,##0"
+_FMT_RATE = "0.0"
+_FMT_DATE = "yyyy-mm-dd"
+
+
+def _fmt_of(col: str, series: pd.Series) -> str | None:
+    if col in _RATE:
+        return _FMT_RATE
+    if col in _MONEY or col in _COUNT:
+        return _FMT_MONEY if col in _MONEY else _FMT_COUNT
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return _FMT_DATE
+    # 날짜가 object(date) 로 들어오는 경우 — 첫 값으로 판단한다
+    if col.endswith("일") or col.endswith("날짜"):
+        return _FMT_DATE
+    return None
+
+
+def _width_of(col: str, series: pd.Series) -> int:
+    """한글은 폭이 넓어 글자 수 그대로 쓰면 좁다 → 한글 1.7칸으로 센다."""
+    def w(v):
+        s = str(v)
+        return sum(1.7 if ord(c) > 0x1100 else 1 for c in s)
+
+    head = w(col)
+    body = max((w(v) for v in series.head(300)), default=0)
+    return int(min(max(head + 2, body + 2, 8), 42))
+
+
+def to_xlsx(df: pd.DataFrame, sheet_name: str = "데이터", note: str = "") -> bytes:
+    """DataFrame → xlsx 바이트. note 를 주면 맨 윗줄에 조건을 한 줄 적는다."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    buf = io.BytesIO()
+    start = 1 if note else 0          # note 한 줄을 비워 두고 표는 그 아래부터
+    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+        df.to_excel(xw, sheet_name=sheet_name[:31], index=False, startrow=start)
+        ws = xw.sheets[sheet_name[:31]]
+        hdr = start + 1               # 머리줄의 엑셀 행 번호(1-base)
+
+        if note:
+            ws.cell(row=1, column=1, value=note).font = Font(size=9, color="6B7488")
+
+        fill = PatternFill("solid", start_color="EEF1F8")
+        for c in range(1, len(df.columns) + 1):
+            cell = ws.cell(row=hdr, column=c)
+            cell.font = Font(bold=True, color="2B3350")
+            cell.fill = fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        for i, col in enumerate(df.columns, start=1):
+            letter = get_column_letter(i)
+            ws.column_dimensions[letter].width = _width_of(col, df[col])
+            fmt = _fmt_of(col, df[col])
+            if not fmt:
+                continue
+            for r in range(hdr + 1, hdr + 1 + len(df)):
+                ws.cell(row=r, column=i).number_format = fmt
+
+        ws.freeze_panes = ws.cell(row=hdr + 1, column=1)      # 머리줄 고정
+        if len(df):
+            ws.auto_filter.ref = (f"A{hdr}:"
+                                  f"{get_column_letter(len(df.columns))}{hdr + len(df)}")
+    return buf.getvalue()

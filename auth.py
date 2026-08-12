@@ -411,9 +411,18 @@ def _add_pending(email: str, team: str = "", note: str = "") -> None:
         _added = True
 
     _mutate_users(_fn)
-    # [제거] 1차 승인자 알림 메일 — 단계마다 보내지 말고 **최종 승인 때 한 통만**
-    #        보내기로 했다(요청, 2026-08-12). 신청은 접속·계정 관리 화면에서 본다.
-    #        되살리려면 여기서 _notify(approver_of(1), ...) 를 부르면 된다.
+    # ★메일은 **행동이 필요한 사람 한 명에게만** 간다. 단계마다 전원에게 뿌리는 게
+    #   아니라, 지금 눌러야 할 사람에게만 한 통이다(1차 → 2차 → 신청자).
+    #   이게 없으면 신청이 들어와도 아무도 모른 채 묻힌다.
+    if _added:                       # 같은 사람이 새로고침할 때마다 메일이 가면 안 된다
+        _notify(approver_of(1), f"[대시보드] 새 가입 요청 — {e}",
+                [f"{e} 님이 대시보드 접속을 요청했어요.",
+                 f"신청한 소속 팀: {t or '(안 고름)'}",
+                 f"메모: {n}" if n else "",
+                 "",
+                 "1차 승인이 필요합니다. 승인하시면 2차 승인자에게 자동으로 넘어가요.",
+                 "둘 다 승인해야 접속할 수 있어요.",
+                 "※ 팀은 신청한 값이에요. 최종 승인 때 그대로 배정되니 확인해 주세요."])
 
 
 def requested_team(email: str) -> str:
@@ -890,8 +899,8 @@ def render_admin_console() -> None:
         _can1, _can2 = can_approve(email, 1), can_approve(email, 2)
         st.caption(f"가입 승인은 **2단계**예요 — 1차 {_cfg.get('stage1', '(미지정)')} → "
                    f"2차 {_cfg.get('stage2', '(미지정)')}. 둘 다 승인해야 접속할 수 있어요. "
-                   "메일은 **최종 승인 때 신청자에게 한 통만** 나가요 — "
-                   "새 신청은 이 화면에서 확인해 주세요.")
+                   "메일은 **지금 눌러야 할 사람에게만** 한 통씩 가요"
+                   "(신청 → 1차 · 1차통과 → 2차 · 최종 → 신청자).")
 
         # ── 1차 대기 ──
         with st.container(border=True):
@@ -1084,7 +1093,12 @@ def _approve_stage1(email: str, role: str, by: str) -> None:
         u.setdefault("stage1", {})[e] = {"role": role, "by": by, "at": now}
 
     _mutate_users(_fn)
-    # [제거] 2차 승인자 알림 메일 — 위와 같은 이유로 뺐다(최종 승인 때 한 통만).
+    _notify(approver_of(2), f"[대시보드] 2차 승인 요청 — {e}",
+            [f"{e} 님의 가입 요청이 1차 승인을 통과했어요.",
+             f"1차 승인: {by}",
+             f"부여 예정 권한: {'편집' if role == 'editor' else '열람'}",
+             "",
+             "2차 승인을 하면 그때부터 접속할 수 있어요."])
 
 
 def _approve(email: str, role: str = "viewer", team: str | None = None) -> None:

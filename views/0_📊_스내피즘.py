@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
 import data_io
 import auth
+import xlsx_export  # 내려받기 → 엑셀(.xlsx)
 import trend_chart
 
 # ══════════════════════════════════════════════════════════════
@@ -1519,7 +1520,8 @@ with tab_cat:
             #   컨테이너라 순서를 건너뛰어 나중에 써 넣을 수 있다 — 버튼이 여기서
             #   눌리는데 그 시점에 fr_all 이 없으면 빈 파일이 나간다(같은 함정을
             #   필터바·구좌별 상세에서 한 번씩 밟았다).
-            _hh, _tt, _dlc = st.columns([3.3, 5.1, 1.6], vertical_alignment="center")
+            # 마지막 칸이 엑셀 다운로드 — 버튼이 크다는 얘기가 있어 폭을 줄였다(1.6 → 1.25)
+            _hh, _tt, _dlc = st.columns([3.3, 5.45, 1.25], vertical_alignment="center")
             with _hh:
                 st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
                             '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
@@ -1579,20 +1581,32 @@ with tab_cat:
                         tuple(sel_prod), tuple(sel_cat), tuple(sel_ip))
                 _mm = st.session_state.get(_dm)
                 _pf = f"{date_range[0]}_{date_range[1]}" if len(date_range) == 2 else "전체기간"
+                _HELP = (
+                    "지금 이 표를 **엑셀 파일(.xlsx)** 로 받아요.\n\n"
+                    "· 한 줄이 **IP × 국가** 라 국가별로 나눠 보거나 피벗을 바로 돌릴 수 있어요\n"
+                    "· 매출·건수는 **쉼표가 찍힌 숫자**로 들어가요(합계·수식 그대로 돼요)\n"
+                    "· 건당 평균 · 국가 비중 · 매장수 · 첫/마지막 거래일도 같이 들어가요\n"
+                    "· 지금 화면의 **구분 · 기간 · 국가 · 매장 · 상품 · IP** 조건이 그대로 반영돼요")
                 if st.session_state.get(_db) is not None and _mm and _mm[1] == _sig:
-                    # ★받고 나면 '내려받기' 로 되돌린다(포토이즘 views/1 과 같음).
+                    # ★받고 나면 '엑셀 다운로드' 로 되돌린다(포토이즘 views/1 과 같음).
                     #   들고 있던 바이트도 같이 버려 메모리를 돌려준다.
                     if auth.download_button(
-                            f"⬇ {_mm[0]:,}줄", st.session_state[_db],
-                            f"snapism_프레임순위_{_pf}.csv", "text/csv",
+                            f"⬇ 받기 · {_mm[0]:,}줄", st.session_state[_db],
+                            f"스내피즘_프레임순위_{_pf}.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="sn_fr_dl_get", use_container_width=True,
-                            page="snapism", rows=_mm[0]):
+                            page="snapism", rows=_mm[0], help=_HELP):
                         st.session_state.pop(_db, None)
                         st.session_state.pop(_dm, None)
                         _frag_rerun()
-                elif st.button("⬇ 내려받기", key="sn_fr_dl_make", use_container_width=True):
+                elif st.button("📗 엑셀 다운로드", key="sn_fr_dl_make",
+                               use_container_width=True, disabled=not _CAN_DL,
+                               help=_HELP if _CAN_DL else
+                               "엑셀 다운로드는 팀장 권한이 있어야 해요."):
                     _d = _fr_export()
-                    st.session_state[_db] = _d.to_csv(index=False).encode("utf-8-sig")
+                    st.session_state[_db] = xlsx_export.to_xlsx(
+                        _d, "프레임 순위",
+                        note=f"스내피즘 프레임(IP) 전체 순위 · {_pf} · 구분 {_tog}")
                     st.session_state[_dm] = (len(_d), _sig)
                     _frag_rerun()
 

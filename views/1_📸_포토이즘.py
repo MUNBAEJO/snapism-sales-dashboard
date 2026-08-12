@@ -23,6 +23,7 @@ from guide_content import render_guide
 import ip_classify  # IP구분/IP명 분류 공용 모듈
 import photoism_rules  # 매출액 가산 규칙(쿠폰·코인 국가)
 import auth
+import xlsx_export  # 내려받기 → 엑셀(.xlsx)
 import trend_chart  # '매출 추이' 카드(두 대시보드 공용)
 
 # ══════════════════════════════════════════════════════════════
@@ -1903,7 +1904,8 @@ with tab_ip:
             # ★한 IP 가 회차마다 다른 타이틀로 갈린다(260711 SM ent · 260721 SM ent …).
             #   같은 IP 인데 줄이 흩어져 규모가 안 보였다 → 'IP명' 으로 합칠 수 있게.
             #   기간 구분은 상단 조회 기간이 하므로 합쳐도 헷갈리지 않는다(사용자 확인).
-            _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.4, 1.0])
+            # 마지막 칸이 내려받기 — 버튼이 크다는 얘기가 있어 폭을 줄였다(1.0 → 0.78)
+            _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.62, 0.78])
             #   ★기본을 'IP명(회차 합산)' 으로 뒀다(요청) — 평소 보고 싶은 건 IP 규모지
             #     회차별로 쪼개진 줄이 아니다. 회차를 봐야 할 때만 '타이틀' 로 바꾼다.
             _grp = (_q1.segmented_control(
@@ -2003,26 +2005,36 @@ with tab_ip:
                 _sig = (_KEY, _kw, str(date_range), tuple(sel_countries), tuple(sel_stores))
                 _mm = st.session_state.get(_dlm)
                 _per = f"{date_range[0]}_{date_range[1]}" if len(date_range) == 2 else "전체기간"
+                _HELP = (
+                    "지금 이 표를 **엑셀 파일(.xlsx)** 로 받아요.\n\n"
+                    "· 한 줄이 **IP × 국가** 라 국가별로 나눠 보거나 피벗을 바로 돌릴 수 있어요\n"
+                    "· 매출·건수는 **쉼표가 찍힌 숫자**로 들어가요(합계·수식 그대로 돼요)\n"
+                    "· 건당 평균 · 국가 비중 · 매장수 · 첫/마지막 거래일도 같이 들어가요\n"
+                    "· 지금 화면의 **묶기 · 검색 · 기간 · 국가 · 매장** 조건이 그대로 반영돼요")
                 if st.session_state.get(_dlb) is not None and _mm and _mm[1] == _sig:
                     # ★받고 나면 '내려받기' 로 되돌린다 — 안 그러면 다 받은 뒤에도
                     #   '⬇ 4,436줄' 인 채로 남아 방금 만든 건지 헷갈린다(요청).
                     #   들고 있던 바이트도 같이 버려서 메모리도 돌려준다.
                     if auth.download_button(
-                            f"⬇ {_mm[0]:,}줄", st.session_state[_dlb],
-                            f"photoism_구좌별상세_{_per}.csv", "text/csv",
+                            f"⬇ 받기 · {_mm[0]:,}줄", st.session_state[_dlb],
+                            f"포토이즘_구좌별상세_{_per}.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="ph_slot_dl_get", use_container_width=True,
-                            page="photoism", rows=_mm[0]):
+                            page="photoism", rows=_mm[0], help=_HELP):
                         st.session_state.pop(_dlb, None)
                         st.session_state.pop(_dlm, None)
                         _frag_rerun()
                 # ★'만들기' 도 같이 막는다. 여기만 열어 두면 한참 만든 뒤에야
                 #   받기 버튼이 비활성인 걸 알게 된다(auth.download_button 이 막는다).
-                elif st.button("⬇ 내려받기", key="ph_slot_dl_make", use_container_width=True,
-                               disabled=not _CAN_DL,
-                               help=None if _CAN_DL else
-                               "데이터 내려받기는 팀장 권한이 있어야 해요."):
+                elif st.button("📗 엑셀 다운로드", key="ph_slot_dl_make",
+                               use_container_width=True, disabled=not _CAN_DL,
+                               help=_HELP if _CAN_DL else
+                               "엑셀 다운로드는 팀장 권한이 있어야 해요."):
                     _d = _slot_export()
-                    st.session_state[_dlb] = _d.to_csv(index=False).encode("utf-8-sig")
+                    st.session_state[_dlb] = xlsx_export.to_xlsx(
+                        _d, "구좌별 상세",
+                        note=f"포토이즘 구좌별 상세 · {_per} · 묶기 {_KEY}"
+                             + (f" · 검색 '{_kw}'" if _kw else ""))
                     st.session_state[_dlm] = (len(_d), _sig)
                     _frag_rerun()
 
