@@ -1110,7 +1110,12 @@ def _filterbar():
         _dl_control(_fb[7])
 
 
-_filterbar()
+# ★필터바는 **자리만 먼저 잡고 나중에 그린다**(2026-08-12, 포토이즘 views/1 과 같음).
+#   내려받기 패널이 `rev`(적용된 필터가 걸린 프레임)를 읽는데, 여기서 바로 그리면
+#   그 값이 아직 없어 "화면을 불러오는 중" 만 나오고 안 바뀐다. 위젯 값은
+#   session_state 에 남아 있어 **위젯을 그리기 전에도 읽을 수 있다.**
+#   (사이엔 화면에 그리는 코드가 없다 — 전부 계산이라 보이는 건 같다.)
+_fbar_slot = st.container()
 
 # ── 적용된 필터 = 현재 위젯 상태 (체크 중엔 본문 안 바뀜) ──
 _dv = st.session_state.get("f_date", [default_start, last_date])
@@ -1152,6 +1157,9 @@ sales = paid_sales(df)          # 실결제(카드·현금) 거래 — KPI '실�
 coupons = coupon_txns(df)       # 전액 쿠폰 결제 거래
 cpn_all = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
 rev = revenue_txns(df)          # ★모든 카드의 공통 기준 (정산금액 = 실결제 + 쿠폰)
+
+with _fbar_slot:          # 자리는 위에 잡아 뒀다 — 화면에는 그대로 맨 위에 나온다
+    _filterbar()
 
 
 # ── 타이틀 판매기간·상태 (프레임 순위표에 표시) ──────────────

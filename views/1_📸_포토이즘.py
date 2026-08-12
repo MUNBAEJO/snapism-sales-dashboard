@@ -1461,7 +1461,13 @@ def _filterbar():
         _dl_control(_fb[6])
 
 
-_filterbar()
+# ★필터바는 **자리만 먼저 잡고 나중에 그린다**(2026-08-12).
+#   내려받기 패널이 `sales`(적용된 필터가 걸린 프레임)를 읽는데, 여기서 바로
+#   그리면 그 값이 아직 없어 "화면을 불러오는 중" 만 나오고 안 바뀐다.
+#   위젯 값은 session_state 에 남아 있어 **위젯을 그리기 전에도 읽을 수 있다** →
+#   값 읽기·집계를 먼저 하고, 다 끝난 뒤 이 자리에 필터바를 그린다.
+#   (사이에 화면에 그리는 코드는 없다 — 전부 계산이라 순서를 바꿔도 보이는 건 같다.)
+_fbar_slot = st.container()
 
 # ── 적용된 필터 = 현재 위젯 상태 (본문 재실행 시 읽음. 체크 중에는 본문 안 바뀜) ──
 _dv = st.session_state.get("ph_f_date", [default_start, last_date])
@@ -1500,6 +1506,9 @@ if len(date_range) == 2:
     df = scope[(scope["날짜"] >= date_range[0]) & (scope["날짜"] <= date_range[1])]
 
 sales = paid_sales(df)
+
+with _fbar_slot:          # 자리는 위에 잡아 뒀다 — 화면에는 그대로 맨 위에 나온다
+    _filterbar()
 
 
 # ── 타이틀 판매기간 (타이틀 순위표에 표시) ────────────────
