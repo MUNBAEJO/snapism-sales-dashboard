@@ -1923,7 +1923,7 @@ with tab_ip:
             # ★한 IP 가 회차마다 다른 타이틀로 갈린다(260711 SM ent · 260721 SM ent …).
             #   같은 IP 인데 줄이 흩어져 규모가 안 보였다 → 'IP명' 으로 합칠 수 있게.
             #   기간 구분은 상단 조회 기간이 하므로 합쳐도 헷갈리지 않는다(사용자 확인).
-            _q1, _q2 = st.columns([1.5, 2.5])
+            _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.4, 1.0])
             #   ★기본을 'IP명(회차 합산)' 으로 뒀다(요청) — 평소 보고 싶은 건 IP 규모지
             #     회차별로 쪼개진 줄이 아니다. 회차를 봐야 할 때만 '타이틀' 로 바꾼다.
             _grp = (_q1.segmented_control(
@@ -1933,8 +1933,10 @@ with tab_ip:
                                  placeholder="🔍 타이틀·IP 이름으로 찾기").strip()
             _KEY = "타이틀" if _grp == "타이틀" else "IP명"
             _gall = ["전체"] + _detail_gubuns + _orig_gubuns
-            _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])
-            # 오리지널 탭이 있으면 경량 집계를 날짜·국가로 걸러 한 번만 로드(매장 필터는 미적용)
+
+            # ★오리지널 집계를 **머리줄보다 먼저** 만든다 — 내려받기가 이걸 읽는데,
+            #   버튼은 머리줄에서 눌리므로 그 시점에 값이 있어야 한다.
+            #   (같은 실수를 필터바 내려받기에서 한 번 했다 — 2026-08-12)
             _od = pd.DataFrame()
             if _orig_gubuns:
                 _od = load_orig()
@@ -1942,6 +1944,63 @@ with tab_ip:
                     _od = _od[(_od["날짜"] >= date_range[0]) & (_od["날짜"] <= date_range[1])]
                 if not _od.empty and sel_countries:
                     _od = _od[_od["국가"].isin(list(sel_countries))]
+
+            def _slot_export():
+                """지금 화면의 구좌별 상세를 **탭 전부 합쳐 한 표로**.
+
+                탭은 st.tabs 라 어느 게 열려 있는지 알 수 없다 → 고르게 하지 않고
+                `구분` 열을 붙여 다 넣는다. 묶기·검색은 그대로 반영한다.
+                """
+                _rs = []
+                for _gg in _detail_gubuns:
+                    _s2 = sales[sales["IP구분"] == _gg]
+                    _t2 = (_s2[(_s2[_KEY] != "") & _s2[_KEY].notna()]
+                           .groupby(_KEY, observed=True)
+                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+                    _t2 = _t2[_t2["매출"] > 0].rename(columns={_KEY: "이름"})
+                    _t2.insert(0, "구분", _gg)
+                    _rs.append(_t2)
+                for _gg in _orig_gubuns:                     # 오리지널은 프레임 단위
+                    _o2 = _od[_od["IP구분"] == _gg] if not _od.empty else _od
+                    if _o2.empty:
+                        continue
+                    _f2 = (_o2.groupby("프레임", observed=True)
+                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+                    _f2 = _f2[(_f2["매출"] > 0) & _f2["프레임"].astype(str).str.strip().ne("")]
+                    _f2 = _f2.rename(columns={"프레임": "이름"})
+                    _f2.insert(0, "구분", _gg)
+                    _rs.append(_f2)
+                if not _rs:
+                    return pd.DataFrame(columns=["구분", "이름", "매출", "건수"])
+                _out = pd.concat(_rs, ignore_index=True)
+                if _kw:
+                    _out = _out[_out["이름"].astype(str).str.contains(_kw, case=False, na=False)]
+                # 판매기간(지라)은 타이틀에만 붙는다 — IP명으로 합치면 회차가 여럿이라 못 적는다
+                if _KEY == "타이틀" and _tstat:
+                    _out["판매기간"] = _out["이름"].map(
+                        lambda n: _period_str((_tstat.get(n) or {}).get("오픈일"),
+                                              (_tstat.get(n) or {}).get("종료일")) or "")
+                _out["매출"] = _out["매출"].round(0).astype("int64")
+                return _out.sort_values(["구분", "매출"], ascending=[True, False]).reset_index(drop=True)
+
+            with _q3:
+                _dlb, _dlm = "ph_slot_dl_b", "ph_slot_dl_m"
+                _sig = (_KEY, _kw, str(date_range), tuple(sel_countries), tuple(sel_stores))
+                _mm = st.session_state.get(_dlm)
+                _per = f"{date_range[0]}_{date_range[1]}" if len(date_range) == 2 else "전체기간"
+                if st.session_state.get(_dlb) is not None and _mm and _mm[1] == _sig:
+                    auth.download_button(
+                        f"⬇ {_mm[0]:,}줄", st.session_state[_dlb],
+                        f"photoism_구좌별상세_{_per}.csv", "text/csv",
+                        key="ph_slot_dl_get", use_container_width=True,
+                        page="photoism", rows=_mm[0])
+                elif st.button("⬇ 내려받기", key="ph_slot_dl_make", use_container_width=True):
+                    _d = _slot_export()
+                    st.session_state[_dlb] = _d.to_csv(index=False).encode("utf-8-sig")
+                    st.session_state[_dlm] = (len(_d), _sig)
+                    st.rerun(scope="fragment")
+
+            _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])
             for _i, _g in enumerate(_gall):
                 with _gtabs[_i]:
                     if _g in _orig_gubuns:
