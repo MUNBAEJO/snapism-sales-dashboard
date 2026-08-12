@@ -301,7 +301,7 @@ def can_access(email: str | None) -> bool:
     return e in _load_users()["approved"]
 
 
-def _notify(to: str, subject: str, lines: list[str]) -> None:
+def _notify(to: str, subject: str, lines: list[str], cta: str = "approve") -> None:
     """승인 흐름 알림 메일. **실패해도 절대 화면을 죽이지 않는다.**
 
     ★로그인 도중에 불리므로 별도 스레드로 보낸다. Gmail SMTP 가 1~2초 걸리는데
@@ -322,10 +322,17 @@ def _notify(to: str, subject: str, lines: list[str]) -> None:
             if not ok:
                 return
             url = (approval_cfg().get("dashboard_url") or "").strip()
-            body = list(lines)
+            body = [ln for ln in lines]
             body.append("")
-            body.append(f"승인하러 가기: {url}" if url
-                        else "대시보드 → 🔐 접속·계정 관리 → 계정 승인 에서 처리해 주세요.")
+            # ★받는 사람에 따라 마지막 줄이 달라야 한다. 예전엔 전부 '승인하러 가기'
+            #   였는데, **승인 완료 메일을 받는 신청자에게도** 그게 붙어서
+            #   "접속·계정 관리에서 처리해 주세요" 라는, 그 사람은 못 하는 안내가 갔다.
+            if cta == "open":                       # 신청자에게 가는 승인 완료 메일
+                body.append(f"들어가기: {url}" if url
+                            else "대시보드 주소로 접속해 구글 계정으로 로그인해 주세요.")
+            else:                                   # 승인자에게 가는 요청 메일
+                body.append(f"승인하러 가기: {url}" if url
+                            else "대시보드 → 🔐 접속·계정 관리 → 계정 승인 에서 처리해 주세요.")
             body.append("")
             body.append("— CMS 매출 대시보드")
             msg = EmailMessage()
@@ -1056,7 +1063,8 @@ def _approve(email: str, role: str = "viewer", team: str | None = None) -> None:
              f"권한: {'편집' if role == 'editor' else '열람'}",
              f"소속 팀: {_set}" if _set else "",
              "",
-             "이제 구글 계정으로 로그인하면 바로 쓸 수 있어요."])
+             "이제 구글 계정으로 로그인하면 바로 쓸 수 있어요."],
+            cta="open")     # 신청자에게 가는 메일 — '승인하러 가기' 가 붙으면 안 된다
 
 
 def _reject(email: str) -> None:
