@@ -1579,9 +1579,14 @@ with tab_cat:
                 _cs = [c for c in ["구분", "이름", "판매기간", "판매 국가 수", "IP 매출 합계",
                                    "국가", "매출", "국가 비중(%)", "건수", "건당 평균",
                                    "매장수", "첫거래일", "마지막거래일"] if c in _d.columns]
-                return (_d[_cs]
-                        .sort_values(["IP 매출 합계", "이름", "매출"], ascending=[False, True, False])
-                        .reset_index(drop=True))
+                _d = (_d[_cs]
+                      .sort_values(["IP 매출 합계", "이름", "매출"], ascending=[False, True, False])
+                      .reset_index(drop=True))
+                # 머리줄에 단위를 박는다 — 받은 파일만 보고도 원인지 건인지 알게.
+                return _d.rename(columns={
+                    "IP 매출 합계": "IP 매출 합계(원)", "매출": "매출(원)",
+                    "건당 평균": "건당 평균(원)", "건수": "건수(건)",
+                    "매장수": "매장수(개)", "판매 국가 수": "판매 국가 수(개국)"})
 
             with _dlc, st.container(key="dlbtn"):
                 _db, _dm = "sn_fr_dl_b", "sn_fr_dl_m"
@@ -1613,8 +1618,17 @@ with tab_cat:
                                "엑셀 다운로드는 팀장 권한이 있어야 해요."):
                     _d = _fr_export()
                     st.session_state[_db] = xlsx_export.to_xlsx(
-                        _d, "프레임 순위",
-                        note=f"스내피즘 프레임(IP) 전체 순위 · {_pf} · 구분 {_tog}")
+                        _d, "프레임 순위", note=[
+                            "스내피즘 · 프레임(IP) 전체 순위  |  조회기간 "
+                            + (f"{date_range[0]} ~ {date_range[1]}" if len(date_range) == 2
+                               else "전체")
+                            + f"  |  구분 {_tog}"
+                            + (f"  |  국가 {', '.join(sel_country)}" if sel_country else "")
+                            + (f"  |  매장 {len(sel_store)}곳 선택" if sel_store else ""),
+                            "금액 단위: 원(KRW) — 현지 통화 매출을 대시보드 환율표로 "
+                            "원화 환산한 값이에요(정산서의 기준일 환율과 다를 수 있어요). "
+                            "매출 = 정산금액(실결제 + 쿠폰) · 취소 제외.",
+                        ])
                     st.session_state[_dm] = (len(_d), _sig)
                     _frag_rerun()
 

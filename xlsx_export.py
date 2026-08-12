@@ -27,15 +27,25 @@ _FMT_RATE = "0.0"
 _FMT_DATE = "yyyy-mm-dd"
 
 
+def _base(col: str) -> str:
+    """머리줄에 붙인 단위를 떼고 본 이름만. `매출(원)` → `매출`.
+    ★단위를 헤더에 넣기로 하면서(2026-08-12) 형식 매칭이 통째로 깨질 뻔했다."""
+    i = col.find("(")
+    return col[:i].strip() if i > 0 else col.strip()
+
+
 def _fmt_of(col: str, series: pd.Series) -> str | None:
-    if col in _RATE:
+    c = _base(col)
+    if c in (_base(x) for x in _RATE):
         return _FMT_RATE
-    if col in _MONEY or col in _COUNT:
-        return _FMT_MONEY if col in _MONEY else _FMT_COUNT
+    if c in _MONEY:
+        return _FMT_MONEY
+    if c in _COUNT:
+        return _FMT_COUNT
     if pd.api.types.is_datetime64_any_dtype(series):
         return _FMT_DATE
-    # 날짜가 object(date) 로 들어오는 경우 — 첫 값으로 판단한다
-    if col.endswith("일") or col.endswith("날짜"):
+    # 날짜가 object(date) 로 들어오는 경우 — 이름으로 판단한다
+    if c.endswith("일") or c.endswith("날짜"):
         return _FMT_DATE
     return None
 
@@ -51,20 +61,27 @@ def _width_of(col: str, series: pd.Series) -> int:
     return int(min(max(head + 2, body + 2, 8), 42))
 
 
-def to_xlsx(df: pd.DataFrame, sheet_name: str = "데이터", note: str = "") -> bytes:
-    """DataFrame → xlsx 바이트. note 를 주면 맨 윗줄에 조건을 한 줄 적는다."""
+def to_xlsx(df: pd.DataFrame, sheet_name: str = "데이터", note="") -> bytes:
+    """DataFrame → xlsx 바이트.
+
+    note 는 문자열 하나 또는 여러 줄(리스트). 표 위에 **조건과 기준**을 적는다 —
+    받은 파일만 보고도 "이 숫자가 뭘 어떻게 센 건지" 알 수 있어야 한다.
+    """
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
+    notes = [n for n in ([note] if isinstance(note, str) else list(note or [])) if n]
     buf = io.BytesIO()
-    start = 1 if note else 0          # note 한 줄을 비워 두고 표는 그 아래부터
+    start = len(notes)                # 안내줄 아래부터 표
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         df.to_excel(xw, sheet_name=sheet_name[:31], index=False, startrow=start)
         ws = xw.sheets[sheet_name[:31]]
         hdr = start + 1               # 머리줄의 엑셀 행 번호(1-base)
 
-        if note:
-            ws.cell(row=1, column=1, value=note).font = Font(size=9, color="6B7488")
+        for r, n in enumerate(notes, start=1):
+            c = ws.cell(row=r, column=1, value=n)
+            c.font = Font(size=9, bold=(r == 1),
+                          color="2B3350" if r == 1 else "6B7488")
 
         fill = PatternFill("solid", start_color="EEF1F8")
         for c in range(1, len(df.columns) + 1):
