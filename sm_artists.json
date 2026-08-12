@@ -12,7 +12,8 @@
     {
       "name": "NCT WISH",
       "kws": [
-        "nct wish"
+        "nct wish",
+        "wishberry"
       ],
       "countries": null,
       "members": {
@@ -298,6 +299,36 @@
         "예리": [
           "예리",
           "yeri"
+        ]
+      }
+    },
+    {
+      "name": "WayV",
+      "kws": [
+        "wayv",
+        "웨이션브이"
+      ],
+      "countries": null,
+      "members": {
+        "쿤": [
+          "쿤",
+          "kun"
+        ],
+        "텐": [
+          "텐",
+          "ten"
+        ],
+        "샤오쥔": [
+          "샤오쥔",
+          "xiaojun"
+        ],
+        "헨드리": [
+          "헨드리",
+          "hendery"
+        ],
+        "양양": [
+          "양양",
+          "yangyang"
         ]
       }
     }
