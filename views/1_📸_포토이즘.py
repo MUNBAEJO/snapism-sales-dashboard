@@ -1240,7 +1240,8 @@ def _period_str(o, e):
     return f'{_f(o) or "?"} ~ {_f(e) or "진행중"}'
 
 
-def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None):
+def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None,
+               nested_key=None):
     """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개 + 나머지 접기.
     status_map={이름:{오픈일,종료일,...}} 를 주면 **판매기간(지라 오픈~종료)** 칸이 붙는다.
     (상태 배지 신규/확인필요/판매중/종료 는 2026-07-28 제거 — 스내피즘과 동일 기준.)"""
@@ -1289,7 +1290,17 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None)
     if collapse_after and len(d) > collapse_after:
         top_d, rest_d = d.iloc[:collapse_after], d.iloc[collapse_after:]
         st.markdown(f'<div class="ntbl">{head}{_rows(top_d)}</div>', unsafe_allow_html=True)
-        with st.expander(f"나머지 {len(rest_d):,}개 더보기  ·  {collapse_after + 1}~{len(d):,}위"):
+        _lab = f"나머지 {len(rest_d):,}개 더보기  ·  {collapse_after + 1}~{len(d):,}위"
+        # ★이미 expander 안이면 expander 를 또 열 수 없다(Streamlit 이 막는다).
+        #   그런 자리에선 nested_key 를 주고 체크박스로 편다.
+        if nested_key:
+            _open = st.checkbox(_lab, key=nested_key)
+        else:
+            _open = None
+        if _open is None:
+            with st.expander(_lab):
+                st.markdown(f'<div class="ntbl">{head}{_rows(rest_d)}</div>', unsafe_allow_html=True)
+        elif _open:
             st.markdown(f'<div class="ntbl">{head}{_rows(rest_d)}</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="ntbl">{head}{_rows(d)}</div>', unsafe_allow_html=True)
@@ -1986,8 +1997,11 @@ with tab_ip:
                                     st.caption(f"프레임 {len(_fr):,}개 · 매출 "
                                                f"{fmt_krw(int(_fr['매출'].sum()))} "
                                                "· 실결제 기준(쿠폰·코인 제외)")
+                                    # ★여긴 '프레임별로 보기' expander 안이다 →
+                                    #   더보기를 체크박스로(중첩 expander 금지).
                                     rank_table(_fr.rename(columns={"프레임": "_n"}),
-                                               "_n", collapse_after=10)
+                                               "_n", collapse_after=10,
+                                               nested_key=f"ph_fr_more_{_g}")
         helpbox("""
 **구좌별 상세**
 - **묶기 `타이틀` / `IP명(회차 합산)`** — 같은 IP가 회차마다 다른 타이틀로 갈려요
