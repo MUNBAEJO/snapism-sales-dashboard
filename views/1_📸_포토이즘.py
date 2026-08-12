@@ -23,6 +23,7 @@ from guide_content import render_guide
 import ip_classify  # IP구분/IP명 분류 공용 모듈
 import photoism_rules  # 매출액 가산 규칙(쿠폰·코인 국가)
 import auth
+import data_export  # 필터바 '⬇ 내려받기'(두 대시보드 공용)
 import trend_chart  # '매출 추이' 카드(두 대시보드 공용)
 
 # ══════════════════════════════════════════════════════════════
@@ -1388,13 +1389,48 @@ def cbfilter(col, label, options, key, fmt=None):
     return _sel()
 
 
+# ── 내려받기 (필터바 오른쪽 끝) ───────────────────────────
+# 예전엔 '시간대·데이터' 탭 안에 있었는데 그 탭을 감추면서 아무도 못 받게 됐다.
+# 조건을 고르는 줄 끝에 두면 "지금 보고 있는 것을 받는다"가 그대로 읽힌다.
+# ★안의 함수들은 `sales` 를 **호출 시점에** 전역에서 읽는다 — 필터바는 본문보다
+#   먼저 그려져 인자로 받을 수 없지만, 실제로 만드는 건 버튼을 누른 뒤(= 본문이
+#   한 번 돈 뒤)라 그때는 항상 '적용된 필터'의 프레임이 들어 있다.
+_DL_RAW_COLS = ["날짜", "국가", "브랜드", "IP구분", "구좌", "IP명", "타이틀", "타이틀명",
+                "매장 이름", "결제 단위", "건수", "최종 결제 금액", "쿠폰 할인 금액",
+                "서비스코인", "KRW환산금액", "매출액"]
+
+
+def _dl_control(slot):
+    def _b():
+        s = globals().get("sales")
+        if s is None:
+            raise ValueError("아직 화면이 준비되지 않았어요. 잠시 뒤 다시 눌러 주세요.")
+        return s
+
+    def _a(keys, by_date=False):
+        return lambda: data_export.agg(_b(), keys, money="매출액", count="건수", by_date=by_date)
+
+    _ds = {
+        "일자별": ("일자별", _a(["날짜"], by_date=True)),
+        "국가별": ("국가별", _a(["국가"])),
+        "매장별": ("매장별", _a(["국가", "매장 이름"])),
+        "타이틀별": ("타이틀별", _a(["IP구분", "IP명", "타이틀"])),
+        "구좌타입별": ("구좌타입별", _a(["구좌", "IP구분"])),
+        "전체 데이터(집계 원본)": ("전체", lambda: data_export.raw(_b(), _DL_RAW_COLS)),
+    }
+    _dv = list(st.session_state.get("ph_f_date") or [])
+    _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
+    data_export.control(slot, page="photoism", prefix=f"photoism_{_sfx}", datasets=_ds,
+                        note="**✓ 적용된 필터** 기준이에요 · 취소 반영 · 금액은 원(KRW).")
+
+
 # ── 필터바를 @st.fragment 로 격리 → 체크박스 조작은 이 조각만 가볍게 재실행되고,
 #    무거운 본문(탭·차트)은 건드리지 않는다. '적용' 버튼을 눌러야 본문이 갱신된다.
 @st.fragment
 def _filterbar():
     with st.container(border=True, key="scard-filter"):
         # 필터는 왼쪽으로 모아 컴팩트하게(마지막은 빈 스페이서)
-        _fb = st.columns([0.92, 0.8, 0.8, 0.8, 0.86, 0.86, 0.5, 2.5], gap="small")
+        _fb = st.columns([0.92, 0.8, 0.8, 0.8, 0.86, 0.86, 0.5, 0.78, 1.72], gap="small")
         with _fb[0]:
             st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
             st.date_input("기간", value=[default_start, last_date],
@@ -1418,6 +1454,7 @@ def _filterbar():
             st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
             if st.button("✓ 적용", key="ph_f_apply", use_container_width=True, type="primary"):
                 st.rerun()   # scope 기본=app → 본문(탭·차트) 한 번에 갱신
+        _dl_control(_fb[7])
 
 
 _filterbar()

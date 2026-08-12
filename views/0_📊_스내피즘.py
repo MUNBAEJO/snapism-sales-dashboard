@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
 import data_io
 import auth
+import data_export  # 필터바 '⬇ 내려받기'(두 대시보드 공용)
 import trend_chart
 
 # ══════════════════════════════════════════════════════════════
@@ -1051,6 +1052,42 @@ def cbfilter(col, label, options, key):
     return _sel()
 
 
+# ── 내려받기 (필터바 오른쪽 끝) ───────────────────────────
+# 포토이즘 views/1 과 같은 구조·같은 자리. ★안의 함수들은 `rev`(= revenue_txns, 이
+#   화면 모든 카드의 공통 기준)를 **호출 시점에** 전역에서 읽는다 — 필터바는 본문보다
+#   먼저 그려지지만 실제로 만드는 건 버튼을 누른 뒤라 그때는 값이 들어 있다.
+# 승인번호는 정산 시트와 맞춰 볼 때 실제로 쓰인다(거래 한 건을 특정하는 유일한 키).
+_DL_RAW_COLS = ["날짜", "결제일시", "국가", "매장 이름", "카테고리", "프레임 이름",
+                "상품 카테고리", "상품 이름", "상품 단가", "쿠폰 할인 금액",
+                "최종 결제 금액", "결제 단위", "KRW환산금액", "쿠폰KRW", "정산금액",
+                "결제 수단", "단말기번호", "승인번호"]
+
+
+def _dl_control(slot):
+    def _b():
+        r = globals().get("rev")
+        if r is None:
+            raise ValueError("아직 화면이 준비되지 않았어요. 잠시 뒤 다시 눌러 주세요.")
+        return r
+
+    def _a(keys, by_date=False):
+        # 거래 단위라 '건수' 열이 따로 없다 → 행 수가 곧 건수.
+        return lambda: data_export.agg(_b(), keys, money="정산금액", by_date=by_date)
+
+    _ds = {
+        "일자별": ("일자별", _a(["날짜"], by_date=True)),
+        "국가별": ("국가별", _a(["국가"])),
+        "매장별": ("매장별", _a(["국가", "매장 이름"])),
+        "IP(프레임)별": ("IP별", _a(["카테고리", "프레임 이름"])),
+        "상품별": ("상품별", _a(["상품 카테고리", "상품 이름"])),
+        "전체 데이터(거래 단위)": ("전체", lambda: data_export.raw(_b(), _DL_RAW_COLS)),
+    }
+    _dv = list(st.session_state.get("f_date") or [])
+    _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
+    data_export.control(slot, page="snapism", prefix=f"snapism_{_sfx}", datasets=_ds,
+                        note="**✓ 적용된 필터** 기준이에요 · 취소 제외 · 정산금액(실결제+쿠폰).")
+
+
 # ── 필터바를 @st.fragment 로 격리 → 체크는 이 조각만 가볍게 재실행, '적용'에서 본문 갱신 ──
 default_start = max(last_date - timedelta(days=29), first_date)
 
@@ -1059,7 +1096,7 @@ default_start = max(last_date - timedelta(days=29), first_date)
 def _filterbar():
     with st.container(border=True, key="scard-filter"):
         # 필터(5개)는 폭을 넉넉히 채우고 오른쪽 스페이서는 작게(포토이즘 톤)
-        _fb = st.columns([1.0, 0.9, 0.9, 0.9, 0.95, 0.9, 0.5, 1.05], gap="small")
+        _fb = st.columns([1.0, 0.9, 0.9, 0.9, 0.95, 0.9, 0.5, 0.8, 0.25], gap="small")
         with _fb[0]:
             st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
             st.date_input("기간", value=[default_start, last_date],
@@ -1078,6 +1115,7 @@ def _filterbar():
             st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
             if st.button("✓ 적용", key="f_apply", use_container_width=True, type="primary"):
                 st.rerun()
+        _dl_control(_fb[7])
 
 
 _filterbar()
