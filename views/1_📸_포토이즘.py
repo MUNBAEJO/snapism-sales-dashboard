@@ -706,6 +706,50 @@ def load_orig():
     return _load_orig(_file_mtime(ORIG_FILE), _file_mtime(CONFIG_FILE))
 
 
+# ── 타이틀 하나의 프레임별 매출 (원본 on-demand) ─────────────────────────
+# ★집계(agg)에는 프레임이 없다 — 넣으면 그룹 수가 폭증해 파일이 감당이 안 된다.
+#   그래서 프레임을 볼 땐 **고른 타이틀만** 원본 parquet 에서 캔다. 범위가 좁아
+#   1,385만 행을 훑어도 0.5초쯤이고, 펼칠 때만 부르니 평소엔 부담이 0이다.
+@st.cache_data(ttl=300, max_entries=16, show_spinner="프레임을 세는 중이에요…")
+def load_frames(raw_titles, start_date, end_date, countries=(), stores=(), brands=()):
+    if not raw_titles or not PARQUET_FILE.exists():
+        return pd.DataFrame()
+    try:
+        import duckdb
+    except Exception:
+        return pd.DataFrame()
+
+    def _q(vals):
+        return ",".join("'" + str(v).replace("'", "''") + "'" for v in vals)
+
+    where = [f"\"타이틀명\" IN ({_q(raw_titles)})",
+             f"TRY_CAST(\"날짜\" AS DATE) BETWEEN DATE '{start_date}' AND DATE '{end_date}'",
+             "LOWER(CAST(\"취소 여부\" AS VARCHAR)) NOT IN ('true','1','yes')"]
+    for col, vals in (('"국가"', countries), ('"매장 이름"', stores), ('"브랜드"', brands)):
+        if vals:
+            where.append(f"CAST({col} AS VARCHAR) IN ({_q(vals)})")
+    con = duckdb.connect()
+    try:
+        con.execute("PRAGMA memory_limit='512MB'")
+        con.execute("PRAGMA threads=2")
+    except Exception:
+        pass
+    try:
+        d = con.execute(f"""
+            SELECT COALESCE(NULLIF(TRIM(CAST("프레임 이름" AS VARCHAR)), ''), '(이름 없음)') AS "프레임",
+                   CAST(SUM(TRY_CAST("최종 결제 금액" AS DOUBLE)) AS BIGINT) AS "매출",
+                   CAST(COUNT(*) AS BIGINT) AS "건수"
+            FROM read_parquet('{str(PARQUET_FILE).replace(chr(92), "/")}')
+            WHERE {" AND ".join(where)}
+            GROUP BY 1 ORDER BY "매출" DESC
+        """).df()
+    except Exception:
+        d = pd.DataFrame()
+    finally:
+        con.close()
+    return d[d["매출"] > 0] if not d.empty else d
+
+
 # ── 장비(키오스크) ─────────────────────────────────────────────
 # 대당 매출의 분모. 장비관리 CMS 에는 설치일 컬럼이 없어 기기 S/N 앞 6자리(YYMMDD)를
 # 설치일로 쓴다(device_ingest.py). 철거일은 아예 없고 '중지' 여부만 있다 — 그래서
@@ -1818,8 +1862,23 @@ with tab_ip:
     _ORIG_GUBUNS = ("오리지널(포토이즘)", "오리지널(기본)")
     _orig_gubuns = [g for g in present if g in _ORIG_GUBUNS]
     _detail_gubuns = [g for g in present if g not in _ORIG_GUBUNS]
-    if _detail_gubuns or _orig_gubuns:
+    # ★위젯(묶기·검색·프레임)을 탭 안에 두므로 **프래그먼트로 격리**한다.
+    #   안 그러면 조작할 때마다 전체가 재실행돼 st.tabs 선택이 첫 탭으로 튕긴다.
+    @st.fragment
+    def _slot_detail():
+      if _detail_gubuns or _orig_gubuns:
         with card("🎬 구좌별 상세 <span class='muted'>(전체·구좌별 → 타이틀/프레임별 매출)</span>"):
+            # ── 묶기 · 검색 ────────────────────────────────────────────
+            # ★한 IP 가 회차마다 다른 타이틀로 갈린다(260711 SM ent · 260721 SM ent …).
+            #   같은 IP 인데 줄이 흩어져 규모가 안 보였다 → 'IP명' 으로 합칠 수 있게.
+            #   기간 구분은 상단 조회 기간이 하므로 합쳐도 헷갈리지 않는다(사용자 확인).
+            _q1, _q2 = st.columns([1.5, 2.5])
+            _grp = (_q1.segmented_control(
+                "묶기", ["타이틀", "IP명(회차 합산)"], default="타이틀",
+                key="ph_slot_grp", label_visibility="collapsed") or "타이틀")
+            _kw = _q2.text_input("검색", key="ph_slot_q", label_visibility="collapsed",
+                                 placeholder="🔍 타이틀·IP 이름으로 찾기").strip()
+            _KEY = "타이틀" if _grp == "타이틀" else "IP명"
             _gall = ["전체"] + _detail_gubuns + _orig_gubuns
             _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])
             # 오리지널 탭이 있으면 경량 집계를 날짜·국가로 걸러 한 번만 로드(매장 필터는 미적용)
@@ -1849,20 +1908,60 @@ with tab_ip:
                             rank_table(_f.rename(columns={"프레임": "_n"}), "_n", collapse_after=10)
                     else:
                         _sub = sales if _g == "전체" else sales[sales["IP구분"] == _g]
-                        _t = (_sub[(_sub["타이틀"] != "") & _sub["타이틀"].notna()]
-                              .groupby("타이틀", observed=True)
+                        _t = (_sub[(_sub[_KEY] != "") & _sub[_KEY].notna()]
+                              .groupby(_KEY, observed=True)
                               .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
                         _t = _t[_t["매출"] > 0]
+                        if _kw:
+                            _t = _t[_t[_KEY].astype(str).str.contains(_kw, case=False, na=False)]
                         statrow([("매출", fmt_krw(int(_sub["매출액"].sum()))),
                                  ("건수", f"{tx_count(_sub):,}건"),
-                                 ("타이틀 수", f"{len(_t):,}개")])
+                                 (f"{_KEY} 수", f"{len(_t):,}개")])
                         if _t.empty:
-                            st.info("해당 조건에 맞는 데이터가 없어요. 날짜·국가·매장 필터를 넓혀 보세요.")
+                            st.info("해당 조건에 맞는 게 없어요. 검색어나 날짜·국가·매장 필터를 바꿔 보세요.")
                         else:
-                            rank_table(_t, "타이틀", collapse_after=10, status_map=_tstat or None)
+                            # 판매기간(지라)은 **타이틀**에만 붙는다 — IP명으로 합치면
+                            # 회차가 여럿이라 한 기간으로 못 적는다.
+                            rank_table(_t, _KEY, collapse_after=10,
+                                       status_map=(_tstat or None) if _KEY == "타이틀" else None)
+                            # ── 프레임별로 보기 ─────────────────────────
+                            # 집계엔 프레임이 없다 → 고른 것만 원본에서 캔다.
+                            _opt = _t.sort_values("매출", ascending=False)[_KEY].astype(str).tolist()
+                            with st.expander(f"🖼 프레임별로 보기 ({_KEY} 하나를 골라요)"):
+                                _pk = st.selectbox(
+                                    _KEY, _opt[:200], key=f"ph_fr_pick_{_g}",
+                                    label_visibility="collapsed")
+                                _raws = sorted(set(
+                                    _sub.loc[_sub[_KEY].astype(str) == _pk, "타이틀명"]
+                                    .dropna().astype(str)))
+                                if len(_raws) > 1:
+                                    st.caption("합쳐진 타이틀 " + str(len(_raws)) + "개 — "
+                                               + " · ".join(_raws[:6])
+                                               + (" 외" if len(_raws) > 6 else ""))
+                                _fr = (load_frames(tuple(_raws), date_range[0], date_range[1],
+                                                   tuple(sel_countries), tuple(sel_stores),
+                                                   tuple(sel_brands))
+                                       if _raws and len(date_range) == 2 else pd.DataFrame())
+                                if _fr.empty:
+                                    st.info("이 조건에선 프레임 데이터가 없어요.")
+                                else:
+                                    st.caption(f"프레임 {len(_fr):,}개 · 매출 "
+                                               f"{fmt_krw(int(_fr['매출'].sum()))} "
+                                               "· 실결제 기준(쿠폰·코인 제외)")
+                                    rank_table(_fr.rename(columns={"프레임": "_n"}),
+                                               "_n", collapse_after=10)
         helpbox("""
 **구좌별 상세**
+- **묶기 `타이틀` / `IP명(회차 합산)`** — 같은 IP가 회차마다 다른 타이틀로 갈려요
+  (`260711 SM ent` · `260721 SM ent` …). `IP명` 으로 바꾸면 한 줄로 합쳐져 규모가 보여요.
+  **2026-06 이후 기준 132개 IP · 326개 타이틀이 합쳐져요**(SM ent 11회차 · 코르티스 6회차 …).
+  기간 구분은 **위 조회 기간**이 하므로 합쳐도 섞이지 않아요.
+- **🔍 검색** — 타이틀·IP 이름 일부로 걸러요.
+- **🖼 프레임별로 보기** — 고른 타이틀(또는 IP)의 **프레임별 순위**. 집계엔 프레임이 없어서
+  (넣으면 그룹이 폭증해요) **펼칠 때만** 원본에서 캐요 — 그래서 평소엔 안 느려요.
+  ※ 이 표만 **실결제 기준**이에요(쿠폰·코인 가산 전). 위 순위와 합계가 조금 달라요.
 - **전체 / 아티스트 / 캐릭터 / PICK / 렌탈** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**.
+  - `IP명` 으로 묶으면 **판매기간은 안 붙어요** — 회차가 여럿이라 한 기간으로 못 적어요.
   - 오리지널을 뺀 나머지 구분은 자동으로 탭이 생겨요 — `IP_GUBUN_SHOWN` 만 고치면 돼요.
 - **오리지널(포토이즘) / 오리지널(기본)** = `프레임`별 매출액·건수 순위(경량 집계). 오리지널은 타이틀이 아니라 프레임 단위라 따로 봐요.
   - ⚠️ 오리지널 탭은 **매장 필터가 적용되지 않아요**(날짜·국가만). 다른 탭은 필터바 전체 반영.
@@ -1874,6 +1973,8 @@ with tab_ip:
   (매칭은 타이틀명 정규화 + `ip_aliases.json` 별칭, 같은 IP가 양 브랜드에 있으면 포토이즘 티켓 우선).
 - (이전의 신규/확인필요/판매중/종료 등 **상태 배지는 뺐어요.**)
 """)
+
+    _slot_detail()
 
     # 포3.3: '🎞 타이틀 전체 순위' 카드 제거 — 위 '구분별 타이틀 상세'의 '전체' 탭이 대체.
     #        (상태 배지·필터도 함께 제거, 판매기간은 지라 오픈~종료로 상세 탭에 표기.)
