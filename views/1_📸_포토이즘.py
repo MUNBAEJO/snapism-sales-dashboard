@@ -1525,6 +1525,8 @@ except Exception:
 #  ※ expander 중첩 불가 → helpbox 는 다른 expander(더보기·데이터) 바깥에 둔다.
 # ══════════════════════════════════════════════════════════════
 _is_owner = auth.is_owner(getattr(getattr(st, "user", None), "email", None))
+# 데이터 내려받기 권한(소유자·팀장·에디터). 버튼을 숨기지 않고 **비활성**으로 둔다.
+_CAN_DL = auth.can_download(getattr(getattr(st, "user", None), "email", None))
 if _is_owner:
     # 관리자 전용 도구를 하나의 카드로 묶음(계산설명 토글 + 실시간 환율). 아래 환율 expander도 여기에 넣음.
     _sb_admin = st.sidebar.container(border=True, key="sb-admin")
@@ -2013,7 +2015,12 @@ with tab_ip:
                         st.session_state.pop(_dlb, None)
                         st.session_state.pop(_dlm, None)
                         _frag_rerun()
-                elif st.button("⬇ 내려받기", key="ph_slot_dl_make", use_container_width=True):
+                # ★'만들기' 도 같이 막는다. 여기만 열어 두면 한참 만든 뒤에야
+                #   받기 버튼이 비활성인 걸 알게 된다(auth.download_button 이 막는다).
+                elif st.button("⬇ 내려받기", key="ph_slot_dl_make", use_container_width=True,
+                               disabled=not _CAN_DL,
+                               help=None if _CAN_DL else
+                               "데이터 내려받기는 팀장 권한이 있어야 해요."):
                     _d = _slot_export()
                     st.session_state[_dlb] = _d.to_csv(index=False).encode("utf-8-sig")
                     st.session_state[_dlm] = (len(_d), _sig)

@@ -124,8 +124,14 @@ def _normalize_users(v: dict) -> dict:
                      "note": str(meta.get("note") or "")[:200],
                      "at": str(meta.get("at") or "")}
 
+    # 팀장(2026-08-12) — **데이터 내려받기**를 할 수 있는 사람. 역할·팀과 별개 축이다.
+    # 승인 계정만 남긴다(해제된 계정이 목록에 남아 유령 권한이 되면 안 된다).
+    leads = sorted({str(e).strip().lower() for e in (v.get("leaders") or [])
+                    if str(e).strip().lower() in ap})
+
     return {"approved": ap, "pending": pend, "stage1": st1,
-            "teams": teams, "member_team": memb, "pending_meta": pmeta}
+            "teams": teams, "member_team": memb, "pending_meta": pmeta,
+            "leaders": leads}
 
 
 def _load_users() -> dict:
@@ -133,7 +139,7 @@ def _load_users() -> dict:
         return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
     except FileNotFoundError:
         return {"approved": {}, "pending": [], "stage1": {}, "teams": {},
-                "member_team": {}, "pending_meta": {}}
+                "member_team": {}, "pending_meta": {}, "leaders": []}
     except Exception:
         # 파싱 실패(쓰기 도중 등). 원자적 저장으로 거의 없지만, 만약 발생하면 짧게 재시도해
         # 반쯤 쓰인 파일 때문에 승인된 사용자가 '승인 대기'로 튕기는 사고를 막는다.
@@ -143,11 +149,11 @@ def _load_users() -> dict:
                 return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
             except Exception:
                 continue
-        # ★위 FileNotFoundError 분기와 **같은 6키**여야 한다. teams/member_team 을
+        # ★위 FileNotFoundError 분기와 **같은 7키**여야 한다. teams/member_team 을
         #   빼면 list_teams()·allowed_pages() 가 u["teams"] 로 직접 인덱싱하다
         #   KeyError → 로그인 전원이 에러 화면이 된다(2026-07-31 확인).
         return {"approved": {}, "pending": [], "stage1": {}, "teams": {},
-                "member_team": {}, "pending_meta": {}}
+                "member_team": {}, "pending_meta": {}, "leaders": []}
 
 
 def _save_users(u: dict) -> None:
@@ -217,6 +223,37 @@ def get_role(email: str | None) -> str | None:
 def can_edit(email: str | None) -> bool:
     """편집 권한(목표 수정·RS율 등) — owner·editor 만."""
     return get_role(email) in ("owner", "editor")
+
+
+def is_leader(email: str | None) -> bool:
+    """팀장으로 지정된 계정인가. 소유자는 항상 참."""
+    if not email:
+        return False
+    e = email.strip().lower()
+    return is_owner(e) or e in _load_users()["leaders"]
+
+
+def can_download(email: str | None) -> bool:
+    """**데이터 내려받기** 권한 — 소유자 · 팀장 · 에디터.
+
+    ★2026-08-12 신설(상급자 요청: "팀장까지만"). 에디터를 같이 넣은 이유 —
+      정산 담당이 IP정산서 PDF 를 못 받으면 정산 업무가 멈춘다. 에디터는 이미
+      승인자가 콕 집어 준 소수라 '아무나'가 아니다.
+    ※역할·팀과 **별개 축**이다. 팀장이라고 편집이 되지도, 메뉴가 늘지도 않는다.
+    """
+    return is_leader(email) or can_edit(email)
+
+
+def set_leader(email: str, on: bool) -> None:
+    e = email.strip().lower()
+
+    def _fn(u):
+        ls = [x for x in u.get("leaders", []) if x != e]
+        if on:
+            ls.append(e)
+        u["leaders"] = sorted(ls)
+
+    _mutate_users(_fn)
 
 
 def list_teams() -> dict:
@@ -374,15 +411,9 @@ def _add_pending(email: str, team: str = "", note: str = "") -> None:
         _added = True
 
     _mutate_users(_fn)
-    if _added:                       # 같은 사람이 새로고침할 때마다 메일이 가면 안 된다
-        _notify(approver_of(1), f"[대시보드] 새 가입 요청 — {e}",
-                [f"{e} 님이 대시보드 접속을 요청했어요.",
-                 f"신청한 소속 팀: {t or '(안 고름)'}",
-                 f"메모: {n}" if n else "",
-                 "",
-                 "1차 승인이 필요합니다. 승인하시면 2차 승인자에게 자동으로 넘어가요.",
-                 "둘 다 승인해야 접속할 수 있어요.",
-                 "※ 팀은 **신청한 값**이에요. 최종 승인 때 그대로 배정되니 확인해 주세요."])
+    # [제거] 1차 승인자 알림 메일 — 단계마다 보내지 말고 **최종 승인 때 한 통만**
+    #        보내기로 했다(요청, 2026-08-12). 신청은 접속·계정 관리 화면에서 본다.
+    #        되살리려면 여기서 _notify(approver_of(1), ...) 를 부르면 된다.
 
 
 def requested_team(email: str) -> str:
@@ -723,6 +754,9 @@ def _pretty_event(ev: str) -> str:
         return "🔧 역할변경 → " + ev.split(":", 1)[1]
     if ev.startswith("team:"):
         return "👥 팀배정 → " + ev.split(":", 1)[1]
+    if ev.startswith("leader:"):
+        _w, _, _v = ev.split(":", 1)[1].rpartition("=")
+        return f"📥 팀장(다운로드) {'부여' if _v == 'on' else '회수'} → {_w}"
     if ev.startswith("teamset:"):
         return "🗂 팀권한 변경 → " + ev.split(":", 1)[1]
     if ev.startswith("teamdel:"):
@@ -754,12 +788,17 @@ def log_event(email: str, event: str) -> None:
 # 그중엔 기간 전체를 내려주는 것도 있는데, 로그에는 login·view 밖에 없었다.
 # 막는 대신 **보이게** 만든다 — 정상 업무 다운로드를 막으면 일이 안 돌아가지만,
 # 기록이 남으면 이상 징후는 사후에라도 잡힌다.
+def _current_email() -> str:
+    """현재 세션 계정. 로그인 전이면 ''."""
+    try:
+        return (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
+    except Exception:
+        return ""
+
+
 def log_download(page: str, name: str, rows=None, nbytes=None) -> None:
     """다운로드 1건 기록. 계정은 현재 세션에서 알아서 읽는다."""
-    try:
-        email = (st.user.email or "").strip().lower() if getattr(st, "user", None) else ""
-    except Exception:
-        email = ""
+    email = _current_email()
     tail = f"·{int(rows):,}행" if rows not in (None, "") else ""
     if nbytes:
         # 1KB 미만이 '0KB' 로 찍히면 안 받은 것처럼 보인다 → 그땐 바이트로.
@@ -775,7 +814,15 @@ def download_button(label, data, file_name=None, mime=None, *,
     container 로 st.sidebar 나 컬럼을 넘길 수 있다 — 안 넘기면 현재 위치에 그린다.
     ★on_click 을 이미 넘긴 호출부가 있으면 덮지 않고 **둘 다** 부른다.
       (지금은 없지만, 나중에 생겼을 때 조용히 기록이 끊기면 못 알아챈다.)
+
+    ★권한 게이트(2026-08-12) — 여기 한 곳만 막으면 화면의 모든 다운로드에 걸린다.
+      **숨기지 않고 비활성**으로 둔다. 버튼이 사라지면 "고장났다"고 문의가 오고,
+      왜 못 받는지도 알 수 없다. gate=False 를 주면 이 검사를 건너뛴다.
     """
+    if kw.pop("gate", True) and not can_download(_current_email()):
+        kw["disabled"] = True
+        kw.setdefault("help", "데이터 내려받기는 팀장 권한이 있어야 해요. "
+                              "필요하면 관리자에게 요청해 주세요.")
     try:
         nbytes = len(data) if isinstance(data, (bytes, bytearray, str)) else None
     except Exception:
@@ -843,7 +890,8 @@ def render_admin_console() -> None:
         _can1, _can2 = can_approve(email, 1), can_approve(email, 2)
         st.caption(f"가입 승인은 **2단계**예요 — 1차 {_cfg.get('stage1', '(미지정)')} → "
                    f"2차 {_cfg.get('stage2', '(미지정)')}. 둘 다 승인해야 접속할 수 있어요. "
-                   "각 단계에서 메일이 자동으로 나가요.")
+                   "메일은 **최종 승인 때 신청자에게 한 통만** 나가요 — "
+                   "새 신청은 이 화면에서 확인해 주세요.")
 
         # ── 1차 대기 ──
         with st.container(border=True):
@@ -905,13 +953,20 @@ def render_admin_console() -> None:
             st.markdown(f"**승인된 계정**  ({len(u['approved'])}명)")
             if u["approved"]:
                 _tnames = ["(팀 없음)"] + sorted(u["teams"])
+                _leads = set(u["leaders"])
                 for e, r in u["approved"].items():
-                    c1, c2, c3, c4 = st.columns([3.2, 2.0, 1.0, 0.9])
+                    c1, c2, cl, c3, c4 = st.columns([2.9, 1.8, 1.1, 0.9, 0.8])
                     c1.write(e)
                     _cur = u["member_team"].get(e) or "(팀 없음)"
                     _nt = c2.selectbox("팀", _tnames,
                                        index=_tnames.index(_cur) if _cur in _tnames else 0,
                                        key=f"team_{e}", label_visibility="collapsed")
+                    # 팀장 = 데이터 내려받기 권한. 역할·팀과 별개 축이라 따로 둔다.
+                    _ld = cl.checkbox("📥 팀장", value=e in _leads, key=f"lead_{e}",
+                                      help="켜면 이 계정이 데이터를 내려받을 수 있어요.")
+                    if _ld != (e in _leads):
+                        set_leader(e, _ld)
+                        _log_access(email, f"leader:{e}={'on' if _ld else 'off'}"); st.rerun()
                     if c3.button("팀 배정", key=f"tset_{e}", disabled=(_nt == _cur)):
                         assign_team(e, None if _nt == "(팀 없음)" else _nt)
                         _log_access(email, f"team:{e}={_nt}"); st.rerun()
@@ -924,7 +979,9 @@ def render_admin_console() -> None:
                 st.caption("승인된 계정이 없어요.")
             st.caption("· 소유자 계정은 항상 최고 권한이며 목록에 표시되지 않습니다.  "
                        "· 팀을 배정하면 그 팀에 체크된 페이지만 보여요. "
-                       "팀이 없으면 기본 페이지(KPI·스내피즘·포토이즘·주간리포트)를 봐요.")
+                       "팀이 없으면 기본 페이지(KPI·스내피즘·포토이즘·주간리포트)를 봐요.  "
+                       "· **📥 팀장** 을 켜야 데이터를 내려받을 수 있어요"
+                       "(소유자·에디터는 켜지 않아도 받을 수 있어요).")
 
     # ── 팀·권한 ──
     with tab_teams:
@@ -1027,12 +1084,7 @@ def _approve_stage1(email: str, role: str, by: str) -> None:
         u.setdefault("stage1", {})[e] = {"role": role, "by": by, "at": now}
 
     _mutate_users(_fn)
-    _notify(approver_of(2), f"[대시보드] 2차 승인 요청 — {e}",
-            [f"{e} 님의 가입 요청이 1차 승인을 통과했어요.",
-             f"1차 승인: {by}",
-             f"부여 예정 권한: {'편집' if role == 'editor' else '열람'}",
-             "",
-             "2차 승인을 하면 그때부터 접속할 수 있어요."])
+    # [제거] 2차 승인자 알림 메일 — 위와 같은 이유로 뺐다(최종 승인 때 한 통만).
 
 
 def _approve(email: str, role: str = "viewer", team: str | None = None) -> None:

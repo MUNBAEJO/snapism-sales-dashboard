@@ -1189,6 +1189,8 @@ except Exception:
 #  ※ expander 중첩 불가 → helpbox 는 다른 expander(더보기·원본) 바깥(카드/섹션 레벨)에 둔다.
 # ══════════════════════════════════════════════════════════════
 _is_owner = auth.is_owner(getattr(getattr(st, "user", None), "email", None))
+# 데이터 내려받기 권한(소유자·팀장·에디터). 버튼을 숨기지 않고 **비활성**으로 둔다.
+_CAN_DL = auth.can_download(getattr(getattr(st, "user", None), "email", None))
 if _is_owner:
     # 관리자 전용 도구를 하나의 카드로 묶음(계산설명 토글 + 실시간 환율). 아래 환율 expander도 여기에 넣음.
     _sb_admin = st.sidebar.container(border=True, key="sb-admin")
