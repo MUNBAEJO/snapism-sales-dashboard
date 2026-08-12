@@ -64,13 +64,13 @@ def to_utc(date_str, is_end, off=9):
     return u.strftime(f"%Y-%m-%dT%H:%M:%S.{ms}Z")
 
 
-def get_token(url, user, pw):
+def _login_once(url, user, pw, timeout):
     """Playwright로 로그인해 JWT 토큰만 받고 브라우저는 즉시 닫는다(장시간 점유 방지)."""
     with sync_playwright() as pw_ctx:
         b = pw_ctx.chromium.launch(headless=True)
         page = b.new_context(viewport={"width": 1440, "height": 900}).new_page()
         try:
-            page.goto(url, timeout=40000)
+            page.goto(url, timeout=timeout)
             page.wait_for_load_state("networkidle")
             if "/home" not in page.url:
                 page.fill('input[type="text"]', user)
@@ -83,6 +83,30 @@ def get_token(url, user, pw):
             return page.evaluate("() => localStorage.getItem('token') || ''") or ""
         finally:
             b.close()
+
+
+def get_token(url, user, pw, timeout=40000, tries=3):
+    """로그인 — **실패하면 시간을 늘려 다시 시도한다**(2026-08-12 추가).
+
+    ★한 번 실패하면 호출부가 그 나라를 통째로 건너뛴다. 하루치면 하루지만
+      **백필에서는 한 달치가 통째로 날아간다.** 실제로 그랬다 — 2025-01~09 백필에서
+      유럽 7개국(de·es·fr·gb·lu·lv·nl)이 8개월 내내 100% 빠졌다.
+    ★호스트가 죽은 게 아니다. **같은 3일치 수집을 두 번 돌렸는데 한 번은 성공,
+      한 번은 전부 실패**했고, 같은 시간대의 호주·싱가포르·페루는 매번 성공했다.
+      순간적인 문제라 다시 걸면 되는데 재시도가 없어서 못 걸었다.
+    """
+    last = ""
+    for i in range(max(1, tries)):
+        try:
+            tok = _login_once(url, user, pw, timeout * (i + 1))   # 40s → 80s → 120s
+            if tok:
+                return tok
+            last = "토큰이 비어 있음"
+        except Exception as ex:                                   # noqa: BLE001
+            last = str(ex).splitlines()[0][:120]
+        if i < tries - 1:
+            time.sleep(5 * (i + 1))
+    raise RuntimeError(f"로그인 {tries}회 실패 — {last}")
 
 
 def download_chunk(cmsapi, token, cc, s_date, e_date, off):
