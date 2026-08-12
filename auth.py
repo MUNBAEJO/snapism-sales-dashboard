@@ -108,15 +108,32 @@ def _normalize_users(v: dict) -> dict:
         if e2 in ap and t2 in teams:
             memb[e2] = t2
 
+    # 신청서(2026-08-12) — 본인이 고른 소속 팀·메모. {"email": {"team","note","at"}}
+    # ★'신청'이지 '배정'이 아니다. 최종 승인 때 승인자가 확인하고 그대로 넣어 준다.
+    #   자동으로 넣어 버리면 아무나 페이지가 제일 넓은 팀을 골라서 들어온다.
+    #   대기·1차통과 목록에 없는 사람의 신청서는 버린다(거절·승인 뒤 찌꺼기).
+    _live = set(pend) | set(st1)
+    pmeta = {}
+    for e, meta in (v.get("pending_meta") or {}).items():
+        e2 = str(e).strip().lower()
+        if e2 not in _live:
+            continue
+        meta = meta if isinstance(meta, dict) else {}
+        t2 = str(meta.get("team") or "").strip()
+        pmeta[e2] = {"team": t2 if t2 in teams else "",
+                     "note": str(meta.get("note") or "")[:200],
+                     "at": str(meta.get("at") or "")}
+
     return {"approved": ap, "pending": pend, "stage1": st1,
-            "teams": teams, "member_team": memb}
+            "teams": teams, "member_team": memb, "pending_meta": pmeta}
 
 
 def _load_users() -> dict:
     try:
         return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
     except FileNotFoundError:
-        return {"approved": {}, "pending": [], "stage1": {}, "teams": {}, "member_team": {}}
+        return {"approved": {}, "pending": [], "stage1": {}, "teams": {},
+                "member_team": {}, "pending_meta": {}}
     except Exception:
         # 파싱 실패(쓰기 도중 등). 원자적 저장으로 거의 없지만, 만약 발생하면 짧게 재시도해
         # 반쯤 쓰인 파일 때문에 승인된 사용자가 '승인 대기'로 튕기는 사고를 막는다.
@@ -126,10 +143,11 @@ def _load_users() -> dict:
                 return _normalize_users(json.loads(ALLOWED_USERS_PATH.read_text(encoding="utf-8")))
             except Exception:
                 continue
-        # ★위 FileNotFoundError 분기와 **같은 5키**여야 한다. teams/member_team 을
+        # ★위 FileNotFoundError 분기와 **같은 6키**여야 한다. teams/member_team 을
         #   빼면 list_teams()·allowed_pages() 가 u["teams"] 로 직접 인덱싱하다
         #   KeyError → 로그인 전원이 에러 화면이 된다(2026-07-31 확인).
-        return {"approved": {}, "pending": [], "stage1": {}, "teams": {}, "member_team": {}}
+        return {"approved": {}, "pending": [], "stage1": {}, "teams": {},
+                "member_team": {}, "pending_meta": {}}
 
 
 def _save_users(u: dict) -> None:
@@ -329,8 +347,13 @@ def _notify(to: str, subject: str, lines: list[str]) -> None:
         pass
 
 
-def _add_pending(email: str) -> None:
+def _add_pending(email: str, team: str = "", note: str = "") -> None:
+    """가입 신청 접수. ★로그인만으로는 안 올라간다 — 본인이 '신청하기' 를 눌러야
+    한다(2026-08-12). 예전엔 로그인하는 순간 자동 접수돼서, 승인자는 이 사람이
+    누구고 어느 팀인지 이메일만 보고 판단해야 했다."""
     e = email.strip().lower()
+    t = (team or "").strip()
+    n = (note or "").strip()[:200]
     _added = False
 
     def _fn(u):
@@ -338,15 +361,27 @@ def _add_pending(email: str) -> None:
         if e in u["approved"] or e in u["pending"] or e in u.get("stage1", {}):
             return
         u["pending"].append(e)
+        u.setdefault("pending_meta", {})[e] = {
+            "team": t, "note": n,
+            "at": datetime.datetime.now().isoformat(timespec="seconds")}
         _added = True
 
     _mutate_users(_fn)
     if _added:                       # 같은 사람이 새로고침할 때마다 메일이 가면 안 된다
         _notify(approver_of(1), f"[대시보드] 새 가입 요청 — {e}",
                 [f"{e} 님이 대시보드 접속을 요청했어요.",
+                 f"신청한 소속 팀: {t or '(안 고름)'}",
+                 f"메모: {n}" if n else "",
                  "",
                  "1차 승인이 필요합니다. 승인하시면 2차 승인자에게 자동으로 넘어가요.",
-                 "둘 다 승인해야 접속할 수 있어요."])
+                 "둘 다 승인해야 접속할 수 있어요.",
+                 "※ 팀은 **신청한 값**이에요. 최종 승인 때 그대로 배정되니 확인해 주세요."])
+
+
+def requested_team(email: str) -> str:
+    """그 사람이 신청서에 고른 팀(없으면 '')."""
+    return (_load_users().get("pending_meta", {}).get((email or "").strip().lower(), {})
+            .get("team") or "")
 
 
 def _user_claim(key: str):
@@ -515,6 +550,23 @@ def _render_login_page() -> None:
 
 
 def _render_pending_page(email: str) -> None:
+    """미승인 계정 화면. **신청 전**이면 신청서, **신청 후**면 대기 안내."""
+    _u = _load_users()
+    _e = email.strip().lower()
+    _waiting = _e in _u["pending"] or _e in _u.get("stage1", {})
+    if _waiting:
+        _ico, _hd = "🔒", "승인 대기 중"
+        _t = _u.get("pending_meta", {}).get(_e, {}).get("team") or ""
+        _msg = ("승인 요청이 접수됐어요. 담당자에게 메일이 갔어요.<br>"
+                + (f"신청한 소속 팀 — <b>{_t}</b><br>" if _t else "")
+                + ("<b>2차 승인</b>만 남았어요.<br>" if _e in _u.get("stage1", {})
+                   else "승인은 <b>2단계</b>로 진행돼요 — 1차·2차가 모두 승인하면 바로 쓸 수 있어요.<br>")
+                + "완료되면 이 메일 주소로 알려드려요.")
+    else:
+        _ico, _hd = "📝", "접속 신청"
+        _msg = ("아직 신청하지 않은 계정이에요.<br>"
+                "소속 팀을 고르고 <b>신청하기</b>를 눌러 주세요.<br>"
+                "승인은 <b>2단계</b>로 진행되고, 끝나면 이 메일 주소로 알려드려요.")
     st.markdown(
         f"""
         <style>
@@ -531,17 +583,34 @@ def _render_pending_page(email: str) -> None:
         .pend-card b  {{ color:#1a1a2e; }}
         </style>
         <div class="pend-card">
-          <div class="lock">🔒</div>
-          <h2>승인 대기 중</h2>
-          <p><b>{email}</b><br>승인 요청이 접수됐어요. 담당자에게 메일이 갔어요.<br>
-             승인은 <b>2단계</b>로 진행돼요 — 1차·2차가 모두 승인하면 바로 쓸 수 있어요.<br>
-             완료되면 이 메일 주소로 알려드려요.</p>
+          <div class="lock">{_ico}</div>
+          <h2>{_hd}</h2>
+          <p><b>{email}</b><br>{_msg}</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
     _, mid, _ = st.columns([1, 1.2, 1])
     with mid:
+        if not _waiting:
+            # ── 신청서 ──────────────────────────────────────────────
+            # 팀을 본인이 고른다. 승인자가 이메일만 보고 짐작하지 않아도 된다.
+            _teams = sorted(list_teams())
+            _pick = ""
+            if _teams:
+                _pick = st.selectbox("소속 팀", _teams, key="_req_team",
+                                     index=None, placeholder="소속 팀을 골라 주세요")
+            else:
+                st.caption("아직 등록된 팀이 없어요. 그냥 신청하면 관리자가 배정해요.")
+            _note = st.text_input("메모 (선택)", key="_req_note", max_chars=200,
+                                  placeholder="예: 정산 업무로 IP정산서가 필요해요")
+            if st.button("신청하기", use_container_width=True, type="primary",
+                         disabled=bool(_teams) and not _pick):
+                _add_pending(email, _pick or "", _note)
+                _log_access(email, f"request:{_pick or '팀없음'}")
+                st.rerun()
+            if _teams and not _pick:
+                st.caption("소속 팀을 골라야 신청할 수 있어요.")
         st.button("다른 계정으로 로그인", use_container_width=True, on_click=st.logout)
 
 
@@ -557,7 +626,8 @@ def require_login() -> str:
 
     email = (st.user.email or "").strip().lower()
     if not can_access(email):
-        _add_pending(email)
+        # ★자동 접수하지 않는다(2026-08-12) — 본인이 팀을 고르고 '신청하기' 를
+        #   눌러야 대기 목록에 올라간다. 로그인만 한 사람은 신청서 화면을 본다.
         if not st.session_state.get("_pending_logged"):
             _log_access(email, "pending")
             st.session_state["_pending_logged"] = True
@@ -626,13 +696,16 @@ def render_sidebar_account() -> None:
 # ── 접속 로그 ──────────────────────────────────────────────────────
 _EVENT_LABEL = {
     "login":   "✅ 로그인",
-    "pending": "⏳ 승인 요청",
+    # 로그인은 했지만 아직 신청서를 안 낸 상태. 신청은 아래 'request:' 로 따로 남는다.
+    "pending": "👀 미승인 접속 시도",
 }
 
 
 def _pretty_event(ev: str) -> str:
     if ev in _EVENT_LABEL:
         return _EVENT_LABEL[ev]
+    if ev.startswith("request:"):
+        return "⏳ 가입 신청 · 팀 " + ev.split(":", 1)[1]
     if ev.startswith("approve:"):
         return "👍 승인 → " + ev.split(":", 1)[1]
     if ev.startswith("reject:"):
@@ -772,6 +845,9 @@ def render_admin_console() -> None:
                 for e in u["pending"]:
                     c1, c2, c3, c4 = st.columns([3.4, 1.7, 1, 1])
                     c1.write(e)
+                    _rq = u.get("pending_meta", {}).get(e, {})
+                    c1.caption("신청 팀 **" + (_rq.get("team") or "(안 고름)") + "**"
+                               + (" · " + _rq.get("note") if _rq.get("note") else ""))
                     _r = c2.selectbox("역할", list(ROLES), key=f"aprole_{e}",
                                       format_func=lambda x: _ROLE_LABEL.get(x, x),
                                       label_visibility="collapsed")
@@ -790,19 +866,29 @@ def render_admin_console() -> None:
         with st.container(border=True):
             st.markdown(f"**2차 승인 대기**  ({len(_s1)}건)")
             if _s1:
+                _tall = ["(팀 없음)"] + sorted(u["teams"])
                 for e, meta in _s1.items():
-                    c1, c2, c3, c4 = st.columns([3.4, 1.7, 1, 1])
+                    c1, c2, ct, c3, c4 = st.columns([2.8, 1.4, 1.6, 1, 1])
                     c1.write(e)
                     c1.caption(f"1차 {meta.get('by', '')} · {meta.get('at', '')[:16].replace('T', ' ')}")
+                    _rq2 = u.get("pending_meta", {}).get(e, {})
+                    if _rq2.get("note"):
+                        c1.caption("메모: " + _rq2["note"])
                     _r2 = c2.selectbox("역할", list(ROLES), key=f"ap2role_{e}",
                                        index=list(ROLES).index(meta.get("role", "viewer")),
                                        format_func=lambda x: _ROLE_LABEL.get(x, x),
                                        label_visibility="collapsed")
+                    # 신청한 팀을 기본값으로 — 승인자는 확인만 하면 되고, 바꿀 수도 있다
+                    _rt = _rq2.get("team") or ""
+                    _t2 = ct.selectbox("팀", _tall, key=f"ap2team_{e}",
+                                       index=_tall.index(_rt) if _rt in _tall else 0,
+                                       label_visibility="collapsed")
                     if c3.button("최종 승인", key=f"ap2_{e}", type="primary",
                                  disabled=not _can2,
                                  help=None if _can2 else "2차 승인자만 누를 수 있어요."):
-                        _approve(e, _r2)
-                        _log_access(email, f"approve2:{e}={_r2}"); st.rerun()
+                        _tv = "" if _t2 == "(팀 없음)" else _t2
+                        _approve(e, _r2, _tv)
+                        _log_access(email, f"approve2:{e}={_r2}@{_tv or '팀없음'}"); st.rerun()
                     if c4.button("거절", key=f"rj2_{e}", disabled=not (_can1 or _can2)):
                         _reject(e); _log_access(email, f"reject2:{e}"); st.rerun()
             else:
@@ -913,7 +999,8 @@ def render_admin_console() -> None:
             elif _k == "페이지 열람":
                 rows = [r for r in rows if "열람" in r["이벤트"]]
             elif _k == "로그인":
-                rows = [r for r in rows if "로그인" in r["이벤트"] or "승인 요청" in r["이벤트"]]
+                rows = [r for r in rows if any(x in r["이벤트"] for x in
+                                               ("로그인", "가입 신청", "미승인 접속"))]
             elif _k == "관리 활동":
                 rows = [r for r in rows if any(x in r["이벤트"] for x in ("승인", "거절", "해제", "역할", "팀"))]
             if rows:
@@ -941,20 +1028,33 @@ def _approve_stage1(email: str, role: str, by: str) -> None:
              "2차 승인을 하면 그때부터 접속할 수 있어요."])
 
 
-def _approve(email: str, role: str = "viewer") -> None:
-    """최종(2차) 승인 — 여기서 비로소 접속이 열린다."""
+def _approve(email: str, role: str = "viewer", team: str | None = None) -> None:
+    """최종(2차) 승인 — 여기서 비로소 접속이 열린다.
+
+    ★신청서에 고른 팀을 여기서 배정한다. member_team 은 **승인 계정만** 남기므로
+      (정규화 규칙) approved 에 넣기 전에 쓰면 조용히 지워진다 — 같은 _fn 안에서
+      순서대로 넣는다.
+    """
     e = email.strip().lower()
     role = role if role in ROLES else "viewer"
+    _t = (team if team is not None else requested_team(e) or "").strip()
+    _set = ""
 
     def _fn(u):
+        nonlocal _set
         u["pending"] = [x for x in u["pending"] if x != e]
         u.get("stage1", {}).pop(e, None)
+        u.get("pending_meta", {}).pop(e, None)
         u["approved"][e] = role
+        if _t and _t in u.get("teams", {}):
+            u.setdefault("member_team", {})[e] = _t
+            _set = _t
 
     _mutate_users(_fn)
     _notify(e, "[대시보드] 접속이 승인됐어요",
             ["요청하신 CMS 매출 대시보드 접속이 승인됐어요.",
              f"권한: {'편집' if role == 'editor' else '열람'}",
+             f"소속 팀: {_set}" if _set else "",
              "",
              "이제 구글 계정으로 로그인하면 바로 쓸 수 있어요."])
 
@@ -966,6 +1066,7 @@ def _reject(email: str) -> None:
     def _fn(u):
         u["pending"] = [x for x in u["pending"] if x != e]
         u.get("stage1", {}).pop(e, None)
+        u.get("pending_meta", {}).pop(e, None)   # 신청서도 같이 지운다
 
     _mutate_users(_fn)
 
