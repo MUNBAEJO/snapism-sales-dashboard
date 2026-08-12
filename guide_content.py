@@ -154,10 +154,34 @@ _GUIDES = {
 }
 
 
+_GUIDE_CSS = """
+<style>
+/* 설명서는 제목 줄 오른쪽 빈자리에 작게. 음수 마진으로 제목 옆까지 끌어올린다 —
+   왼쪽 칸은 비어 있어 제목·부제와 겹칠 일이 없다(가로가 안 겹친다). */
+.st-key-guide-top{ margin-top:-52px; margin-bottom:6px; }
+.st-key-guide-top [data-testid="stPopover"] button{
+  min-height:0 !important; padding:4px 12px !important; border-radius:8px !important; }
+.st-key-guide-top [data-testid="stPopover"] button p{
+  font-size:12px !important; font-weight:600 !important; }
+/* 좁은 화면에선 제목이 두 줄로 접혀 위치가 틀어진다 → 끌어올리지 않는다. */
+@media (max-width: 900px){ .st-key-guide-top{ margin-top:4px; } }
+</style>
+"""
+
+
 def render_guide(key: str):
-    """페이지 상단에 해당 대시보드 설명서를 펼침(expander)으로 렌더링."""
+    """설명서를 **제목 줄 오른쪽에 작은 버튼**으로 렌더링.
+
+    ★예전엔 폭을 꽉 채우는 접기 막대였다. 제목 바로 아래 가장 크고 눈에 띄는
+      자리를 차지해 **필터를 만지려다 자꾸 눌렸다**(요청). 내용은 그대로 두고
+      자리·크기만 바꾼다 — 호출부(제목·부제 다음)는 6개 페이지 모두 안 건드린다.
+    """
     body = _GUIDES.get(key)
     if not body:
         return
-    with st.expander("📖 이 대시보드 설명서 — 처음이신가요? 누구나 이해하도록 쉽게 적었어요 (클릭해서 펼치기)", expanded=False):
-        st.markdown(_COMMON + body)
+    st.markdown(_GUIDE_CSS, unsafe_allow_html=True)
+    with st.container(key="guide-top"):
+        _, _r = st.columns([0.76, 0.24])
+        with _r:
+            with st.popover("📖 설명서", use_container_width=True):
+                st.markdown(_COMMON + body)

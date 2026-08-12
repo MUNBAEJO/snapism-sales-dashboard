@@ -1430,7 +1430,7 @@ def _dl_control(slot):
 def _filterbar():
     with st.container(border=True, key="scard-filter"):
         # 필터는 왼쪽으로 모아 컴팩트하게(마지막은 빈 스페이서)
-        _fb = st.columns([0.92, 0.8, 0.8, 0.8, 0.86, 0.86, 0.5, 0.78, 1.72], gap="small")
+        _fb = st.columns([0.92, 0.8, 0.8, 0.8, 0.86, 0.5, 0.78, 2.58], gap="small")
         with _fb[0]:
             st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
             st.date_input("기간", value=[default_start, last_date],
@@ -1445,16 +1445,14 @@ def _filterbar():
         # 포5: 스내피즘과 라벨 통일 — 브랜드(Box/Colored) = 상품 종류라 "상품" 으로 부른다.
         cbfilter(_fb[3], "상품", _opts["brands"], "ph_f_brand", fmt=brand_ko)
         cbfilter(_fb[4], "IP구분", IP_GUBUN_VIEW, "ph_f_gubun")
-        # IP명 후보: (초안) 선택된 IP구분들의 IP명 합집합
-        _dg = [g for g in IP_GUBUN_VIEW if st.session_state.get(f"ph_f_gubun__cb__{g}", False)]
-        _ipd = (sorted(set().union(*[set(_opts["ip_by_gubun"].get(g, [])) for g in _dg]))
-                if _dg else _opts["ip_by_gubun"].get("_ALL", []))
-        cbfilter(_fb[5], "IP명", _ipd, "ph_f_ip")
-        with _fb[6]:
+        # [제거] 'IP명' 필터 — 기획에 없던 항목이라 뺐다(요청). IP 하나를 파고드는
+        #        건 '구좌별 상세' 의 검색창이 대신한다. 아래 selected_ips 는 빈
+        #        목록으로 고정되고, 그걸 쓰던 카드들은 조건문이 있어 조용히 빠진다.
+        with _fb[5]:
             st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
             if st.button("✓ 적용", key="ph_f_apply", use_container_width=True, type="primary"):
                 st.rerun()   # scope 기본=app → 본문(탭·차트) 한 번에 갱신
-        _dl_control(_fb[7])
+        _dl_control(_fb[6])
 
 
 _filterbar()
@@ -1471,11 +1469,12 @@ else:
 sel_stores = [o for o in _store_opts if st.session_state.get(f"ph_f_store__cb__{o}", False)]
 sel_brands = [o for o in _opts["brands"] if st.session_state.get(f"ph_f_brand__cb__{o}", False)]
 sel_gubuns = [g for g in IP_GUBUN_VIEW if st.session_state.get(f"ph_f_gubun__cb__{g}", False)]
-if sel_gubuns:
-    _ip_all = sorted(set().union(*[set(_opts["ip_by_gubun"].get(g, [])) for g in sel_gubuns]))
-else:
-    _ip_all = _opts["ip_by_gubun"].get("_ALL", [])
-selected_ips = [o for o in _ip_all if st.session_state.get(f"ph_f_ip__cb__{o}", False)]
+# [제거] IP명 필터 — 위 필터바에서 뺐다. ★필터가 사라져도 **세션에 남은 체크는
+#        그대로라** 그걸 계속 읽으면 화면에 없는 필터가 몰래 걸린다(같은 종류의
+#        버그를 2026-08-11 에 국가↔매장에서 잡았다). 남은 키를 지우고 빈 목록으로 고정.
+for _k in [k for k in st.session_state if k.startswith("ph_f_ip__cb__")]:
+    del st.session_state[_k]
+selected_ips = []
 
 # ── 필터 적용 (scope = 날짜 외 모든 필터, df = scope + 날짜) ──
 scope = df_all
@@ -1910,9 +1909,11 @@ with tab_ip:
             #   같은 IP 인데 줄이 흩어져 규모가 안 보였다 → 'IP명' 으로 합칠 수 있게.
             #   기간 구분은 상단 조회 기간이 하므로 합쳐도 헷갈리지 않는다(사용자 확인).
             _q1, _q2 = st.columns([1.5, 2.5])
+            #   ★기본을 'IP명(회차 합산)' 으로 뒀다(요청) — 평소 보고 싶은 건 IP 규모지
+            #     회차별로 쪼개진 줄이 아니다. 회차를 봐야 할 때만 '타이틀' 로 바꾼다.
             _grp = (_q1.segmented_control(
-                "묶기", ["타이틀", "IP명(회차 합산)"], default="타이틀",
-                key="ph_slot_grp", label_visibility="collapsed") or "타이틀")
+                "묶기", ["IP명(회차 합산)", "타이틀"], default="IP명(회차 합산)",
+                key="ph_slot_grp", label_visibility="collapsed") or "IP명(회차 합산)")
             _kw = _q2.text_input("검색", key="ph_slot_q", label_visibility="collapsed",
                                  placeholder="🔍 타이틀·IP 이름으로 찾기").strip()
             _KEY = "타이틀" if _grp == "타이틀" else "IP명"
@@ -2052,8 +2053,8 @@ with tab_ip:
 **선택 IP 상세 분석**
 - 필터바에서 고른 `IP명`(복수면 합산)의 매출액 기준 상세: 일별 추이·국가별 분포·합산 지표(총매출·건수·판매 국가/매장 수).
 """)
-    else:
-        st.caption("💡 상단 필터바에서 **IP명**을 고르면 여기에 IP 상세 분석(일별·국가별·합산 비교)이 나와요.")
+    # [제거] IP명 필터가 없어져 selected_ips 는 항상 비어 있다 → 위 카드는 안 그려진다.
+    #        안내 문구도 뺐다(없는 필터를 가리키게 된다). 필터를 되살리면 그대로 부활.
 
 # ════════════ 탭 3: 국가별 분석 ════════════
 with tab_nat:
