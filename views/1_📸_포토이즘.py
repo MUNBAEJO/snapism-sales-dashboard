@@ -1401,8 +1401,8 @@ def cbfilter(col, label, options, key, fmt=None):
 
 # [제거] 필터바 오른쪽 '⬇ 내려받기' — 뺐다(요청, 2026-08-12).
 #        '구좌별 상세' 카드 머리줄에 있는 내려받기가 대신한다.
-#        되살리려면 git 9bce232 이전의 _DL_RAW_COLS · _dl_control 을 되돌리고
-#        필터바 컬럼을 한 칸 늘려 _dl_control(_fb[6]) 을 부르면 된다.
+#        되살리려면 `git show a49d147` 의 data_export.py · _DL_RAW_COLS ·
+#        _dl_control 을 되돌리고 필터바 컬럼을 한 칸 늘리면 된다.
 
 
 # ── 필터바를 @st.fragment 로 격리 → 체크박스 조작은 이 조각만 가볍게 재실행되고,
@@ -1911,42 +1911,77 @@ with tab_ip:
                     _od = _od[_od["국가"].isin(list(sel_countries))]
 
             def _slot_export():
-                """지금 화면의 구좌별 상세를 **탭 전부 합쳐 한 표로**.
+                """구좌별 상세를 **한 줄 = IP × 국가** 로 편다.
 
-                탭은 st.tabs 라 어느 게 열려 있는지 알 수 없다 → 고르게 하지 않고
-                `구분` 열을 붙여 다 넣는다. 묶기·검색은 그대로 반영한다.
+                ★화면 표를 그대로 뱉으면(이름·매출·건수) 받아서 할 게 없다. 담당자가
+                  이 파일로 실제로 하는 일은 넷이다 —
+                    ① IP사 보고: "어느 나라에서 얼마"  → 국가로 쪼개야 한다
+                    ② 회차 비교: 260710 vs 260809      → 회차수·첫/마지막 거래일
+                    ③ 반응 판단: 비싸게 팔렸나          → 건당 평균·매장수
+                    ④ 엑셀 피벗                          → 합계행을 안 섞고 긴 형태로
+                  그래서 국가로 펴고, 쓸 만한 파생 열을 붙여서 준다.
+                탭은 st.tabs 라 어느 게 열려 있는지 알 수 없어 `구분` 열을 붙여 다 넣는다.
                 """
                 _rs = []
                 for _gg in _detail_gubuns:
                     _s2 = sales[sales["IP구분"] == _gg]
-                    _t2 = (_s2[(_s2[_KEY] != "") & _s2[_KEY].notna()]
-                           .groupby(_KEY, observed=True)
-                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+                    _s2 = _s2[(_s2[_KEY] != "") & _s2[_KEY].notna()]
+                    if _s2.empty:
+                        continue
+                    _t2 = (_s2.groupby([_KEY, "국가"], observed=True)
+                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum"),
+                                매장수=("매장 이름", "nunique"),
+                                첫거래일=("날짜", "min"), 마지막거래일=("날짜", "max"))
+                           .reset_index())
                     _t2 = _t2[_t2["매출"] > 0].rename(columns={_KEY: "이름"})
                     _t2.insert(0, "구분", _gg)
+                    if _KEY == "IP명":     # 몇 회차가 합쳐졌는지 — 합치면 안 보인다
+                        _c2 = _s2.groupby("IP명", observed=True)["타이틀"].nunique()
+                        _t2["회차수"] = _t2["이름"].map(_c2).fillna(1).astype("int64")
                     _rs.append(_t2)
-                for _gg in _orig_gubuns:                     # 오리지널은 프레임 단위
+                for _gg in _orig_gubuns:   # 오리지널은 프레임 단위 · 매장 정보가 없다
                     _o2 = _od[_od["IP구분"] == _gg] if not _od.empty else _od
                     if _o2.empty:
                         continue
-                    _f2 = (_o2.groupby("프레임", observed=True)
-                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
+                    _f2 = (_o2.groupby(["프레임", "국가"], observed=True)
+                           .agg(매출=("매출액", "sum"), 건수=("건수", "sum"),
+                                첫거래일=("날짜", "min"), 마지막거래일=("날짜", "max"))
+                           .reset_index())
                     _f2 = _f2[(_f2["매출"] > 0) & _f2["프레임"].astype(str).str.strip().ne("")]
                     _f2 = _f2.rename(columns={"프레임": "이름"})
                     _f2.insert(0, "구분", _gg)
                     _rs.append(_f2)
                 if not _rs:
-                    return pd.DataFrame(columns=["구분", "이름", "매출", "건수"])
+                    return pd.DataFrame(columns=["구분", "이름", "국가", "매출", "건수"])
                 _out = pd.concat(_rs, ignore_index=True)
                 if _kw:
                     _out = _out[_out["이름"].astype(str).str.contains(_kw, case=False, na=False)]
+                if _out.empty:
+                    return _out
                 # 판매기간(지라)은 타이틀에만 붙는다 — IP명으로 합치면 회차가 여럿이라 못 적는다
                 if _KEY == "타이틀" and _tstat:
                     _out["판매기간"] = _out["이름"].map(
                         lambda n: _period_str((_tstat.get(n) or {}).get("오픈일"),
                                               (_tstat.get(n) or {}).get("종료일")) or "")
                 _out["매출"] = _out["매출"].round(0).astype("int64")
-                return _out.sort_values(["구분", "매출"], ascending=[True, False]).reset_index(drop=True)
+                _out["건수"] = _out["건수"].astype("int64")
+                # 이름 단위 합계를 각 줄에 반복해 넣는다 — 합계행을 섞으면 피벗이 깨진다.
+                # ★(구분, 이름) 으로 묶는다. 이름만으로 묶으면 오리지널 프레임 이름이
+                #   IP명과 우연히 같을 때 합계가 섞인다. observed=True 는 카테고리형에
+                #   필수 — 없으면 안 쓰는 조합까지 만들어 낸다.
+                _g = _out.groupby(["구분", "이름"], observed=True)
+                _tot = _g["매출"].transform("sum")
+                _out["IP 매출 합계"] = _tot
+                _out["국가 비중(%)"] = (_out["매출"] / _tot.replace(0, 1) * 100).round(1)
+                _out["건당 평균"] = (_out["매출"] / _out["건수"].replace(0, 1)).round(0).astype("int64")
+                _out["판매 국가 수"] = _g["국가"].transform("nunique")
+                _cols = [c for c in ["구분", "이름", "회차수", "판매기간", "판매 국가 수",
+                                     "IP 매출 합계", "국가", "매출", "국가 비중(%)", "건수",
+                                     "건당 평균", "매장수", "첫거래일", "마지막거래일"]
+                         if c in _out.columns]
+                return (_out[_cols]
+                        .sort_values(["IP 매출 합계", "이름", "매출"], ascending=[False, True, False])
+                        .reset_index(drop=True))
 
             with _q3:
                 _dlb, _dlm = "ph_slot_dl_b", "ph_slot_dl_m"

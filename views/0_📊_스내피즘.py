@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
 import data_io
 import auth
-import data_export  # 필터바 '⬇ 내려받기'(두 대시보드 공용)
 import trend_chart
 
 # ══════════════════════════════════════════════════════════════
@@ -1052,35 +1051,12 @@ def cbfilter(col, label, options, key):
     return _sel()
 
 
-# ── 내려받기 (필터바 오른쪽 끝) ───────────────────────────
-# 포토이즘 views/1 과 같은 구조·같은 자리. ★안의 함수들은 `rev`(= revenue_txns, 이
-#   화면 모든 카드의 공통 기준)를 **호출 시점에** 전역에서 읽는다 — 필터바는 본문보다
-#   먼저 그려지지만 실제로 만드는 건 버튼을 누른 뒤라 그때는 값이 들어 있다.
-# CMS 에서 받는 것처럼 열을 다 붙인다 — 축을 우리가 미리 정해 주지 않는다.
-# ★승인번호·단말기번호는 정산 시트와 맞춰 볼 때 실제로 쓴다(거래 한 건을 짚는 키).
-_DL_RAW_COLS = ["날짜", "결제일시", "국가", "매장 이름", "카테고리", "프레임 이름",
-                "상품 카테고리", "상품 이름", "상품 단가", "쿠폰 할인 금액",
-                "최종 결제 금액", "결제 단위", "KRW환산금액", "쿠폰KRW", "정산금액",
-                "결제 수단", "쿠폰 코드", "쿠폰명", "매입사 이름", "IP 이름", "컬렉션 이름",
-                "키오스크 ID", "단말기번호", "승인번호"]
+# [제거] 필터바 오른쪽 '⬇ 내려받기' — 뺐다(요청, 2026-08-12).
+#        '프레임(IP) 전체 순위' 카드 머리줄의 내려받기가 대신한다.
+#        되살리려면 `git show a49d147` 의 data_export.py · _DL_RAW_COLS ·
+#        _dl_control 을 되돌리고 필터바 컬럼을 한 칸 늘리면 된다.
 
 
-def _dl_control(slot):
-    def _b():
-        r = globals().get("rev")
-        if r is None:
-            raise ValueError("아직 화면이 준비되지 않았어요.")
-        return r
-
-    _dv = list(st.session_state.get("f_date") or [])
-    _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
-    _per = f"{_dv[0]} ~ {_dv[1]}" if len(_dv) == 2 else "전체 기간"
-    data_export.control(slot, page="snapism", prefix=f"snapism_{_sfx}",
-                        get_base=_b, cols=_DL_RAW_COLS,
-                        note=f"<b>✓ 적용된 필터</b> 기준 · {_per} · 취소 제외 · 정산금액(실결제+쿠폰)")
-
-
-# ── 필터바를 @st.fragment 로 격리 → 체크는 이 조각만 가볍게 재실행, '적용'에서 본문 갱신 ──
 default_start = max(last_date - timedelta(days=29), first_date)
 
 
@@ -1088,7 +1064,7 @@ default_start = max(last_date - timedelta(days=29), first_date)
 def _filterbar():
     with st.container(border=True, key="scard-filter"):
         # 필터(5개)는 폭을 넉넉히 채우고 오른쪽 스페이서는 작게(포토이즘 톤)
-        _fb = st.columns([1.0, 0.9, 0.9, 0.9, 0.95, 0.9, 0.5, 0.8, 0.25], gap="small")
+        _fb = st.columns([1.0, 0.9, 0.9, 0.9, 0.95, 0.9, 0.5, 1.05], gap="small")
         with _fb[0]:
             st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
             st.date_input("기간", value=[default_start, last_date],
@@ -1107,15 +1083,9 @@ def _filterbar():
             st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
             if st.button("✓ 적용", key="f_apply", use_container_width=True, type="primary"):
                 st.rerun()
-        _dl_control(_fb[7])
 
 
-# ★필터바는 **자리만 먼저 잡고 나중에 그린다**(2026-08-12, 포토이즘 views/1 과 같음).
-#   내려받기 패널이 `rev`(적용된 필터가 걸린 프레임)를 읽는데, 여기서 바로 그리면
-#   그 값이 아직 없어 "화면을 불러오는 중" 만 나오고 안 바뀐다. 위젯 값은
-#   session_state 에 남아 있어 **위젯을 그리기 전에도 읽을 수 있다.**
-#   (사이엔 화면에 그리는 코드가 없다 — 전부 계산이라 보이는 건 같다.)
-_fbar_slot = st.container()
+_filterbar()
 
 # ── 적용된 필터 = 현재 위젯 상태 (체크 중엔 본문 안 바뀜) ──
 _dv = st.session_state.get("f_date", [default_start, last_date])
@@ -1157,9 +1127,6 @@ sales = paid_sales(df)          # 실결제(카드·현금) 거래 — KPI '실�
 coupons = coupon_txns(df)       # 전액 쿠폰 결제 거래
 cpn_all = pd.concat([coupons, sales[sales["쿠폰 할인 금액"] > 0]])
 rev = revenue_txns(df)          # ★모든 카드의 공통 기준 (정산금액 = 실결제 + 쿠폰)
-
-with _fbar_slot:          # 자리는 위에 잡아 뒀다 — 화면에는 그대로 맨 위에 나온다
-    _filterbar()
 
 
 # ── 타이틀 판매기간·상태 (프레임 순위표에 표시) ──────────────
@@ -1533,7 +1500,11 @@ with tab_cat:
             # 구분선 + 프레임 전체 순위(토글 + 전체폭 표)
             st.markdown('<div style="border-top:1px solid var(--border);margin-top:16px"></div>',
                         unsafe_allow_html=True)
-            _hh, _tt = st.columns([4.2, 5.8], vertical_alignment="center")
+            # ★내려받기 칸은 **자리만 먼저 잡고 표를 만든 뒤에 채운다.** 컬럼 객체는
+            #   컨테이너라 순서를 건너뛰어 나중에 써 넣을 수 있다 — 버튼이 여기서
+            #   눌리는데 그 시점에 fr_all 이 없으면 빈 파일이 나간다(같은 함정을
+            #   필터바·구좌별 상세에서 한 번씩 밟았다).
+            _hh, _tt, _dlc = st.columns([3.3, 5.1, 1.6], vertical_alignment="center")
             with _hh:
                 st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
                             '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
@@ -1544,6 +1515,66 @@ with tab_cat:
             fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
                       .groupby("프레임 이름").agg(매출=("정산금액", "sum"), 건수=("정산금액", "count")).reset_index())
             fr_all = fr_all[fr_all["매출"] > 0]
+
+            def _fr_export():
+                """프레임(IP) 순위를 **한 줄 = IP × 국가** 로 편다(포토이즘 views/1 과 같은 형태).
+
+                ★화면 표를 그대로 뱉으면 받아서 할 게 없다 — 담당자는 이 파일로
+                  IP사 보고(어느 나라에서 얼마)·반응 판단(건당 평균·매장수)·
+                  엑셀 피벗을 한다. 그래서 국가로 펴고 파생 열을 붙인다.
+                  합계행은 안 섞는다(피벗이 깨진다) — 합계는 열로 반복해 넣는다.
+                """
+                _src = _fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
+                if _src.empty:
+                    return pd.DataFrame(columns=["구분", "이름", "국가", "매출", "건수"])
+                _d = (_src.groupby(["_c", "프레임 이름", "국가"], observed=True)
+                      .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"),
+                           매장수=("매장 이름", "nunique"),
+                           첫거래일=("날짜", "min"), 마지막거래일=("날짜", "max")).reset_index())
+                _d = _d[_d["매출"] > 0].rename(columns={"_c": "구분", "프레임 이름": "이름"})
+                if _d.empty:
+                    return _d
+                if _tstat:
+                    def _per_of(n):
+                        s = _tstat.get(n) or {}
+                        o, e = _md(s.get("오픈일")), _md(s.get("종료일"))
+                        return f'{o or "?"} ~ {e or "진행중"}' if s and (o or e) else ""
+                    _d["판매기간"] = _d["이름"].map(_per_of)
+                _d["매출"] = _d["매출"].round(0).astype("int64")
+                _d["건수"] = _d["건수"].astype("int64")
+                # ★(구분, 이름) 으로 묶고 observed=True — 이름만 쓰면 같은 이름이 두
+                #   구분에 걸릴 때 합계가 섞이고, observed 없으면 카테고리형에서
+                #   안 쓰는 조합까지 만들어 낸다.
+                _g = _d.groupby(["구분", "이름"], observed=True)
+                _t = _g["매출"].transform("sum")
+                _d["IP 매출 합계"] = _t
+                _d["국가 비중(%)"] = (_d["매출"] / _t.replace(0, 1) * 100).round(1)
+                _d["건당 평균"] = (_d["매출"] / _d["건수"].replace(0, 1)).round(0).astype("int64")
+                _d["판매 국가 수"] = _g["국가"].transform("nunique")
+                _cs = [c for c in ["구분", "이름", "판매기간", "판매 국가 수", "IP 매출 합계",
+                                   "국가", "매출", "국가 비중(%)", "건수", "건당 평균",
+                                   "매장수", "첫거래일", "마지막거래일"] if c in _d.columns]
+                return (_d[_cs]
+                        .sort_values(["IP 매출 합계", "이름", "매출"], ascending=[False, True, False])
+                        .reset_index(drop=True))
+
+            with _dlc:
+                _db, _dm = "sn_fr_dl_b", "sn_fr_dl_m"
+                _sig = (_tog, str(date_range), tuple(sel_country), tuple(sel_store),
+                        tuple(sel_prod), tuple(sel_cat), tuple(sel_ip))
+                _mm = st.session_state.get(_dm)
+                _pf = f"{date_range[0]}_{date_range[1]}" if len(date_range) == 2 else "전체기간"
+                if st.session_state.get(_db) is not None and _mm and _mm[1] == _sig:
+                    auth.download_button(
+                        f"⬇ {_mm[0]:,}줄", st.session_state[_db],
+                        f"snapism_프레임순위_{_pf}.csv", "text/csv",
+                        key="sn_fr_dl_get", use_container_width=True,
+                        page="snapism", rows=_mm[0])
+                elif st.button("⬇ 내려받기", key="sn_fr_dl_make", use_container_width=True):
+                    _d = _fr_export()
+                    st.session_state[_db] = _d.to_csv(index=False).encode("utf-8-sig")
+                    st.session_state[_dm] = (len(_d), _sig)
+                    st.rerun(scope="fragment")
 
             # 스2: 상태값(신규/확인필요/종료 등) 필터·배지 제거. 판매기간은 지라 오픈~종료로만 표기.
             st.caption(f"프레임(IP) {len(fr_all):,}개 · TOP 10 + 나머지 접기")
