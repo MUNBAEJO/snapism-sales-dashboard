@@ -1056,49 +1056,27 @@ def cbfilter(col, label, options, key):
 # 포토이즘 views/1 과 같은 구조·같은 자리. ★안의 함수들은 `rev`(= revenue_txns, 이
 #   화면 모든 카드의 공통 기준)를 **호출 시점에** 전역에서 읽는다 — 필터바는 본문보다
 #   먼저 그려지지만 실제로 만드는 건 버튼을 누른 뒤라 그때는 값이 들어 있다.
-# 승인번호는 정산 시트와 맞춰 볼 때 실제로 쓰인다(거래 한 건을 특정하는 유일한 키).
+# CMS 에서 받는 것처럼 열을 다 붙인다 — 축을 우리가 미리 정해 주지 않는다.
+# ★승인번호·단말기번호는 정산 시트와 맞춰 볼 때 실제로 쓴다(거래 한 건을 짚는 키).
 _DL_RAW_COLS = ["날짜", "결제일시", "국가", "매장 이름", "카테고리", "프레임 이름",
                 "상품 카테고리", "상품 이름", "상품 단가", "쿠폰 할인 금액",
                 "최종 결제 금액", "결제 단위", "KRW환산금액", "쿠폰KRW", "정산금액",
-                "결제 수단", "단말기번호", "승인번호"]
+                "결제 수단", "쿠폰 코드", "쿠폰명", "매입사 이름", "IP 이름", "컬렉션 이름",
+                "키오스크 ID", "단말기번호", "승인번호"]
 
 
 def _dl_control(slot):
     def _b():
         r = globals().get("rev")
         if r is None:
-            raise ValueError("아직 화면이 준비되지 않았어요. 잠시 뒤 다시 눌러 주세요.")
+            raise ValueError("아직 화면이 준비되지 않았어요.")
         return r
 
-    def _a(keys, by_date=False):
-        # 거래 단위라 '건수' 열이 따로 없다 → 행 수가 곧 건수.
-        return lambda: data_export.agg(_b(), keys, money="정산금액", by_date=by_date)
-
-    # 화면 탭과 같은 순서·같은 이름으로 늘어놓는다(포토이즘 views/1 과 같은 구조).
-    _sections = [
-        ("📊 매출 한눈에", [
-            ("일자별 매출", "일자별", "날짜별 매출·건수", _a(["날짜"], by_date=True)),
-            ("국가별 매출", "국가별", "국가별 매출·건수", _a(["국가"])),
-        ]),
-        ("🎨 IP · 상품", [
-            ("IP(프레임)별", "IP별", "IP구분 × 프레임 이름", _a(["카테고리", "프레임 이름"])),
-            ("상품별", "상품별", "상품 카테고리 × 상품 이름", _a(["상품 카테고리", "상품 이름"])),
-            ("상품 카테고리별", "카테고리별", "와이드스티커·포토카드·폴라릿 …",
-             _a(["상품 카테고리"])),
-        ]),
-        ("🏬 매장별 분석", [
-            ("매장별", "매장별", "국가 · 매장별 매출·건수", _a(["국가", "매장 이름"])),
-        ]),
-        ("🗃 원본", [
-            ("전체 데이터", "전체",
-             f"거래 한 건씩 · 승인번호 포함 · 최대 {data_export.MAX_ROWS:,}행",
-             lambda: data_export.raw(_b(), _DL_RAW_COLS)),
-        ]),
-    ]
     _dv = list(st.session_state.get("f_date") or [])
     _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
     _per = f"{_dv[0]} ~ {_dv[1]}" if len(_dv) == 2 else "전체 기간"
-    data_export.control(slot, page="snapism", prefix=f"snapism_{_sfx}", sections=_sections,
+    data_export.control(slot, page="snapism", prefix=f"snapism_{_sfx}",
+                        get_base=_b, cols=_DL_RAW_COLS,
                         note=f"<b>✓ 적용된 필터</b> 기준 · {_per} · 취소 제외 · 정산금액(실결제+쿠폰)")
 
 

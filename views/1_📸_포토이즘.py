@@ -1406,47 +1406,27 @@ def cbfilter(col, label, options, key, fmt=None):
 # ★안의 함수들은 `sales` 를 **호출 시점에** 전역에서 읽는다 — 필터바는 본문보다
 #   먼저 그려져 인자로 받을 수 없지만, 실제로 만드는 건 버튼을 누른 뒤(= 본문이
 #   한 번 돈 뒤)라 그때는 항상 '적용된 필터'의 프레임이 들어 있다.
-_DL_RAW_COLS = ["날짜", "국가", "브랜드", "IP구분", "구좌", "IP명", "타이틀", "타이틀명",
-                "매장 이름", "결제 단위", "건수", "최종 결제 금액", "쿠폰 할인 금액",
-                "서비스코인", "KRW환산금액", "매출액"]
+# CMS 에서 받는 것처럼 열을 다 붙인다 — 축을 우리가 미리 정해 주지 않는다.
+# 현지 통화(최종 결제 금액·쿠폰·서비스코인)와 원화 환산을 **둘 다** 넣는다.
+# 받는 쪽이 환율을 되짚어 보거나 현지 금액으로 맞춰 볼 일이 있어서다.
+_DL_RAW_COLS = ["날짜", "국가", "국가코드", "매장 이름", "브랜드", "구좌", "IP구분", "IP명",
+                "타이틀", "타이틀명", "대분류", "결제 단위", "건수",
+                "최종 결제 금액", "쿠폰 할인 금액", "서비스코인", "취소금액", "취소건수",
+                "KRW환산금액", "쿠폰KRW", "서비스코인KRW", "취소KRW", "매출액"]
 
 
 def _dl_control(slot):
     def _b():
         s = globals().get("sales")
         if s is None:
-            raise ValueError("아직 화면이 준비되지 않았어요. 잠시 뒤 다시 눌러 주세요.")
+            raise ValueError("아직 화면이 준비되지 않았어요.")
         return s
 
-    def _a(keys, by_date=False):
-        return lambda: data_export.agg(_b(), keys, money="매출액", count="건수", by_date=by_date)
-
-    # 화면 탭과 같은 순서·같은 이름으로 늘어놓는다 — 어느 카드의 숫자인지
-    # 목록만 봐도 알 수 있게(고르는 게 아니라 훑어보고 고르는 화면이다).
-    _sections = [
-        ("📊 매출 한눈에", [
-            ("일자별 매출", "일자별", "날짜별 매출·건수", _a(["날짜"], by_date=True)),
-            ("국가별 매출", "국가별", "국가별 매출·건수", _a(["국가"])),
-        ]),
-        ("🎫 구좌타입 분석", [
-            ("구좌타입별", "구좌타입별", "구좌(BASIC·WITH·EVENT) × IP구분", _a(["구좌", "IP구분"])),
-            ("IP명별 (회차 합산)", "IP명별", "회차를 합쳐 IP 하나로", _a(["IP구분", "IP명"])),
-            ("타이틀별", "타이틀별", "회차를 나눈 그대로 (260711 SM ent …)",
-             _a(["IP구분", "IP명", "타이틀"])),
-        ]),
-        ("🏬 매장별 분석", [
-            ("매장별", "매장별", "국가 · 매장별 매출·건수", _a(["국가", "매장 이름"])),
-        ]),
-        ("🗃 원본", [
-            ("전체 데이터", "전체",
-             f"필터에 걸린 집계 원본 그대로 · 최대 {data_export.MAX_ROWS:,}행",
-             lambda: data_export.raw(_b(), _DL_RAW_COLS)),
-        ]),
-    ]
     _dv = list(st.session_state.get("ph_f_date") or [])
     _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
     _per = f"{_dv[0]} ~ {_dv[1]}" if len(_dv) == 2 else "전체 기간"
-    data_export.control(slot, page="photoism", prefix=f"photoism_{_sfx}", sections=_sections,
+    data_export.control(slot, page="photoism", prefix=f"photoism_{_sfx}",
+                        get_base=_b, cols=_DL_RAW_COLS,
                         note=f"<b>✓ 적용된 필터</b> 기준 · {_per} · 취소 반영 · 금액은 원(KRW)")
 
 
