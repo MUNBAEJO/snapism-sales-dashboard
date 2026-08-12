@@ -56,43 +56,78 @@ def _human(n):
     return f"{n / 1048576:.1f}MB" if n >= 1048576 else f"{max(1, n // 1024):,}KB"
 
 
-def control(slot, *, page, prefix, datasets, note=""):
-    """필터바 칸(slot) 안에 '⬇ 내려받기' 팝오버를 그린다.
+_CSS = """
+<style>
+/* 내려받기 패널 — 목록을 한 화면에 쭉 깔아 보여준다(CMS 다운로드 화면 톤) */
+[data-testid="stPopoverBody"]:has(.dlpanel){ min-width:600px !important; }
+.dlpanel-hd{ font-size:15px; font-weight:800; color:var(--text,#141c2d); margin:0 0 2px; }
+.dlpanel-sub{ font-size:12px; color:var(--text-2,#5b6577); margin:0 0 10px; }
+.dlsec{ font-size:11px; font-weight:800; letter-spacing:.04em; color:var(--text-3,#8a93a5);
+  text-transform:none; margin:12px 0 2px; padding-top:8px; border-top:1px solid var(--border,#e6e9f0); }
+.dlsec.first{ border-top:none; padding-top:0; margin-top:2px; }
+.dlname{ font-size:13.5px; font-weight:700; color:var(--text,#141c2d); line-height:1.35; }
+.dldesc{ font-size:11.5px; color:var(--text-2,#5b6577); line-height:1.35; }
+/* 버튼은 패널 안에서만 작게. .dlpanel 은 위 markdown 이 심는 표식이라
+   `:has()` 로 패널을 짚은 뒤 그 안의 버튼을 고른다(버튼 자체는 감쌀 수 없다). */
+[data-testid="stPopoverBody"]:has(.dlpanel) [data-testid="stButton"] button,
+[data-testid="stPopoverBody"]:has(.dlpanel) [data-testid="stDownloadButton"] button{
+  min-height:0 !important; padding:5px 10px !important; font-size:12px !important;
+  border-radius:8px !important; }
+</style>
+"""
 
-    datasets = {라벨: (파일명조각, 표를 만드는 함수)}
-        ★함수로 받는다 — 고르지도 않은 자료를 미리 만들지 않으려고.
+
+def control(slot, *, page, prefix, sections, note=""):
+    """필터바 칸(slot) 안 '⬇ 내려받기' → **자료 목록을 통째로 펼친 패널**.
+
+    sections = [(구분, [(라벨, 파일명조각, 설명, 표를 만드는 함수), …]), …]
+        ★만드는 건 함수로 받는다 — 패널을 여는 것만으로 CSV 를 만들면 안 된다
+          (포토이즘 694만 행). 누른 줄 하나만 만든다.
+        ★들고 있는 건 **한 개뿐**이다. 여러 개를 동시에 세션에 쥐면 사람 수만큼
+          곱해져 메모리가 터진다 — 다른 줄을 만들면 앞의 것은 버린다.
     """
     kb, km = f"{page}__dl_bytes", f"{page}__dl_meta"
     with slot:
         st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
         with st.popover("⬇ 내려받기", use_container_width=True):
-            st.markdown("**데이터 내려받기**")
-            if note:
-                st.caption(note)
-            lab = st.radio("받을 자료", list(datasets), key=f"{page}__dl_pick")
+            st.markdown(_CSS, unsafe_allow_html=True)
+            st.markdown('<div class="dlpanel"><div class="dlpanel-hd">📥 데이터 내려받기</div>'
+                        f'<div class="dlpanel-sub">{note}</div></div>', unsafe_allow_html=True)
 
-            if st.button("📦 CSV 만들기", key=f"{page}__dl_make",
-                         use_container_width=True, type="primary"):
-                st.session_state.pop(kb, None)      # 옛 파일부터 버린다(메모리)
-                st.session_state.pop(km, None)
-                try:
-                    with st.spinner("만드는 중이에요…"):
-                        d = datasets[lab][1]()
-                        buf = d.to_csv(index=False).encode("utf-8-sig")
-                    if len(buf) > MAX_BYTES:
-                        raise ValueError(f"{_human(len(buf))} 라 너무 커요. 조건을 좁혀 주세요.")
-                    st.session_state[kb] = buf
-                    st.session_state[km] = (lab, len(d), f"{prefix}_{datasets[lab][0]}.csv")
-                except Exception as ex:            # noqa: BLE001
-                    st.warning(str(ex) or "만들지 못했어요. 조건을 바꿔 보세요.")
-
-            meta = st.session_state.get(km)
+            made = st.session_state.get(km)          # (키, 행수, 파일명)
             data = st.session_state.get(kb)
-            if data is not None and meta and meta[0] == lab:
-                auth.download_button(
-                    f"⬇ 받기 · {meta[1]:,}행 · {_human(len(data))}", data, meta[2], "text/csv",
-                    key=f"{page}__dl_get", use_container_width=True,
-                    page=page, rows=meta[1])
-                st.caption("엑셀에서 바로 열려요(UTF-8 BOM). 다른 자료는 고른 뒤 다시 만들어 주세요.")
-            else:
-                st.caption("고른 뒤 **CSV 만들기**를 눌러 주세요.")
+            err = None
+
+            for si, (sec, items) in enumerate(sections):
+                st.markdown(f'<div class="dlsec{" first" if si == 0 else ""}">{sec}</div>',
+                            unsafe_allow_html=True)
+                for lab, frag, desc, fn in items:
+                    key = f"{sec}/{lab}"
+                    c1, c2 = st.columns([2.9, 1.1], vertical_alignment="center")
+                    c1.markdown(f'<div class="dlpanel"><div class="dlname">{lab}</div>'
+                                f'<div class="dldesc">{desc}</div></div>', unsafe_allow_html=True)
+                    with c2:
+                        if made and made[0] == key and data is not None:
+                            auth.download_button(
+                                f"⬇ {made[1]:,}행 · {_human(len(data))}", data, made[2], "text/csv",
+                                key=f"{page}__dlget__{key}", use_container_width=True,
+                                page=page, rows=made[1])
+                        elif st.button("CSV 만들기", key=f"{page}__dlmake__{key}",
+                                       use_container_width=True):
+                            st.session_state.pop(kb, None)   # 옛 파일부터 버린다
+                            st.session_state.pop(km, None)
+                            try:
+                                with st.spinner("만드는 중이에요…"):
+                                    d = fn()
+                                    buf = d.to_csv(index=False).encode("utf-8-sig")
+                                if len(buf) > MAX_BYTES:
+                                    raise ValueError(f"{_human(len(buf))} 라 너무 커요. 조건을 좁혀 주세요.")
+                                st.session_state[kb] = buf
+                                st.session_state[km] = (key, len(d), f"{prefix}_{frag}.csv")
+                                st.rerun(scope="fragment")   # 그 줄을 '받기'로 바꿔 그린다
+                            except Exception as ex:          # noqa: BLE001
+                                err = str(ex) or "만들지 못했어요. 조건을 바꿔 보세요."
+
+            if err:
+                st.warning(err)
+            st.caption("엑셀에서 바로 열려요(UTF-8 BOM) · 한 번에 한 개씩 만들어요.")

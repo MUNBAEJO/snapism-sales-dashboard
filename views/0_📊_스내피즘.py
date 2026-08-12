@@ -1074,18 +1074,32 @@ def _dl_control(slot):
         # 거래 단위라 '건수' 열이 따로 없다 → 행 수가 곧 건수.
         return lambda: data_export.agg(_b(), keys, money="정산금액", by_date=by_date)
 
-    _ds = {
-        "일자별": ("일자별", _a(["날짜"], by_date=True)),
-        "국가별": ("국가별", _a(["국가"])),
-        "매장별": ("매장별", _a(["국가", "매장 이름"])),
-        "IP(프레임)별": ("IP별", _a(["카테고리", "프레임 이름"])),
-        "상품별": ("상품별", _a(["상품 카테고리", "상품 이름"])),
-        "전체 데이터(거래 단위)": ("전체", lambda: data_export.raw(_b(), _DL_RAW_COLS)),
-    }
+    # 화면 탭과 같은 순서·같은 이름으로 늘어놓는다(포토이즘 views/1 과 같은 구조).
+    _sections = [
+        ("📊 매출 한눈에", [
+            ("일자별 매출", "일자별", "날짜별 매출·건수", _a(["날짜"], by_date=True)),
+            ("국가별 매출", "국가별", "국가별 매출·건수", _a(["국가"])),
+        ]),
+        ("🎨 IP · 상품", [
+            ("IP(프레임)별", "IP별", "IP구분 × 프레임 이름", _a(["카테고리", "프레임 이름"])),
+            ("상품별", "상품별", "상품 카테고리 × 상품 이름", _a(["상품 카테고리", "상품 이름"])),
+            ("상품 카테고리별", "카테고리별", "와이드스티커·포토카드·폴라릿 …",
+             _a(["상품 카테고리"])),
+        ]),
+        ("🏬 매장별 분석", [
+            ("매장별", "매장별", "국가 · 매장별 매출·건수", _a(["국가", "매장 이름"])),
+        ]),
+        ("🗃 원본", [
+            ("전체 데이터", "전체",
+             f"거래 한 건씩 · 승인번호 포함 · 최대 {data_export.MAX_ROWS:,}행",
+             lambda: data_export.raw(_b(), _DL_RAW_COLS)),
+        ]),
+    ]
     _dv = list(st.session_state.get("f_date") or [])
     _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
-    data_export.control(slot, page="snapism", prefix=f"snapism_{_sfx}", datasets=_ds,
-                        note="**✓ 적용된 필터** 기준이에요 · 취소 제외 · 정산금액(실결제+쿠폰).")
+    _per = f"{_dv[0]} ~ {_dv[1]}" if len(_dv) == 2 else "전체 기간"
+    data_export.control(slot, page="snapism", prefix=f"snapism_{_sfx}", sections=_sections,
+                        note=f"<b>✓ 적용된 필터</b> 기준 · {_per} · 취소 제외 · 정산금액(실결제+쿠폰)")
 
 
 # ── 필터바를 @st.fragment 로 격리 → 체크는 이 조각만 가볍게 재실행, '적용'에서 본문 갱신 ──

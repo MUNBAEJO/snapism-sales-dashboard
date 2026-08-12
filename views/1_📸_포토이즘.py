@@ -1421,18 +1421,33 @@ def _dl_control(slot):
     def _a(keys, by_date=False):
         return lambda: data_export.agg(_b(), keys, money="매출액", count="건수", by_date=by_date)
 
-    _ds = {
-        "일자별": ("일자별", _a(["날짜"], by_date=True)),
-        "국가별": ("국가별", _a(["국가"])),
-        "매장별": ("매장별", _a(["국가", "매장 이름"])),
-        "타이틀별": ("타이틀별", _a(["IP구분", "IP명", "타이틀"])),
-        "구좌타입별": ("구좌타입별", _a(["구좌", "IP구분"])),
-        "전체 데이터(집계 원본)": ("전체", lambda: data_export.raw(_b(), _DL_RAW_COLS)),
-    }
+    # 화면 탭과 같은 순서·같은 이름으로 늘어놓는다 — 어느 카드의 숫자인지
+    # 목록만 봐도 알 수 있게(고르는 게 아니라 훑어보고 고르는 화면이다).
+    _sections = [
+        ("📊 매출 한눈에", [
+            ("일자별 매출", "일자별", "날짜별 매출·건수", _a(["날짜"], by_date=True)),
+            ("국가별 매출", "국가별", "국가별 매출·건수", _a(["국가"])),
+        ]),
+        ("🎫 구좌타입 분석", [
+            ("구좌타입별", "구좌타입별", "구좌(BASIC·WITH·EVENT) × IP구분", _a(["구좌", "IP구분"])),
+            ("IP명별 (회차 합산)", "IP명별", "회차를 합쳐 IP 하나로", _a(["IP구분", "IP명"])),
+            ("타이틀별", "타이틀별", "회차를 나눈 그대로 (260711 SM ent …)",
+             _a(["IP구분", "IP명", "타이틀"])),
+        ]),
+        ("🏬 매장별 분석", [
+            ("매장별", "매장별", "국가 · 매장별 매출·건수", _a(["국가", "매장 이름"])),
+        ]),
+        ("🗃 원본", [
+            ("전체 데이터", "전체",
+             f"필터에 걸린 집계 원본 그대로 · 최대 {data_export.MAX_ROWS:,}행",
+             lambda: data_export.raw(_b(), _DL_RAW_COLS)),
+        ]),
+    ]
     _dv = list(st.session_state.get("ph_f_date") or [])
     _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
-    data_export.control(slot, page="photoism", prefix=f"photoism_{_sfx}", datasets=_ds,
-                        note="**✓ 적용된 필터** 기준이에요 · 취소 반영 · 금액은 원(KRW).")
+    _per = f"{_dv[0]} ~ {_dv[1]}" if len(_dv) == 2 else "전체 기간"
+    data_export.control(slot, page="photoism", prefix=f"photoism_{_sfx}", sections=_sections,
+                        note=f"<b>✓ 적용된 필터</b> 기준 · {_per} · 취소 반영 · 금액은 원(KRW)")
 
 
 # ── 필터바를 @st.fragment 로 격리 → 체크박스 조작은 이 조각만 가볍게 재실행되고,
