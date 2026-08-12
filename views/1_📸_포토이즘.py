@@ -23,7 +23,6 @@ from guide_content import render_guide
 import ip_classify  # IP구분/IP명 분류 공용 모듈
 import photoism_rules  # 매출액 가산 규칙(쿠폰·코인 국가)
 import auth
-import data_export  # 필터바 '⬇ 내려받기'(두 대시보드 공용)
 import trend_chart  # '매출 추이' 카드(두 대시보드 공용)
 
 # ══════════════════════════════════════════════════════════════
@@ -1400,34 +1399,10 @@ def cbfilter(col, label, options, key, fmt=None):
     return _sel()
 
 
-# ── 내려받기 (필터바 오른쪽 끝) ───────────────────────────
-# 예전엔 '시간대·데이터' 탭 안에 있었는데 그 탭을 감추면서 아무도 못 받게 됐다.
-# 조건을 고르는 줄 끝에 두면 "지금 보고 있는 것을 받는다"가 그대로 읽힌다.
-# ★안의 함수들은 `sales` 를 **호출 시점에** 전역에서 읽는다 — 필터바는 본문보다
-#   먼저 그려져 인자로 받을 수 없지만, 실제로 만드는 건 버튼을 누른 뒤(= 본문이
-#   한 번 돈 뒤)라 그때는 항상 '적용된 필터'의 프레임이 들어 있다.
-# CMS 에서 받는 것처럼 열을 다 붙인다 — 축을 우리가 미리 정해 주지 않는다.
-# 현지 통화(최종 결제 금액·쿠폰·서비스코인)와 원화 환산을 **둘 다** 넣는다.
-# 받는 쪽이 환율을 되짚어 보거나 현지 금액으로 맞춰 볼 일이 있어서다.
-_DL_RAW_COLS = ["날짜", "국가", "국가코드", "매장 이름", "브랜드", "구좌", "IP구분", "IP명",
-                "타이틀", "타이틀명", "대분류", "결제 단위", "건수",
-                "최종 결제 금액", "쿠폰 할인 금액", "서비스코인", "취소금액", "취소건수",
-                "KRW환산금액", "쿠폰KRW", "서비스코인KRW", "취소KRW", "매출액"]
-
-
-def _dl_control(slot):
-    def _b():
-        s = globals().get("sales")
-        if s is None:
-            raise ValueError("아직 화면이 준비되지 않았어요.")
-        return s
-
-    _dv = list(st.session_state.get("ph_f_date") or [])
-    _sfx = f"{_dv[0]}_{_dv[1]}" if len(_dv) == 2 else "전체기간"
-    _per = f"{_dv[0]} ~ {_dv[1]}" if len(_dv) == 2 else "전체 기간"
-    data_export.control(slot, page="photoism", prefix=f"photoism_{_sfx}",
-                        get_base=_b, cols=_DL_RAW_COLS,
-                        note=f"<b>✓ 적용된 필터</b> 기준 · {_per} · 취소 반영 · 금액은 원(KRW)")
+# [제거] 필터바 오른쪽 '⬇ 내려받기' — 뺐다(요청, 2026-08-12).
+#        '구좌별 상세' 카드 머리줄에 있는 내려받기가 대신한다.
+#        되살리려면 git 9bce232 이전의 _DL_RAW_COLS · _dl_control 을 되돌리고
+#        필터바 컬럼을 한 칸 늘려 _dl_control(_fb[6]) 을 부르면 된다.
 
 
 # ── 필터바를 @st.fragment 로 격리 → 체크박스 조작은 이 조각만 가볍게 재실행되고,
@@ -1436,7 +1411,7 @@ def _dl_control(slot):
 def _filterbar():
     with st.container(border=True, key="scard-filter"):
         # 필터는 왼쪽으로 모아 컴팩트하게(마지막은 빈 스페이서)
-        _fb = st.columns([0.92, 0.8, 0.8, 0.8, 0.86, 0.5, 0.78, 2.58], gap="small")
+        _fb = st.columns([0.92, 0.8, 0.8, 0.8, 0.86, 0.5, 3.36], gap="small")
         with _fb[0]:
             st.markdown('<div class="fbl">기간</div>', unsafe_allow_html=True)
             st.date_input("기간", value=[default_start, last_date],
@@ -1458,16 +1433,9 @@ def _filterbar():
             st.markdown('<div class="fbl">&nbsp;</div>', unsafe_allow_html=True)
             if st.button("✓ 적용", key="ph_f_apply", use_container_width=True, type="primary"):
                 st.rerun()   # scope 기본=app → 본문(탭·차트) 한 번에 갱신
-        _dl_control(_fb[6])
 
 
-# ★필터바는 **자리만 먼저 잡고 나중에 그린다**(2026-08-12).
-#   내려받기 패널이 `sales`(적용된 필터가 걸린 프레임)를 읽는데, 여기서 바로
-#   그리면 그 값이 아직 없어 "화면을 불러오는 중" 만 나오고 안 바뀐다.
-#   위젯 값은 session_state 에 남아 있어 **위젯을 그리기 전에도 읽을 수 있다** →
-#   값 읽기·집계를 먼저 하고, 다 끝난 뒤 이 자리에 필터바를 그린다.
-#   (사이에 화면에 그리는 코드는 없다 — 전부 계산이라 순서를 바꿔도 보이는 건 같다.)
-_fbar_slot = st.container()
+_filterbar()
 
 # ── 적용된 필터 = 현재 위젯 상태 (본문 재실행 시 읽음. 체크 중에는 본문 안 바뀜) ──
 _dv = st.session_state.get("ph_f_date", [default_start, last_date])
@@ -1506,9 +1474,6 @@ if len(date_range) == 2:
     df = scope[(scope["날짜"] >= date_range[0]) & (scope["날짜"] <= date_range[1])]
 
 sales = paid_sales(df)
-
-with _fbar_slot:          # 자리는 위에 잡아 뒀다 — 화면에는 그대로 맨 위에 나온다
-    _filterbar()
 
 
 # ── 타이틀 판매기간 (타이틀 순위표에 표시) ────────────────
