@@ -22,6 +22,11 @@
   python theme_backfill.py --months 2            # 이번 실행은 2개월만
   python theme_backfill.py --from 2025-01        # 시작 월 지정(기본 2025-01)
   python theme_backfill.py --retry               # 빠진 국가만 다시 (그 국가만 받는다)
+  python theme_backfill.py --range 2026-08-01 2026-08-11   # 날짜 구간을 그대로
+
+★--range 를 둔 이유 — 월 단위 백필은 **이번 달을 건너뛴다**(매일 수집이 채운다고
+  보고). 그런데 테마를 매일 수집에 넣은 게 2026-08-12 라, 그 사이 **2026-08-01~11
+  이 아무도 안 채운 구간**으로 남았다. 이런 틈을 손으로 메울 수 있어야 한다.
 """
 import json
 import sys
@@ -153,6 +158,19 @@ def main():
 
     cfg = json.load(open(S.CONFIG_FILE, encoding="utf-8"))["photoism"]
     codes = list(cfg["countries"].keys())
+
+    if "--range" in a:
+        i = a.index("--range")
+        s = date.fromisoformat(a[i + 1])
+        e = date.fromisoformat(a[i + 2])
+        print(f"구간 수집: {s} ~ {e} · {len(codes)}개국 · 간격 {DELAY}s")
+        S.log(f"########## 테마 구간 수집 {s} ~ {e} ##########")
+        S.collect(s, e, codes, DELAY, write_sm=False)   # SM 리포트는 안 건드린다
+        miss = sorted(set(S.LAST_SKIPPED))
+        S.log(f"########## 구간 끝 · 누적 {_rows():,}행"
+              + (f" · 빠진 국가 {','.join(miss)}" if miss else "") + " ##########")
+        print(f"끝 · 누적 {_rows():,}행" + (f" · 빠진 국가 {','.join(miss)}" if miss else ""))
+        return
 
     st = _load()
     todo = [m for m in _months(since) if m not in st["done"]][:limit]
