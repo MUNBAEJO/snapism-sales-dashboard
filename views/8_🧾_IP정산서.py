@@ -168,6 +168,16 @@ def _ticket_box(brand: str):
     q = st.text_input(
         "티켓번호 또는 IP명", key=f"tk_{brand}", label_visibility="collapsed",
         placeholder="CANDIP-12345 · 여러 장이면 쉼표로 · IP명으로 찾아도 돼요").strip()
+    # ★찾는 대상이 바뀌면 **이전 IP의 체크 상태를 버린다**(2026-08-13).
+    #   위젯 키가 한 번 생기면 스트림릿은 `value=` 를 무시하고 세션 값을 쓴다.
+    #   그래서 이름으로 찾아 해제해 둔 타이틀이, 나중에 티켓번호를 직접 넣어도
+    #   (그때는 기본 선택인데) 해제된 채로 남았다. 고른 게 없으면 만들기 구역이
+    #   통째로 사라져 화면에서는 '눌러도 반응이 없다'로 보인다.
+    if st.session_state.get(f"_q_{brand}") != q:
+        st.session_state[f"_q_{brand}"] = q
+        for _k in [k for k in st.session_state
+                   if k.startswith((f"ck_{brand}_", f"tkpick_{brand}_"))]:
+            del st.session_state[_k]
     if not q:
         return [], [], {}, []
 
@@ -310,6 +320,28 @@ def make_panel():
     if not any(t for t, _ in picks.values()):
         st.info("위에 티켓번호나 IP명을 넣어 주세요. 포토이즘·스내피즘 중 한쪽만 있어도 돼요.")
         return
+
+    # ── 대상이 바뀌면 앞 건의 흔적을 지운다 ────────────────────────────
+    # ★★안 지우면 **다른 IP 문서를 그대로 물고 간다**(2026-08-13 발견).
+    #   `_pdfs`·`_meta` 는 발행할 때 넣고 어디서도 지우지 않았다. A 를 만든 뒤
+    #   티켓을 B 로 바꾸면 화면 아래 '✅ A 정산서 완성'과 내려받기, **메일 첨부까지
+    #   A 것**이 남는다. 그 상태로 보내면 B 담당자에게 A 문서가 간다.
+    # ★IP명도 같은 병이다 — key 가 있으면 스트림릿이 `value=` 를 무시해서
+    #   다음 IP 로 넘어가도 이름 칸이 앞 IP 그대로였다(문서 제목·발행 이력이 어긋난다).
+    # 축을 둘로 나눈다 — 타이틀 체크를 하나 더 넣었다고 **손으로 적은 IP명까지
+    # 되돌리면** 그것도 사고다. 이름은 '다른 건으로 옮겼을 때'만 다시 잡는다.
+    _tsig = "‖".join(f"{b}:{','.join(tks)}" for b, (tks, _) in sorted(picks.items()))
+    _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}"
+                    for b, (tks, titles) in sorted(picks.items())) + f"‖{S}‖{E}"
+    if st.session_state.get("_sig") != _sig:
+        st.session_state["_sig"] = _sig
+        for _k in ("_pdfs", "_meta", "reason",
+                   "mail_to", "mail_cc", "mail_note", "mail_files"):
+            st.session_state.pop(_k, None)      # mail_files 는 남으면 예외까지 난다
+    if st.session_state.get("_tsig") != _tsig or "ipname" not in st.session_state:
+        st.session_state["_tsig"] = _tsig
+        _t0 = next((t[0] for _, t in picks.values() if t), "")
+        st.session_state["ipname"] = re.sub(r"^\s*\d{5,8}\s*", "", str(_t0)).strip()
 
     # ── 확정 저장 ─────────────────────────────────────────────────────
     # ★확정 매핑은 **타이틀 하나에 티켓 하나**다. 티켓을 여러 장 담아도 저장은
@@ -506,9 +538,9 @@ def make_panel():
 
     # ── 만들기 ────────────────────────────────────────────────────────
     ui_theme.sec(4, "정산서 만들기")
-    _t = next((t[0] for _, t in picks.values() if t), "")
-    ip = st.text_input("정산서에 표기할 IP명", key="ipname",
-                       value=re.sub(r"^\s*\d{5,8}\s*", "", str(_t)).strip())
+    # 기본값은 위 '대상이 바뀌면' 블록에서 채운다 — 여기서 value= 를 주면
+    # 세션 값과 부딪혀 스트림릿이 무시하고, 앞 IP 이름이 그대로 남는다.
+    ip = st.text_input("정산서에 표기할 IP명", key="ipname")
     ipn = ip.strip()
 
     nextv = sc.issue_version(ipn, S, E) if ipn else 1
@@ -542,11 +574,17 @@ def make_panel():
         stop.append("정정 사유 미입력")
     if need_save:
         stop.append("타이틀 확정 필요")
+    # ★버튼이 **꺼져 있다는 걸 버튼 자리에서** 말해야 한다(2026-08-13).
+    #   전엔 이유를 위쪽에 노란 줄로만 띄웠는데, 버튼과 이어져 보이지 않아
+    #   "눌러도 반응이 없다"는 문의가 왔다. 실제로는 남은 일이 있어 꺼진 것이었다.
     if stop:
-        st.warning("먼저 정리할 게 있어요 — " + " · ".join(stop))
+        ui_theme.nbox("warn", "⛔ <b>아직 못 만들어요</b> — 아래 버튼이 꺼져 있어요."
+                              "<div class='sub'>" + " · ".join(stop) + "</div>")
 
     if st.button("📄 정산서 만들기", type="primary", use_container_width=True,
-                 disabled=not CAN_EDIT or bool(stop)):
+                 disabled=not CAN_EDIT or bool(stop),
+                 help=("남은 일: " + " · ".join(stop)) if stop else
+                      ("편집 권한이 있어야 발행할 수 있어요." if not CAN_EDIT else None)):
         with st.spinner("PDF 를 만드는 중이에요…"):
             # 티켓 목록을 그대로 넘긴다 — build_context 가 타이틀을 합쳐 한 장으로 만든다.
             ctx = sc.build_context({b: t for b, (t, _) in picks.items() if t},
