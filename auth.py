@@ -687,6 +687,29 @@ def require_login() -> str:
     return email
 
 
+_BOOT_AT = datetime.datetime.now().strftime("%m-%d %H:%M")
+
+
+def _code_stamp() -> str:
+    """이 프로세스가 물고 있는 코드가 어느 것인지 — 기동 시각 + 커밋 7자리.
+
+    ★2026-08-13 여기서 한 시간을 태웠다. 정산서를 고쳐 놓고도 화면이 그대로라
+      '서버가 옛 코드를 물고 있나'를 **확인할 방법이 없어** 추측으로 재시작했다.
+      (재시작하니 풀렸지만 캐시·세션도 같이 지워져서 원인은 끝내 못 갈랐다.)
+      한 줄 찍어 두면 다음엔 눈으로 바로 갈린다.
+    ★subprocess 대신 .git 을 직접 읽는다 — 매 rerun 마다 git 을 띄울 순 없고,
+      모듈 임포트는 프로세스당 한 번이라 '지금 도는 코드'를 정확히 가리킨다.
+    """
+    try:
+        head = (BASE_DIR / ".git" / "HEAD").read_text(encoding="utf-8").strip()
+        if head.startswith("ref:"):
+            head = (BASE_DIR / ".git" / head.split(" ", 1)[1].strip()
+                    ).read_text(encoding="utf-8").strip()
+        return f"기동 {_BOOT_AT} · {head[:7]}"
+    except Exception:                                   # noqa: BLE001
+        return f"기동 {_BOOT_AT}"
+
+
 def render_sidebar_account() -> None:
     """사이드바 좌하단 고정: 현재 계정(아바타·이메일·권한) + 로그아웃.
     st.sidebar 안에 그려서 사이드바를 접으면 함께 사라지고 너비도 사이드바에 맞춰진다.
@@ -695,6 +718,8 @@ def render_sidebar_account() -> None:
     _RL = {"owner": "소유자", "editor": "에디터", "viewer": "뷰어"}
     role = _RL.get(get_role(email), "승인 계정")
     initial = (email[:1] or "?").upper()
+    # 운영 정보라 소유자에게만 보인다 — 담당자 화면에 버전 문자열이 뜰 이유가 없다.
+    _stamp = f" · {_code_stamp()}" if is_owner(email) else ""
     st.sidebar.markdown(
         f"""
         <style>
@@ -731,7 +756,7 @@ def render_sidebar_account() -> None:
           <div class="avatar">{initial}</div>
           <div class="meta">
             <div class="nm" title="{email}">{email}</div>
-            <div class="rl">{role}</div>
+            <div class="rl">{role}{_stamp}</div>
           </div>
           <a class="logout" href="/auth/logout" target="_self">로그아웃</a>
         </div>
