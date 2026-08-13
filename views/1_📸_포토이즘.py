@@ -118,6 +118,12 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .ntr:not(.nth):hover{ background:var(--surface-2); }
 .ntr .r{ text-align:right; } .ntr .c{ text-align:center; }
 .nname{ font-weight:700; }
+/* 타이틀 → 테마 → 프레임 계층. 서랍을 겹칠 수 없어 들여쓰기로 층을 낸다. */
+.thtree .thr{ background:#fbfcff; border-top:1px solid #eef0f7; }
+.thtree .thr .nname{ font-weight:800; }
+.thtree .fmr{ padding-top:3px; padding-bottom:3px; }
+.thtree .fname{ padding-left:15px; font-size:12.5px; color:var(--text-2); }
+.thtree .fmore{ padding-left:15px; font-size:12px; color:var(--text-3); }
 /* '전체' 탭에서 아티스트·캐릭터·PICK·렌탈이 한 줄에 섞여 나오므로 구분을 이름 옆에 단다 */
 .gtag{ margin-left:7px; font-weight:600; font-size:11px; color:var(--text-2);
        background:#f1f3f9; border:1px solid #e5e8f2; border-radius:6px;
@@ -722,6 +728,10 @@ def load_orig():
 
 
 # ── 타이틀 하나의 프레임별 매출 (원본 on-demand) ─────────────────────────
+# ※2026-08-13 현재 **화면에서 안 쓴다.** 프레임을 테마 리포트 쪽에서 캐도록 바꿨다
+#   (타이틀 → 테마 → 프레임 층이 한 표에 있어야 어긋나지 않는다). 다만 이쪽은
+#   **매장·브랜드 필터가 걸린다** — 테마 리포트엔 매장이 없다. 매장별 프레임을
+#   다시 봐야 하면 이 함수를 그대로 쓰면 된다. 그래서 지우지 않고 남겨 둔다.
 # ★집계(agg)에는 프레임이 없다 — 넣으면 그룹 수가 폭증해 파일이 감당이 안 된다.
 #   그래서 프레임을 볼 땐 **고른 타이틀만** 원본 parquet 에서 캔다. 범위가 좁아
 #   1,385만 행을 훑어도 0.5초쯤이고, 펼칠 때만 부르니 평소엔 부담이 0이다.
@@ -773,7 +783,10 @@ def load_frames(raw_titles, start_date, end_date, countries=(), stores=(), brand
 #   환산은 국가코드 → 결제단위 → config 환율 순서로, 원장(`_load_data`)과 같은 표를 쓴다.
 @st.cache_data(ttl=300, max_entries=16, show_spinner="테마를 세는 중이에요…")
 def _load_themes(raw_titles, start_date, end_date, ccodes=()):
-    """[테마, 국가코드, 주문수, 촬영수, 현지금액] — 원화 환산은 부르는 쪽에서."""
+    """[테마, 프레임, 국가코드, 건수, 촬영수, 현지금액] — 원화 환산은 부르는 쪽에서.
+
+    ★타이틀 → 테마 → 프레임이 **한 표에 다 있다.** 그래서 계층을 그대로 낼 수 있다.
+      원장으로는 못 하는 일이다 — 원장엔 테마가 아예 없다."""
     if not raw_titles or not THEME_FILE.exists():
         return pd.DataFrame()
     try:
@@ -796,14 +809,15 @@ def _load_themes(raw_titles, start_date, end_date, ccodes=()):
         pass
     try:
         d = con.execute(f"""
-            SELECT COALESCE(NULLIF(TRIM(CAST("테마" AS VARCHAR)), ''), '(이름 없음)') AS "테마",
+            SELECT COALESCE(NULLIF(TRIM(CAST("테마"   AS VARCHAR)), ''), '(이름 없음)') AS "테마",
+                   COALESCE(NULLIF(TRIM(CAST("프레임" AS VARCHAR)), ''), '(이름 없음)') AS "프레임",
                    LOWER(CAST("국가코드" AS VARCHAR)) AS "국가코드",
                    CAST(SUM(TRY_CAST("주문수"       AS DOUBLE)) AS BIGINT) AS "건수",
                    CAST(SUM(TRY_CAST("촬영수"       AS DOUBLE)) AS BIGINT) AS "촬영수",
                           SUM(TRY_CAST("최종결제금액" AS DOUBLE))          AS "현지금액"
             FROM read_parquet('{str(THEME_FILE).replace(chr(92), "/")}')
             WHERE {" AND ".join(where)}
-            GROUP BY 1, 2
+            GROUP BY 1, 2, 3
         """).df()
     except Exception:
         d = pd.DataFrame()
@@ -813,17 +827,59 @@ def _load_themes(raw_titles, start_date, end_date, ccodes=()):
 
 
 def load_themes(raw_titles, start_date, end_date, ccodes=(), unit_map=None):
-    """테마별 원화 매출. unit_map = {국가코드: 결제단위} (원장에서 뽑아 넘긴다)."""
+    """[테마, 프레임, 매출(원), 건수] — 원화 환산까지 끝난 표.
+    unit_map = {국가코드: 결제단위} (원장에서 뽑아 넘긴다 — 표를 두 벌 두면 어긋난다)."""
     d = _load_themes(tuple(raw_titles), start_date, end_date, tuple(ccodes))
     if d.empty:
         return d
     ex = load_exchange_rates()
     rate = d["국가코드"].map(lambda c: ex.get(str((unit_map or {}).get(c, "")).strip(), 1))
-    d["매출"] = (d["현지금액"] * pd.to_numeric(rate, errors="coerce").fillna(1)).round(0)
-    g = (d.groupby("테마", as_index=False)
-           .agg(매출=("매출", "sum"), 건수=("건수", "sum"), 촬영수=("촬영수", "sum")))
+    d = d.assign(매출=(d["현지금액"] * pd.to_numeric(rate, errors="coerce").fillna(1)).round(0))
+    g = (d.groupby(["테마", "프레임"], as_index=False)
+           .agg(매출=("매출", "sum"), 건수=("건수", "sum")))
     g["매출"] = g["매출"].astype("int64")
     return g[g["매출"] > 0].sort_values("매출", ascending=False)
+
+
+def theme_tree(dframe, top_themes=8, top_frames=6):
+    """타이틀 → 테마 → 프레임 계층을 한 덩어리로 그린다.
+
+    ★서랍(expander)을 겹칠 수 없어서 계층을 **들여쓴 한 표**로 낸다 — 클릭 없이
+      한눈에 읽히는 게 이 화면의 목적이기도 하다.
+    비중 막대는 **테마는 타이틀 안에서**, **프레임은 그 테마 안에서** 잰다.
+    """
+    th = (dframe.groupby("테마", as_index=False)
+          .agg(매출=("매출", "sum"), 건수=("건수", "sum"))
+          .sort_values("매출", ascending=False))
+    tot = int(th["매출"].sum()) or 1
+    html = ['<div class="ntbl thtree">']
+    for _, t in th.head(top_themes).iterrows():
+        _tf = (t["매출"] / tot)
+        html.append(
+            f'<div class="ntr thr" style="grid-template-columns:1.7fr 1.3fr .8fr 1.5fr">'
+            f'<span class="nname">🎨 {t["테마"]}</span>'
+            f'<span class="r num">{fmt_krw(t["매출"])}</span>'
+            f'<span class="r num" style="color:var(--text-2)">{int(t["건수"]):,}</span>'
+            f'{pct_bar(_tf, 1.0)}</div>')
+        fr = dframe[dframe["테마"] == t["테마"]].sort_values("매출", ascending=False)
+        fmx = (fr["매출"] / t["매출"]).max() if t["매출"] else 1.0
+        for _, f in fr.head(top_frames).iterrows():
+            html.append(
+                f'<div class="ntr fmr" style="grid-template-columns:1.7fr 1.3fr .8fr 1.5fr">'
+                f'<span class="fname">└ {f["프레임"]}</span>'
+                f'<span class="r num">{fmt_krw(f["매출"])}</span>'
+                f'<span class="r num" style="color:var(--text-3)">{int(f["건수"]):,}</span>'
+                f'{pct_bar((f["매출"] / t["매출"]) if t["매출"] else 0, fmx)}</div>')
+        if len(fr) > top_frames:
+            html.append(f'<div class="ntr fmr"><span class="fmore">└ 외 프레임 '
+                        f'{len(fr) - top_frames}개 · {fmt_krw(int(fr["매출"].iloc[top_frames:].sum()))}'
+                        f'</span></div>')
+    if len(th) > top_themes:
+        _rest = th["매출"].iloc[top_themes:]
+        html.append(f'<div class="ntr thr"><span class="fmore">🎨 외 테마 {len(_rest)}개 · '
+                    f'{fmt_krw(int(_rest.sum()))}</span></div>')
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 
 # ── 장비(키오스크) ─────────────────────────────────────────────
@@ -2209,10 +2265,15 @@ with tab_ip:
                                         f"{k} {v * 100:.0f}%" for k, v in _rows2[:5]))
                             rank_table(_t, _KEY, collapse_after=10, tag_map=_tag,
                                        status_map=(_tstat or None) if _KEY == "타이틀" else None)
-                            # ── 프레임별로 보기 ─────────────────────────
-                            # 집계엔 프레임이 없다 → 고른 것만 원본에서 캔다.
+                            # ── 타이틀 → 테마 → 프레임 ──────────────────
+                            # ★한 서랍에서 **층을 다 보여 준다.** 전엔 '프레임별'과
+                            #   '테마별'을 나란한 서랍 두 개로 뒀는데, 그러면 어느
+                            #   프레임이 어느 테마에 딸린 건지가 안 보인다.
+                            # ★프레임을 원장이 아니라 테마 리포트에서 캔다 — 한 표에
+                            #   타이틀·테마·프레임이 다 있어야 층이 어긋나지 않는다.
+                            #   대신 이 리포트엔 매장이 없다(아래 안내에 적어 뒀다).
                             _opt = _t.sort_values("매출", ascending=False)[_KEY].astype(str).tolist()
-                            with st.expander(f"🖼 프레임별로 보기 ({_KEY} 하나를 골라요)"):
+                            with st.expander(f"🎨 테마 · 프레임별로 보기 ({_KEY} 하나를 골라요)"):
                                 _pk = st.selectbox(
                                     _KEY, _opt[:200], key=f"ph_fr_pick_{_g}",
                                     label_visibility="collapsed")
@@ -2223,44 +2284,20 @@ with tab_ip:
                                     st.caption("합쳐진 타이틀 " + str(len(_raws)) + "개 — "
                                                + " · ".join(_raws[:6])
                                                + (" 외" if len(_raws) > 6 else ""))
-                                _fr = (load_frames(tuple(_raws), date_range[0], date_range[1],
-                                                   tuple(sel_countries), tuple(sel_stores),
-                                                   tuple(sel_brands))
-                                       if _raws and len(date_range) == 2 else pd.DataFrame())
-                                if _fr.empty:
-                                    st.info("이 조건에선 프레임 데이터가 없어요.")
-                                else:
-                                    st.caption(f"프레임 {len(_fr):,}개 · 매출 "
-                                               f"{fmt_krw(int(_fr['매출'].sum()))} "
-                                               "· 실결제 기준(쿠폰·코인 제외)")
-                                    # ★여긴 '프레임별로 보기' expander 안이다 →
-                                    #   더보기를 체크박스로(중첩 expander 금지).
-                                    rank_table(_fr.rename(columns={"프레임": "_n"}),
-                                               "_n", collapse_after=10,
-                                               nested_key=f"ph_fr_more_{_g}")
-                            # ── 테마별로 보기 ───────────────────────────
-                            # ★원장엔 테마가 없다. CMS 프레임 리포트에만 있는 값이라
-                            #   **따로 캐서 나란히** 보여 준다(조인은 안 된다 — 위 주석).
-                            with st.expander(f"🎨 테마별로 보기 ({_KEY} 하나를 골라요)"):
-                                _tk = st.selectbox(
-                                    _KEY, _opt[:200], key=f"ph_th_pick_{_g}",
-                                    label_visibility="collapsed")
-                                _traws = sorted(set(
-                                    _sub.loc[_sub[_KEY].astype(str) == _tk, "타이틀명"]
-                                    .dropna().astype(str)))
-                                _th = (load_themes(_traws, date_range[0], date_range[1],
+                                _th = (load_themes(_raws, date_range[0], date_range[1],
                                                    _sel_ccodes, _UNIT_MAP)
-                                       if _traws and len(date_range) == 2 else pd.DataFrame())
+                                       if _raws and len(date_range) == 2 else pd.DataFrame())
                                 if _th.empty:
                                     st.info("이 조건에선 테마 데이터가 없어요. "
                                             "오리지널은 이 리포트에 안 들어와요.")
                                 else:
-                                    st.caption(f"테마 {len(_th):,}개 · 매출 "
-                                               f"{fmt_krw(int(_th['매출'].sum()))} "
-                                               "· 실결제 기준(쿠폰·코인 제외) · 원화 환산")
-                                    rank_table(_th.rename(columns={"테마": "_n"}),
-                                               "_n", collapse_after=10,
-                                               nested_key=f"ph_th_more_{_g}")
+                                    st.caption(
+                                        f"테마 {_th['테마'].nunique():,}개 · "
+                                        f"프레임 {len(_th):,}개 · 매출 "
+                                        f"{fmt_krw(int(_th['매출'].sum()))} "
+                                        "· 실결제 기준(쿠폰·코인 제외) · 원화 환산 "
+                                        "· 매장 필터는 안 걸려요(날짜·국가만)")
+                                    theme_tree(_th)
         helpbox("""
 **구좌별 상세**
 - **묶기 `타이틀` / `IP명(회차 합산)`** — 같은 IP가 회차마다 다른 타이틀로 갈려요
@@ -2273,15 +2310,23 @@ with tab_ip:
     배지는 **매출이 가장 큰 구분**이고, 마우스를 올리면 `아티스트 90% · PICK 10%` 처럼 구성이 다 보여요.
   - `+N` 은 **1위 구분이 90%가 안 될 때만** 붙여요 (예: `⭐ PICK +2` = 가나디는 PICK 75% · 캐릭터 24%).
     안 그러면 거의 모든 줄에 붙어서 표시의 의미가 없어져요(1위 점유율 중앙값이 98.8%예요).
-- **🖼 프레임별로 보기** — 고른 타이틀(또는 IP)의 **프레임별 순위**. 집계엔 프레임이 없어서
-  (넣으면 그룹이 폭증해요) **펼칠 때만** 원본에서 캐요 — 그래서 평소엔 안 느려요.
-  ※ 이 표만 **실결제 기준**이에요(쿠폰·코인 가산 전). 위 순위와 합계가 조금 달라요.
-- **🎨 테마별로 보기** — 한 타이틀 안에서 **어느 테마가 팔렸는지**. 예를 들어 `260505 코르티스`는
-  `260505_GREENGREEN` 과 `260420_REDRED` 두 테마로 갈려요.
-  - 테마는 **거래 원장에 없는 값**이에요. CMS 프레임 리포트에만 있어서 **따로 캐서 나란히** 보여줘요.
-    원장과 붙이지는 않아요 — (타이틀, 프레임) 조합이 테마에 유일하지 않아서 붙이면 매출이 불어나요.
-  - 금액은 **현지통화**로 들어와서 원장과 같은 환율로 **원화 환산**해요. 프레임 표와 같은 **실결제 기준**이고,
-    실제로 같은 조건에서 원장 실결제 합계와 **1원까지 맞아요**(코르티스 2026-07: 165,044,000원).
+- **🎨 테마 · 프레임별로 보기** — 고른 타이틀(또는 IP)을 **타이틀 → 테마 → 프레임** 으로 펼쳐요.
+
+  ```
+  🎨 260505_GREENGREEN   91,750,000원
+     └ 건호               40,406,000원
+     └ 주훈               19,089,000원
+  🎨 260420_REDRED       73,154,000원
+     └ 주훈               19,999,000원
+  ```
+  - `260505 코르티스` 한 타이틀이 **두 테마로 갈리고**, 그 아래 **프레임(멤버)** 이 붙어요.
+  - 비중 막대는 **테마는 타이틀 안에서**, **프레임은 그 테마 안에서** 재요.
+  - 테마·프레임은 **거래 원장에 없어요.** CMS 프레임 리포트에만 있는 값이라 거기서 캐요 —
+    원장과 붙이지는 않아요((타이틀, 프레임) 조합이 테마에 유일하지 않아 붙이면 매출이 불어나요).
+  - 금액은 **현지통화**로 들어와서 원장과 같은 환율로 **원화 환산**해요. **실결제 기준**(쿠폰·코인 가산 전)이라
+    위 순위와 합계가 조금 달라요. 같은 조건에서 원장 실결제와는 **1원까지 맞아요**
+    (코르티스 2026-07: 165,044,000원).
+  - ⚠️ **매장 필터가 안 걸려요**(날짜·국가만). 이 리포트엔 매장이 없어요.
   - ⚠️ **오리지널은 이 리포트에 안 들어와요.** 오리지널 탭에서는 테마를 볼 수 없어요.
   - 데이터는 **2025-01-01부터** 있어요.
 - **전체 / 아티스트 / 캐릭터 / PICK / 렌탈** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**.
