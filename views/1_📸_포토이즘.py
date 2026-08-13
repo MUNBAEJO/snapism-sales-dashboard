@@ -429,6 +429,7 @@ PARQUET_FILE = BASE_DIR / "data" / "master_photoism.parquet"
 MASTER_FILE  = BASE_DIR / "data" / "master_photoism.csv"
 CONFIG_FILE  = BASE_DIR / "config.json"
 DEVICE_FILE  = BASE_DIR / "data" / "devices.parquet"   # 장비관리 CMS(device_ingest.py)
+THEME_FILE   = BASE_DIR / "data" / "theme_daily.parquet"  # CMS 프레임 리포트(테마 축)
 
 # 국가별 매출액 가산 규칙 (쿠폰/서비스코인 포함 국가)
 # ★정의는 photoism_rules.py 한 곳에 둔다 — 런 비교 페이지도 같은 값을 써야
@@ -758,6 +759,67 @@ def load_frames(raw_titles, start_date, end_date, countries=(), stores=(), brand
     finally:
         con.close()
     return d[d["매출"] > 0] if not d.empty else d
+
+
+# ── 타이틀 하나의 테마별 매출 (CMS 프레임 리포트) ────────────────────────
+# ★거래 원장에는 **테마가 없다.** 테마는 CMS 프레임 리포트에만 있는 값이라
+#   원장과 붙일 수가 없다 — (타이틀, 프레임) 조합이 테마에 유일하지 않아서
+#   조인하면 매출이 불어난다. 그래서 **별도 집계**로 나란히 보여 준다.
+# ★금액은 **현지통화**로 들어 있다. 원장과 같은 잣대로 보려면 원화로 환산해야 한다.
+#   환산은 국가코드 → 결제단위 → config 환율 순서로, 원장(`_load_data`)과 같은 표를 쓴다.
+@st.cache_data(ttl=300, max_entries=16, show_spinner="테마를 세는 중이에요…")
+def _load_themes(raw_titles, start_date, end_date, ccodes=()):
+    """[테마, 국가코드, 주문수, 촬영수, 현지금액] — 원화 환산은 부르는 쪽에서."""
+    if not raw_titles or not THEME_FILE.exists():
+        return pd.DataFrame()
+    try:
+        import duckdb
+    except Exception:
+        return pd.DataFrame()
+
+    def _q(vals):
+        return ",".join("'" + str(v).replace("'", "''") + "'" for v in vals)
+
+    where = [f'"타이틀" IN ({_q(raw_titles)})',
+             f"TRY_CAST(\"날짜\" AS DATE) BETWEEN DATE '{start_date}' AND DATE '{end_date}'"]
+    if ccodes:
+        where.append(f'LOWER(CAST("국가코드" AS VARCHAR)) IN ({_q(c.lower() for c in ccodes)})')
+    con = duckdb.connect()
+    try:
+        con.execute("PRAGMA memory_limit='512MB'")
+        con.execute("PRAGMA threads=2")
+    except Exception:
+        pass
+    try:
+        d = con.execute(f"""
+            SELECT COALESCE(NULLIF(TRIM(CAST("테마" AS VARCHAR)), ''), '(이름 없음)') AS "테마",
+                   LOWER(CAST("국가코드" AS VARCHAR)) AS "국가코드",
+                   CAST(SUM(TRY_CAST("주문수"       AS DOUBLE)) AS BIGINT) AS "건수",
+                   CAST(SUM(TRY_CAST("촬영수"       AS DOUBLE)) AS BIGINT) AS "촬영수",
+                          SUM(TRY_CAST("최종결제금액" AS DOUBLE))          AS "현지금액"
+            FROM read_parquet('{str(THEME_FILE).replace(chr(92), "/")}')
+            WHERE {" AND ".join(where)}
+            GROUP BY 1, 2
+        """).df()
+    except Exception:
+        d = pd.DataFrame()
+    finally:
+        con.close()
+    return d
+
+
+def load_themes(raw_titles, start_date, end_date, ccodes=(), unit_map=None):
+    """테마별 원화 매출. unit_map = {국가코드: 결제단위} (원장에서 뽑아 넘긴다)."""
+    d = _load_themes(tuple(raw_titles), start_date, end_date, tuple(ccodes))
+    if d.empty:
+        return d
+    ex = load_exchange_rates()
+    rate = d["국가코드"].map(lambda c: ex.get(str((unit_map or {}).get(c, "")).strip(), 1))
+    d["매출"] = (d["현지금액"] * pd.to_numeric(rate, errors="coerce").fillna(1)).round(0)
+    g = (d.groupby("테마", as_index=False)
+           .agg(매출=("매출", "sum"), 건수=("건수", "sum"), 촬영수=("촬영수", "sum")))
+    g["매출"] = g["매출"].astype("int64")
+    return g[g["매출"] > 0].sort_values("매출", ascending=False)
 
 
 # ── 장비(키오스크) ─────────────────────────────────────────────
@@ -1925,6 +1987,15 @@ with tab_ip:
             _KEY = "타이틀" if _grp == "타이틀" else "IP명"
             _gall = ["전체"] + _detail_gubuns + _orig_gubuns
 
+            # 테마 리포트는 국가를 **코드**로, 금액을 **현지통화**로 들고 있다.
+            # 원장에 둘 다 있으니 여기서 뽑아 넘긴다 — 따로 표를 두면 어긋난다.
+            _cc = sales[["국가", "국가코드", "결제 단위"]].drop_duplicates("국가코드")
+            _UNIT_MAP = {str(k).lower(): str(v).strip()
+                         for k, v in zip(_cc["국가코드"], _cc["결제 단위"])}
+            _sel_ccodes = (sorted({str(c).lower() for c in
+                                   _cc.loc[_cc["국가"].isin(list(sel_countries)), "국가코드"]})
+                           if sel_countries else [])
+
             # ★오리지널 집계를 **머리줄보다 먼저** 만든다 — 내려받기가 이걸 읽는데,
             #   버튼은 머리줄에서 눌리므로 그 시점에 값이 있어야 한다.
             #   (같은 실수를 필터바 내려받기에서 한 번 했다 — 2026-08-12)
@@ -2126,6 +2197,29 @@ with tab_ip:
                                     rank_table(_fr.rename(columns={"프레임": "_n"}),
                                                "_n", collapse_after=10,
                                                nested_key=f"ph_fr_more_{_g}")
+                            # ── 테마별로 보기 ───────────────────────────
+                            # ★원장엔 테마가 없다. CMS 프레임 리포트에만 있는 값이라
+                            #   **따로 캐서 나란히** 보여 준다(조인은 안 된다 — 위 주석).
+                            with st.expander(f"🎨 테마별로 보기 ({_KEY} 하나를 골라요)"):
+                                _tk = st.selectbox(
+                                    _KEY, _opt[:200], key=f"ph_th_pick_{_g}",
+                                    label_visibility="collapsed")
+                                _traws = sorted(set(
+                                    _sub.loc[_sub[_KEY].astype(str) == _tk, "타이틀명"]
+                                    .dropna().astype(str)))
+                                _th = (load_themes(_traws, date_range[0], date_range[1],
+                                                   _sel_ccodes, _UNIT_MAP)
+                                       if _traws and len(date_range) == 2 else pd.DataFrame())
+                                if _th.empty:
+                                    st.info("이 조건에선 테마 데이터가 없어요. "
+                                            "오리지널은 이 리포트에 안 들어와요.")
+                                else:
+                                    st.caption(f"테마 {len(_th):,}개 · 매출 "
+                                               f"{fmt_krw(int(_th['매출'].sum()))} "
+                                               "· 실결제 기준(쿠폰·코인 제외) · 원화 환산")
+                                    rank_table(_th.rename(columns={"테마": "_n"}),
+                                               "_n", collapse_after=10,
+                                               nested_key=f"ph_th_more_{_g}")
         helpbox("""
 **구좌별 상세**
 - **묶기 `타이틀` / `IP명(회차 합산)`** — 같은 IP가 회차마다 다른 타이틀로 갈려요
@@ -2136,6 +2230,14 @@ with tab_ip:
 - **🖼 프레임별로 보기** — 고른 타이틀(또는 IP)의 **프레임별 순위**. 집계엔 프레임이 없어서
   (넣으면 그룹이 폭증해요) **펼칠 때만** 원본에서 캐요 — 그래서 평소엔 안 느려요.
   ※ 이 표만 **실결제 기준**이에요(쿠폰·코인 가산 전). 위 순위와 합계가 조금 달라요.
+- **🎨 테마별로 보기** — 한 타이틀 안에서 **어느 테마가 팔렸는지**. 예를 들어 `260505 코르티스`는
+  `260505_GREENGREEN` 과 `260420_REDRED` 두 테마로 갈려요.
+  - 테마는 **거래 원장에 없는 값**이에요. CMS 프레임 리포트에만 있어서 **따로 캐서 나란히** 보여줘요.
+    원장과 붙이지는 않아요 — (타이틀, 프레임) 조합이 테마에 유일하지 않아서 붙이면 매출이 불어나요.
+  - 금액은 **현지통화**로 들어와서 원장과 같은 환율로 **원화 환산**해요. 프레임 표와 같은 **실결제 기준**이고,
+    실제로 같은 조건에서 원장 실결제 합계와 **1원까지 맞아요**(코르티스 2026-07: 165,044,000원).
+  - ⚠️ **오리지널은 이 리포트에 안 들어와요.** 오리지널 탭에서는 테마를 볼 수 없어요.
+  - 데이터는 **2025-01-01부터** 있어요.
 - **전체 / 아티스트 / 캐릭터 / PICK / 렌탈** = `타이틀`(날짜+IP)별 매출액·건수 순위 + **판매기간**.
   - `IP명` 으로 묶으면 **판매기간은 안 붙어요** — 회차가 여럿이라 한 기간으로 못 적어요.
   - 오리지널을 뺀 나머지 구분은 자동으로 탭이 생겨요 — `IP_GUBUN_SHOWN` 만 고치면 돼요.
