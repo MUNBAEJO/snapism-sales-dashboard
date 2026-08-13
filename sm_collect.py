@@ -18,6 +18,7 @@ CMS `/v1/revenue/frame` 의 totalShootCount(=Artist별 촬영수)를 국가별�
 보안: 자격증명/토큰/요청본문은 절대 출력하지 않는다.
 """
 import json
+import os
 import re
 import sys
 import time
@@ -258,12 +259,58 @@ def collect(start: date, end: date, codes, delay: int, write_sm: bool = True):
     return sm
 
 
+def _file_lock(path, timeout=600.0, stale=900.0):
+    """읽기-수정-쓰기 한 덩어리를 감싸는 파일 락. auth.py 의 방식과 같다.
+
+    ★없어서 사고가 났다(2026-08-13). 스케줄러의 SM PICK 백필과 테마 재시도가
+      겹쳐 돌면서 **같은 parquet 을 동시에 읽고 덮어썼다.** 로그에 저장 총행수가
+      26,085 → 13,268 → 26,302 처럼 오르내렸다 — 늦게 읽은 쪽이 먼저 쓴 쪽을
+      통째로 날린 것(lost update). 이번엔 마지막 쓰기가 온전해 데이터는 살았지만
+      **sm_shoot_daily 는 담당자에게 나가는 리포트**라 한 번만 어긋나도 안 된다.
+    ★수집은 몇 분씩 걸리므로 대기를 넉넉히(10분), 죽은 락은 15분 뒤 무시한다.
+    """
+    lp = path.with_suffix(path.suffix + ".lock")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            fd = os.open(str(lp), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return lp
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lp) > stale:
+                    log(f"[경고] {lp.name} 이 {stale:.0f}s 넘게 남아 있어 무시하고 진행")
+                    os.unlink(lp)
+                    continue
+            except OSError:
+                pass
+            time.sleep(1.0)
+        except OSError:
+            return None                     # 락을 못 만들어도 저장은 한다(최소 보장)
+    log(f"[경고] {lp.name} 대기 {timeout:.0f}s 초과 — 락 없이 진행한다")
+    return None
+
+
 def _upsert(path, new, sort_keys):
     """이번에 받은 (날짜·국가) 조합을 통째로 갈아끼운다 — 시차·정착 변동 반영.
 
     ★부분 갱신이 아니라 **조합 단위 교체**다. 그 날·그 나라에서 사라진 행
       (취소로 0이 된 테마 등)이 옛 값으로 남지 않게 하려는 것.
+    ★읽기부터 쓰기까지 **락 안에서** 한다 — 이유는 _file_lock 주석 참고.
     """
+    lock = _file_lock(path)
+    try:
+        _upsert_locked(path, new, sort_keys)
+    finally:
+        if lock:
+            try:
+                os.unlink(lock)
+            except OSError:
+                pass
+
+
+def _upsert_locked(path, new, sort_keys):
     path.parent.mkdir(exist_ok=True)
     if path.exists():
         try:
