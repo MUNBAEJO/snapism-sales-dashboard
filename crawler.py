@@ -36,23 +36,41 @@ def log(msg):
         f.write(line + "\n")
 
 
+LOGIN_TRIES = 3          # 로그인 재시도 횟수 (20s → 40s → 60s)
+
+
 def login(page, url, username, password, site_key):
-    log(f"로그인: {url}/login")
-    page.goto(f"{url}/login", timeout=20000)
-    page.wait_for_load_state("networkidle")
+    """로그인. **실패하면 시간을 늘려 다시 시도한다**(2026-08-13 추가).
 
-    page.fill('input[name="user_id"]', username)
-    page.fill('input[name="password"]', password)
-
+    ★포토이즘 쪽에서 같은 자리가 사고를 냈다 — 로그인 한 번 실패로 스페인이
+      사흘 통째로 비었고, 롤링 창이 지나가 영구 구멍이 됐다. 여기는 롤링이
+      14일이라 훨씬 너그럽지만, 2025-05-10~29 처럼 19일이 빈 적이 실제로 있다.
+    ★goto 예외를 잡지 않고 있었다 — 페이지 로드가 실패하면 그대로 터졌다.
+    """
+    for i in range(LOGIN_TRIES):
+        timeout = 20000 * (i + 1)
+        log(f"로그인: {url}/login" + (f"  (재시도 {i + 1}/{LOGIN_TRIES} · {timeout // 1000}s)" if i else ""))
+        try:
+            page.goto(f"{url}/login", timeout=timeout)
+            page.wait_for_load_state("networkidle")
+            page.fill('input[name="user_id"]', username)
+            page.fill('input[name="password"]', password)
+            with page.expect_navigation(timeout=15000 * (i + 1)):
+                page.click('button[type="submit"]')
+            log(f"로그인 성공 -> {page.url}")
+            return True
+        except PWTimeout:
+            log(f"[실패] 로그인 타임아웃 ({i + 1}/{LOGIN_TRIES})")
+        except Exception as e:                      # noqa: BLE001 — 페이지 로드 실패 등
+            log(f"[오류] 로그인 중 오류 ({i + 1}/{LOGIN_TRIES}): {str(e).splitlines()[0][:120]}")
+        if i < LOGIN_TRIES - 1:
+            time.sleep(5 * (i + 1))
     try:
-        with page.expect_navigation(timeout=15000):
-            page.click('button[type="submit"]')
-        log(f"로그인 성공 -> {page.url}")
-        return True
-    except PWTimeout:
         page.screenshot(path=str(LOG_DIR / f"{site_key}_login_fail.png"))
-        log(f"[실패] 로그인 타임아웃. 스크린샷 저장됨.")
-        return False
+        log("[실패] 로그인 최종 실패. 스크린샷 저장됨.")
+    except Exception:                               # noqa: BLE001
+        log("[실패] 로그인 최종 실패.")
+    return False
 
 
 def set_date_range(page, start_str, end_str):
