@@ -135,35 +135,61 @@ EXCEL_COLUMNS = [
 ]
 
 
+LOGIN_TRIES = 3          # 로그인 재시도 횟수 (30s → 60s → 90s)
+
+
 def get_jwt_token(page, url: str, username: str, password: str, country_code: str) -> str:
-    """Playwright로 로그인 후 JWT 토큰 추출"""
-    log(f"로그인: {url}")
-    try:
-        page.goto(url, timeout=30000)
-        page.wait_for_load_state("networkidle")
-    except Exception as e:
-        log(f"[오류] 페이지 로드 실패: {e}")
-        return ""
+    """Playwright로 로그인 후 JWT 토큰 추출. **실패하면 시간을 늘려 다시 시도한다.**
 
-    if "/home" in page.url:
-        log("이미 로그인됨 → 토큰 추출")
-    else:
+    ★한 번 실패하면 그 나라의 **그 창(LOOKBACK_DAYS=3일) 전체가 빈 채로 굳는다.**
+      다음 날 실행은 창이 하루 밀려 옛 날짜를 다시 안 받기 때문이다. 실제로
+      스페인이 그렇게 2026-08-07~09 사흘이 비었고, 커버리지 점검 메일이 매일 왔다.
+    ★호스트가 죽은 게 아니라 **30초 제한 앞뒤에서 오락가락**하는 것이다 —
+      같은 날 09:07 성공 / 09:07 실패 / 10:19 실패 / 10:21 성공(37초 걸림).
+      유럽 CMS 가 특히 느리다. 그래서 재시도할 때 제한도 같이 늘린다.
+    """
+    for i in range(LOGIN_TRIES):
+        timeout = 30000 * (i + 1)
+        log(f"로그인: {url}" + (f"  (재시도 {i + 1}/{LOGIN_TRIES} · {timeout // 1000}s)" if i else ""))
         try:
-            page.fill('input[type="text"]', username)
-            page.fill('input[type="password"]', password)
-            with page.expect_navigation(timeout=15000):
-                page.click('button[type="submit"]')
-            log(f"로그인 성공 → {page.url}")
-        except PWTimeout:
-            log("[실패] 로그인 타임아웃")
-            return ""
+            page.goto(url, timeout=timeout)
+            page.wait_for_load_state("networkidle")
         except Exception as e:
-            log(f"[오류] 로그인 중 오류: {e}")
+            log(f"[오류] 페이지 로드 실패: {str(e).splitlines()[0][:120]}")
+            if i < LOGIN_TRIES - 1:
+                time.sleep(5 * (i + 1))
+                continue
             return ""
 
-    # localStorage에서 JWT 토큰 추출
-    token = page.evaluate("() => localStorage.getItem('token') || ''")
-    return token or ""
+        if "/home" in page.url:
+            log("이미 로그인됨 → 토큰 추출")
+        else:
+            try:
+                page.fill('input[type="text"]', username)
+                page.fill('input[type="password"]', password)
+                with page.expect_navigation(timeout=15000 * (i + 1)):
+                    page.click('button[type="submit"]')
+                log(f"로그인 성공 → {page.url}")
+            except PWTimeout:
+                log("[실패] 로그인 타임아웃")
+                if i < LOGIN_TRIES - 1:
+                    time.sleep(5 * (i + 1))
+                    continue
+                return ""
+            except Exception as e:
+                log(f"[오류] 로그인 중 오류: {str(e).splitlines()[0][:120]}")
+                if i < LOGIN_TRIES - 1:
+                    time.sleep(5 * (i + 1))
+                    continue
+                return ""
+
+        token = page.evaluate("() => localStorage.getItem('token') || ''")
+        if token:
+            return token
+        log("[경고] 토큰이 비어 있음")
+        if i < LOGIN_TRIES - 1:
+            time.sleep(5 * (i + 1))
+    return ""
 
 
 def download_excel_api(cmsapi_url: str, token: str, country_code: str,
@@ -321,7 +347,13 @@ def main():
     #   photoism_crawler.py                    → 최근 3일(어제~3일 전)
     #   photoism_crawler.py 2026-07-05         → 그 하루만(하위호환)
     #   photoism_crawler.py 2026-07-01 2026-07-05 → 기간 지정
+    #   photoism_crawler.py 2026-08-07 2026-08-09 --only es → 그 나라만(구멍 메우기)
     args = sys.argv[1:]
+    only = []
+    if "--only" in args:
+        _i = args.index("--only")
+        only = [c.strip().lower() for c in args[_i + 1].split(",") if c.strip()]
+        args = args[:_i] + args[_i + 2:]
     try:
         if len(args) >= 1:
             start = datetime.strptime(args[0], "%Y-%m-%d").date()
@@ -347,6 +379,13 @@ def main():
     if not countries:
         log("[오류] config.json에 photoism.countries 설정 없음")
         sys.exit(1)
+
+    if only:      # 구멍 난 나라만 다시 받을 때 — 전 국가를 훑지 않아 CMS 부담이 적다
+        countries = {c: v for c, v in countries.items() if c.lower() in only}
+        if not countries:
+            log(f"[오류] --only {','.join(only)} 에 해당하는 국가가 설정에 없어요")
+            sys.exit(1)
+        log(f"대상 국가 한정: {', '.join(countries)}")
 
     RAW_DIR.mkdir(exist_ok=True)
     LOG_DIR.mkdir(exist_ok=True)
