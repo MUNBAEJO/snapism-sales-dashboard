@@ -458,6 +458,9 @@ _GUB_COLORS = {"아티스트": BRAND2, "캐릭터": TEAL, "PICK": PINK,
                "오리지널(포토이즘)": AMBER, "오리지널(기본)": "#7c77ee", "렌탈": SKY}
 _GUB_EMOJI  = {"아티스트": "🎤", "캐릭터": "🧸", "PICK": "⭐",
                "오리지널(포토이즘)": "🎨", "오리지널(기본)": "🖼", "렌탈": "🏪"}
+# 테마 비중 도넛용 색 — IP구분 색과 같은 계열에서 돌려 쓴다(화면 전체가 한 팔레트).
+# 마지막 회색은 '기타 N개' 몫이다.
+_GUB_CYCLE = [BRAND2, TEAL, PINK, AMBER, "#7c77ee", SKY, "#c7ccd6"]
 
 
 def flag_url(name):
@@ -873,11 +876,12 @@ def load_themes(raw_titles, start_date, end_date, ccodes=(), unit_map=None):
 
 
 @st.cache_data(ttl=300, max_entries=8, show_spinner="테마를 모으는 중이에요…")
-def _load_theme_titles(start_date, end_date, ccodes=()):
-    """[타이틀, 국가코드, 테마수, 건수, 현지 금액 3종] — **전 타이틀**을 한 번에.
+def _load_theme_all(start_date, end_date, ccodes=()):
+    """[타이틀명, 테마, 프레임, 국가코드, 건수, 현지 금액 3종] — **전 타이틀** 한 번에.
 
-    ★테마 탭의 순위(IP·타이틀별)를 그리려면 전체가 필요하다. 타이틀 하나씩
-      부르면 수백 번 질의하게 된다. 날짜·국가로 좁힌 뒤 한 번만 훑는다.
+    ★구좌별 상세의 줄마다 접기를 붙이는데, 접기 본문은 **펼치지 않아도 먼저 돈다**
+      (스트림릿 함정 — 내려받기 패널에서 한 번 밟았다). 줄마다 질의하면 열 줄이면
+      열 번이다. 기간 전체를 한 번만 읽어 두고 메모리에서 쪼갠다.
     """
     if not THEME_FILE.exists():
         return pd.DataFrame()
@@ -898,15 +902,16 @@ def _load_theme_titles(start_date, end_date, ccodes=()):
     try:
         d = con.execute(f"""
             SELECT CAST("타이틀" AS VARCHAR) AS "타이틀명",
+                   COALESCE(NULLIF(TRIM(CAST("테마"   AS VARCHAR)), ''), '(이름 없음)') AS "테마",
+                   COALESCE(NULLIF(TRIM(CAST("프레임" AS VARCHAR)), ''), '(이름 없음)') AS "프레임",
                    LOWER(CAST("국가코드" AS VARCHAR)) AS "국가코드",
-                   COUNT(DISTINCT "테마") AS "테마수",
                    CAST(SUM(TRY_CAST("주문수" AS DOUBLE)) AS BIGINT) AS "건수",
                           SUM(TRY_CAST("최종결제금액" AS DOUBLE))     AS "최종 결제 금액",
                           SUM(TRY_CAST("쿠폰할인금액" AS DOUBLE))     AS "쿠폰 할인 금액",
                           SUM(TRY_CAST("서비스코인"   AS DOUBLE))     AS "서비스코인"
             FROM read_parquet('{str(THEME_FILE).replace(chr(92), "/")}')
             WHERE {" AND ".join(where)}
-            GROUP BY 1, 2
+            GROUP BY 1, 2, 3, 4
         """).df()
     except Exception:
         d = pd.DataFrame()
@@ -915,18 +920,47 @@ def _load_theme_titles(start_date, end_date, ccodes=()):
     return d
 
 
-def theme_titles(start_date, end_date, ccodes=(), unit_map=None):
-    """타이틀별 테마 매출(원화). 국가별 통화가 섞이므로 환산 후 합친다."""
-    d = _load_theme_titles(start_date, end_date, tuple(ccodes))
+def theme_all(start_date, end_date, ccodes=(), unit_map=None):
+    """[타이틀명, 테마, 프레임, 매출, 건수] — 원장과 같은 기준으로 환산까지 끝난 표."""
+    d = _load_theme_all(start_date, end_date, tuple(ccodes))
     if d.empty:
         return d
     d = _theme_revenue(d, unit_map)
-    g = (d.groupby("타이틀명", as_index=False)
-           .agg(매출=("매출액", "sum"), 건수=("건수", "sum"),
-                테마수=("테마수", "max"), 국가수=("국가코드", "nunique")))
+    g = (d.groupby(["타이틀명", "테마", "프레임"], as_index=False)
+           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")))
     g["매출"] = g["매출"].astype("int64")
     return g[g["매출"] > 0]
 
+
+def _theme_portion(one, key_label=""):
+    """한 IP/타이틀의 **테마 · 프레임 구성**을 '매출 한눈에' 처럼 그린다.
+    one = theme_all 결과에서 그 대상만 잘라 온 표(타이틀명·테마·프레임·매출·건수)."""
+    if one is None or one.empty:
+        st.caption("이 조건에선 테마 데이터가 없어요.")
+        return
+    _tot = int(one["매출"].sum())
+    _th = (one.groupby("테마", as_index=False).agg(매출=("매출", "sum"), 건수=("건수", "sum"))
+           .sort_values("매출", ascending=False))
+    _fr = (one.groupby("프레임", as_index=False).agg(매출=("매출", "sum"), 건수=("건수", "sum"))
+           .sort_values("매출", ascending=False))
+    st.caption(f"테마 {len(_th):,}개 · 프레임 {len(_fr):,}개 · 매출 {fmt_krw(_tot)}"
+               " · 실결제+쿠폰·코인 기준 · 매장 필터는 안 걸려요")
+    c1, c2 = st.columns([4.2, 5.8])
+    with c1:
+        st.markdown('<div class="ct">🎨 테마 비중</div>', unsafe_allow_html=True)
+        _top = _th.head(6)
+        _etc = int(_th["매출"].iloc[6:].sum()) if len(_th) > 6 else 0
+        _pairs = list(zip(_top["테마"].astype(str), _top["매출"]))
+        if _etc:
+            _pairs.append((f"기타 {len(_th) - 6}개", _etc))
+        css_donut(_pairs, _GUB_CYCLE[:len(_pairs)], size=118, hole=34, legend_fs=12)
+    with c2:
+        st.markdown('<div class="ct">🎨 테마별 매출</div>', unsafe_allow_html=True)
+        hbar_list(_th, "테마", top=8, show_pct=True)
+    st.markdown('<div class="ct" style="margin-top:10px">🖼 프레임별 매출 '
+                '<span class="muted">아티스트는 멤버 단위예요</span></div>',
+                unsafe_allow_html=True)
+    hbar_list(_fr, "프레임", top=10, show_pct=True)
 
 def theme_tree(dframe, top_themes=8, top_frames=6):
     """타이틀 → 테마 → 프레임 계층을 한 덩어리로 그린다.
@@ -1908,16 +1942,16 @@ SHOW_TAB_DETAIL = False
 SHOW_NAT_TITLE = False
 # 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. st.tabs 는 안 열어도 매 rerun 마다
 #      모든 탭을 실행(런 빌드가 무겁다)하므로, 탭엔 무거운 연산 대신 전용 페이지 링크만 둔다.
-_tab_labels = ["📊 매출 한눈에", "🎫 구좌타입 분석", "🎨 테마 분석", "🌏 국가별 분석",
-               "🏬 매장별 분석", "🆚 런 비교"]
+_tab_labels = ["📊 매출 한눈에", "🎫 구좌타입 분석", "🌏 국가별 분석", "🏬 매장별 분석",
+               "🆚 런 비교"]
 if SHOW_TAB_DETAIL:
     _tab_labels.append("🔎 세부 항목")
 if SHOW_TAB_ETC:
     _tab_labels.append("⏰ 시간대 · 데이터")
 _tabs = st.tabs(_tab_labels)
-(tab_home, tab_ip, tab_theme, tab_nat,
- tab_store, tab_runs) = (_tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4], _tabs[5])
-_ti = 6
+tab_home, tab_ip, tab_nat, tab_store, tab_runs = (_tabs[0], _tabs[1], _tabs[2],
+                                                  _tabs[3], _tabs[4])
+_ti = 5
 tab_detail = _tabs[_ti] if SHOW_TAB_DETAIL else None
 _ti += 1 if SHOW_TAB_DETAIL else 0
 tab_etc = _tabs[_ti] if SHOW_TAB_ETC else None
@@ -2156,6 +2190,26 @@ with tab_ip:
             _KEY = "타이틀" if _grp == "타이틀" else "IP명"
             _gall = ["전체"] + _detail_gubuns + _orig_gubuns
 
+            # ── 테마 표는 여기서 **한 번만** 읽는다 ────────────────────
+            # 줄마다 접기를 붙이는데 접기 본문은 펼치지 않아도 먼저 돈다.
+            # 줄마다 질의하면 열 줄이면 열 번이라, 기간 전체를 한 번 읽어 두고 쪼갠다.
+            _cc = sales[["국가", "국가코드", "결제 단위"]].drop_duplicates("국가코드")
+            _UNIT_MAP = {str(k).lower(): str(v).strip()
+                         for k, v in zip(_cc["국가코드"], _cc["결제 단위"])}
+            _sel_ccodes = (sorted({str(c).lower() for c in
+                                   _cc.loc[_cc["국가"].isin(list(sel_countries)), "국가코드"]})
+                           if sel_countries else [])
+            _thall = (theme_all(date_range[0], date_range[1], _sel_ccodes, _UNIT_MAP)
+                      if len(date_range) == 2 else pd.DataFrame())
+            if not _thall.empty:
+                # 테마 리포트엔 IP명이 없다 — 원장의 타이틀→IP 로 잇는다.
+                # 묶기가 '타이틀' 이면 타이틀명 자체가 키다.
+                _ipof = (sales[["타이틀명", "타이틀" if _KEY == "타이틀" else "IP명"]]
+                         .dropna().astype(str).drop_duplicates("타이틀명")
+                         .set_index("타이틀명").iloc[:, 0].to_dict())
+                _thall = _thall.assign(_ip=_thall["타이틀명"].map(_ipof))
+                _thall = _thall[_thall["_ip"].notna()]
+
             # 테마 리포트는 국가를 **코드**로, 금액을 **현지통화**로 들고 있다.
             # 원장에 둘 다 있으니 여기서 뽑아 넘긴다 — 따로 표를 두면 어긋난다.
             _cc = sales[["국가", "국가코드", "결제 단위"]].drop_duplicates("국가코드")
@@ -2333,10 +2387,43 @@ with tab_ip:
                         if _t.empty:
                             st.info("해당 조건에 맞는 게 없어요. 검색어나 날짜·국가·매장 필터를 바꿔 보세요.")
                         else:
-                            # 판매기간(지라)은 **타이틀**에만 붙는다 — IP명으로 합치면
-                            # 회차가 여럿이라 한 기간으로 못 적는다.
-                            rank_table(_t, _KEY, collapse_after=10,
-                                       status_map=(_tstat or None) if _KEY == "타이틀" else None)
+                            # ── 줄마다 접기 — 누르면 그 자리에서 테마·프레임 구성 ──
+                            # ★요청(2026-08-18): 별도 탭 말고 **여기서 바로** 펼쳐 보기.
+                            #   'SM ent 를 누르면 테마별·프레임별 매출 포션이 나온다'.
+                            # ★테마 표는 위에서 **한 번만** 읽어 온다(_thall). 접기 본문은
+                            #   펼치지 않아도 먼저 도니까, 줄마다 질의하면 열 줄이면 열 번이다.
+                            # ★오리지널 구분은 이 블록에 안 온다(위 분기에서 갈림) —
+                            #   테마 리포트에 오리지널이 없어 열어도 빈 화면이라 접기를 안 만든다.
+                            # ★정렬을 여기서 한다 — 전엔 rank_table 이 **안에서**
+                            #   정렬해 줘서 이 표는 정렬 없이 넘겨도 됐다. 접기로
+                            #   바꾸며 그걸 넘겨받지 않아 순위가 뒤죽박죽이 됐다.
+                            _t = _t.sort_values("매출", ascending=False)
+                            _tot = int(_t["매출"].sum()) or 1
+                            _stat = (_tstat or {}) if _KEY == "타이틀" else {}
+                            for _n, (_, _row) in enumerate(_t.head(10).iterrows(), 1):
+                                _nm = str(_row[_KEY])
+                                _fr = _row["매출"] / _tot
+                                _per = ""
+                                if _stat.get(_nm):
+                                    _p = _period_str(_stat[_nm].get("오픈일"),
+                                                     _stat[_nm].get("종료일"))
+                                    _per = f"  ·  {_p}" if _p else ""
+                                with st.expander(
+                                        f"**{_n}. {_nm}**　{fmt_krw(_row['매출'])}　"
+                                        f"{int(_row['건수']):,}건　{_fr * 100:.1f}%{_per}"):
+                                    _one = (_thall[_thall["_ip"].astype(str) == _nm]
+                                            if not _thall.empty else pd.DataFrame())
+                                    _theme_portion(_one, _nm)
+                            if len(_t) > 10:
+                                with st.expander(f"나머지 {len(_t) - 10:,}개 더보기 "
+                                                 f"· 11~{len(_t):,}위"):
+                                    # 여긴 접기 안이라 rank_table 의 더보기를 체크박스로
+                                    rank_table(_t.iloc[10:], _KEY, collapse_after=40,
+                                               nested_key=f"ph_slot_rest_{_g}",
+                                               status_map=(_tstat or None)
+                                               if _KEY == "타이틀" else None)
+                                    st.caption("11위부터는 테마·프레임 펼치기가 없어요 — "
+                                               "검색으로 위로 올리면 펼칠 수 있어요.")
         helpbox("""
 **구좌별 상세**
 - **묶기 `타이틀` / `IP명(회차 합산)`** — 같은 IP가 회차마다 다른 타이틀로 갈려요
@@ -2404,111 +2491,6 @@ with tab_ip:
     #        안내 문구도 뺐다(없는 필터를 가리키게 된다). 필터를 되살리면 그대로 부활.
 
 # ════════════ 탭 3: 국가별 분석 ════════════
-# ════════════ 탭 3: 테마 분석 ════════════
-# ★구좌별 상세 안의 서랍에 있던 걸 **독립 탭으로 뺐다**(2026-08-18 요청).
-#   테마는 그 자체로 보고 싶은 축인데 서랍 속에 숨어 있었다.
-# ★묶는 축의 기본은 **IP명**이다 — 한 IP 가 회차마다 다른 타이틀로 갈려서
-#   (`260711 SM ent` · `260721 SM ent` …) 타이틀로 두면 같은 IP 가 흩어진다.
-# ★테마 리포트에는 매장이 없다. 그래서 이 탭은 **날짜·국가만** 반영한다.
-@st.fragment
-def _theme_tab():
-    if not THEME_FILE.exists():
-        st.info("테마 데이터가 아직 없어요.")
-        return
-    if len(date_range) != 2:
-        st.info("조회 기간을 골라 주세요.")
-        return
-
-    # 국가코드·통화는 원장에서 가져온다(표를 두 벌 두면 언젠가 어긋난다)
-    _cc = sales[["국가", "국가코드", "결제 단위"]].drop_duplicates("국가코드")
-    _umap = {str(k).lower(): str(v).strip()
-             for k, v in zip(_cc["국가코드"], _cc["결제 단위"])}
-    _ccodes = (sorted({str(c).lower() for c in
-                       _cc.loc[_cc["국가"].isin(list(sel_countries)), "국가코드"]})
-               if sel_countries else [])
-
-    _tt = theme_titles(date_range[0], date_range[1], _ccodes, _umap)
-    if _tt.empty:
-        st.info("이 조건에선 테마 데이터가 없어요. 날짜·국가 필터를 넓혀 보세요.")
-        return
-
-    # 타이틀 → IP명 (원장에서). 테마 리포트엔 IP명이 없다.
-    _ipof = (sales[["타이틀명", "IP명"]].dropna().astype(str)
-             .drop_duplicates("타이틀명").set_index("타이틀명")["IP명"].to_dict())
-    _tt = _tt.assign(**{"IP명": _tt["타이틀명"].map(_ipof).fillna("(원장에 없음)")})
-
-    with card("🎨 테마 매출 <span class='muted'>(IP·타이틀 → 테마 → 프레임)</span>",
-              key="scard-theme"):
-        _c1, _c2 = st.columns([1.5, 4.5])
-        _grp = (_c1.segmented_control(
-            "묶기", ["IP명(회차 합산)", "타이틀"], default="IP명(회차 합산)",
-            key="ph_th_grp", label_visibility="collapsed") or "IP명(회차 합산)")
-        _kw = _c2.text_input("검색", key="ph_th_q", label_visibility="collapsed",
-                             placeholder="🔍 IP·타이틀 이름으로 찾기").strip()
-        _KEY = "IP명" if _grp.startswith("IP명") else "타이틀명"
-
-        _r = (_tt.groupby(_KEY, as_index=False)
-              .agg(매출=("매출", "sum"), 건수=("건수", "sum"),
-                   테마수=("테마수", "sum"), 회차수=("타이틀명", "nunique")))
-        if _kw:
-            _r = _r[_r[_KEY].str.contains(_kw, case=False, na=False)]
-        _r = _r.sort_values("매출", ascending=False)
-
-        statrow([("매출", fmt_krw(int(_tt["매출"].sum()))),
-                 ("테마 수", f"{int(_tt['테마수'].sum()):,}개"),
-                 ("IP 수" if _KEY == "IP명" else "타이틀 수", f"{len(_r):,}개")])
-        st.caption("다른 탭과 **같은 매출 기준**이에요(실결제 + 쿠폰·코인 가산) · 원화 환산 · "
-                   "**매장 필터는 안 걸려요**(날짜·국가만) · 오리지널은 이 리포트에 안 와요")
-
-        if _r.empty:
-            st.info("검색어에 맞는 게 없어요.")
-            return
-        rank_table(_r, _KEY, collapse_after=10)
-
-        # ── 고른 하나를 테마 → 프레임으로 펼친다 ─────────────────
-        st.markdown('<div class="ct" style="margin-top:18px">🔎 하나 골라 펼쳐 보기</div>',
-                    unsafe_allow_html=True)
-        _opt = _r[_KEY].astype(str).tolist()
-        _pk = st.selectbox(_KEY, _opt[:300], key="ph_th_pick",
-                           label_visibility="collapsed")
-        _raws = sorted(_tt.loc[_tt[_KEY].astype(str) == _pk, "타이틀명"].astype(str))
-        if len(_raws) > 1:
-            st.caption(f"회차 {len(_raws)}개 합산 — " + " · ".join(_raws[:6])
-                       + (" 외" if len(_raws) > 6 else ""))
-        _det = load_themes(_raws, date_range[0], date_range[1], _ccodes, _umap)
-        if _det.empty:
-            st.info("이 조건에선 펼칠 게 없어요.")
-        else:
-            st.caption(f"테마 {_det['테마'].nunique():,}개 · 프레임 {len(_det):,}개 · "
-                       f"매출 {fmt_krw(int(_det['매출'].sum()))}")
-            theme_tree(_det)
-        helpbox("""
-**테마 분석**
-- 한 타이틀이 **여러 테마로 갈려요.** 예를 들어 `260505 코르티스`는 `260505_GREENGREEN` 과
-  `260420_REDRED` 두 테마로 나뉘고, 그 아래 **프레임(멤버)** 이 붙어요.
-- **묶기 `IP명(회차 합산)`** 이 기본이에요 — 한 IP 가 회차마다 다른 타이틀로 갈려서
-  (`260711 SM ent` · `260721 SM ent` …) 타이틀로 두면 같은 IP 가 흩어져요.
-- 테마·프레임은 **거래 원장에 없는 값**이에요. CMS 프레임 리포트에서 따로 캐요
-  (원장과 붙이면 (타이틀, 프레임) 조합이 테마에 유일하지 않아 매출이 불어나요).
-- 매출 기준은 **다른 탭과 같아요** — 실결제에 지정 8개국의 쿠폰·서비스코인을 더한 값이에요.
-  (2026-08-18 전까지는 이 탭만 실결제였어요. 그래서 구좌타입 분석과 2% 가까이 벌어졌고
-   문의가 들어와 맞췄어요. 규칙은 `photoism_rules.py` 한 곳에만 있어요.)
-- 그래도 **아주 조금은 달라요 — 0.005% 안팎.** 없앨 수 없는 차이예요.
-  거래 원장과 이 리포트는 **자정을 걸친 촬영을 서로 다른 날로 끊어요.** 시차가 큰 서쪽
-  나라(미국·멕시코·캐나다·영국)에서만 생기고, 기간 안에서는 상쇄되며 양 끝에만 남아요.
-  한국·일본·중국·대만·태국·인도네시아는 **현지통화 기준으로 1원도 안 틀려요.**
-- ⚠️ 그러니 **정산은 '구좌타입 분석'(원장) 기준**으로 하세요. 숫자가 거의 같아졌다고
-  이 탭 값을 정산에 그대로 쓰면 안 돼요 — 날짜를 끊는 기준이 다르니까요.
-- ⚠️ **매장 필터가 안 걸려요**(날짜·국가만). 이 리포트엔 매장이 없어요.
-- ⚠️ **오리지널은 이 리포트에 안 들어와요.**
-- 데이터는 **2025-01-01부터** 있어요.
-""")
-
-
-with tab_theme:
-    _theme_tab()
-
-
 with tab_nat:
     if "국가" not in sales.columns or sales.empty:
         st.info("국가 데이터가 없어요. 필터를 넓혀 보세요.")
