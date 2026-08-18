@@ -371,10 +371,6 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-scard-nattitle [data-testid="stSelectbox"] div[data-baseweb="select"]{
   width:fit-content !important; min-width:110px !important; }
 
-/* ── 매장별 탭 전용 필터 카드(포6) ── */
-.st-key-scard-storefilter{ background:#fbfbff !important; }
-.st-key-scard-storefilter [data-testid="stMultiSelect"] label{
-  font-size:11.5px !important; font-weight:800 !important; color:var(--text-2) !important; }
 /* ── 구좌타입 분석 — 칸 머리 미니카드 ── */
 .gzc{ border:1px solid var(--border); border-left-width:3px; border-radius:10px;
   padding:9px 11px 8px; margin:0 0 9px; background:var(--surface); }
@@ -1667,6 +1663,10 @@ sel_gubuns = [g for g in IP_GUBUN_VIEW if st.session_state.get(f"ph_f_gubun__cb_
 for _k in [k for k in st.session_state if k.startswith("ph_f_ip__cb__")]:
     del st.session_state[_k]
 selected_ips = []
+# ★매장별 탭 전용 필터(국가·상품)도 뺐다(2026-08-18) — 같은 이유로 세션에 남은
+#   선택을 지운다. 위젯이 사라져도 값은 남고, 나중에 되살리면 옛 선택이 되살아난다.
+for _k in ("ph_st_nat", "ph_st_prd"):
+    st.session_state.pop(_k, None)
 
 # ── 필터 적용 (scope = 날짜 외 모든 필터, df = scope + 날짜) ──
 scope = df_all
@@ -2763,58 +2763,34 @@ with tab_nat:
 """)
 
 # ════════════ 탭 4: 매장별 분석 ════════════
-# 포6: 이 탭 **전용 필터**(국가·상품 다중선택). 상단 필터바와 별개로 여기서만 적용된다
-#      — 매장 순위를 국가·상품 조합으로 빠르게 훑어보라는 상급자 요청.
-#      @st.fragment 로 격리 → 전용 필터를 만져도 다른 탭·차트는 재실행되지 않는다.
-@st.fragment
+# ★전용 필터(국가·상품)를 뺐다(2026-08-18 요청). **상단 필터바를 그대로 따른다.**
+#   원래는 "매장 순위를 국가·상품 조합으로 빠르게 훑어보라"고 둔 것이었는데,
+#   상단 필터바에 이미 국가·상품이 있어 같은 걸 두 겹으로 걸게 돼 있었다.
+#   두 겹이면 화면의 숫자가 어느 필터의 결과인지 헷갈리고, 실제로 상단을 풀어도
+#   여기 선택이 남아 몰래 걸리는 사고가 난다(같은 종류를 오늘 필터바에서 고쳤다).
+# ※위젯이 없어졌으니 @st.fragment 도 뗀다 — 격리할 조작이 더는 없다.
 def _store_tab(sales, date_range, sel_countries):
-    def _opts_of(col):
-        """매출 큰 순서의 선택지(매출 0인 값은 뺀다)."""
-        if col not in sales.columns:
-            return []
-        s = sales.groupby(col, observed=True)["매출액"].sum().sort_values(ascending=False)
-        return [str(x) for x in s[s > 0].index.tolist()]
-
-    with card("🔎 매장별 전용 필터 <span class='muted'>(이 탭에서만 적용돼요)</span>",
-              key="scard-storefilter"):
-        _f1, _f2 = st.columns(2)
-        f_nat = _f1.multiselect("국가", _opts_of("국가"), key="ph_st_nat",
-                                placeholder="전체 국가")
-        f_prd = _f2.multiselect("상품", _opts_of("브랜드"), key="ph_st_prd",
-                                placeholder="전체 상품", format_func=brand_ko)
-
-        _sc = sales
-        if f_nat:
-            _sc = _sc[_sc["국가"].isin(f_nat)]
-        if f_prd:
-            _sc = _sc[_sc["브랜드"].isin(f_prd)]
-
-        # ★이 탭의 축은 **매장**이다. 매출·건수는 위 요약 카드와 다른 탭에 이미 있고,
-        #   여기서 알고 싶은 건 '이 조건에 매장이 몇 개인가' 하나다(요청).
-        statrow([("매장 수", f"{_sc['매장 이름'].nunique():,}개")])
-        st.caption("상단 필터바(기간·국가·매장·상품·IP)로 거른 데이터에 **한 번 더** 걸러요. 미선택 = 전체.")
-        helpbox("""
-**매장별 전용 필터**
-- 상단 필터바 결과(`sales`)에 **이 탭에서만** 국가·상품(브랜드)을 추가로 걸러요. 다른 탭에는 영향이 없어요.
-- 선택지는 현재 필터 범위에서 **매출이 있는 값만**, 매출 큰 순서로 나와요.
-- 아래 지표 = 이 조건의 `매장 이름` 고유 개수예요. (매출·건수는 맨 위 요약과 다른 탭에서 봐요.)
-""")
-
     with card("🏬 매장 전체 순위"):
-        ss = (_sc.groupby("매장 이름", observed=True)
+        ss = (sales.groupby("매장 이름", observed=True)
               .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
         ss = ss[ss["매출"] > 0]
-        st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기")
+        # ★이 탭의 축은 **매장**이다. 매출·건수는 맨 위 요약과 다른 탭에 이미 있고,
+        #   여기서 알고 싶은 건 '이 조건에 매장이 몇 개인가' 하나다(요청).
+        statrow([("매장 수", f"{sales['매장 이름'].nunique():,}개"),
+                 ("매출 발생 매장", f"{len(ss):,}개")])
+        st.caption("상단 필터바(기간·국가·매장·상품·IP)를 그대로 따라요.")
         if ss.empty:
-            st.info("해당 조건에 맞는 매장이 없어요. 위 전용 필터를 넓혀 보세요.")
+            st.info("해당 조건에 맞는 매장이 없어요. 위 필터바를 넓혀 보세요.")
         else:
             # 매장 전체 순위 = 전체 목록이라 비중을 켜도 분모가 맞다.
             hbar_list(ss, "매장 이름", collapse_after=10, show_pct=True)
         helpbox("""
 **매장 전체 순위**
-- 전용 필터를 적용한 뒤 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).
+- **상단 필터바**(기간·국가·매장·상품·IP)로 거른 결과의 `매장 이름`별 매출액 합·건수 순위예요.
+  (예전엔 이 탭에만 있는 국가·상품 필터를 한 겹 더 걸었는데, 상단 필터바와 겹쳐서 뺐어요.)
+- **매장 수** = 그 조건에 나타난 매장 개수, **매출 발생 매장** = 그중 매출이 0보다 큰 곳이에요.
+  둘이 다르면 그 차이만큼은 **기간 안에 거래가 없던 매장**이에요.
 """)
-
 
 
 with tab_store:
