@@ -753,10 +753,20 @@ def _code_stamp() -> str:
       모듈 임포트는 프로세스당 한 번이라 '지금 도는 코드'를 정확히 가리킨다.
     """
     try:
-        head = (BASE_DIR / ".git" / "HEAD").read_text(encoding="utf-8").strip()
+        g = BASE_DIR / ".git"
+        # ★워크트리(개발 서버)에서는 .git 이 **폴더가 아니라 파일**이고 안에
+        #   `gitdir: <진짜 경로>` 가 들어 있다. 그걸 안 따라가면 dev 에서만
+        #   커밋이 안 찍힌다 — 정작 어느 코드인지 제일 알고 싶은 자리인데.
+        if g.is_file():
+            g = Path(g.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())
+        head = (g / "HEAD").read_text(encoding="utf-8").strip()
         if head.startswith("ref:"):
-            head = (BASE_DIR / ".git" / head.split(" ", 1)[1].strip()
-                    ).read_text(encoding="utf-8").strip()
+            ref = head.split(" ", 1)[1].strip()
+            # 워크트리의 브랜치 ref 는 공용 .git 에 있다(commondir 한 칸 위).
+            for base in (g, g.parent.parent):
+                if (base / ref).exists():
+                    head = (base / ref).read_text(encoding="utf-8").strip()
+                    break
         return f"기동 {_BOOT_AT} · {head[:7]}"
     except Exception:                                   # noqa: BLE001
         return f"기동 {_BOOT_AT}"
