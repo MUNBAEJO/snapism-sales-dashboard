@@ -1480,7 +1480,7 @@ IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g in ip_classify.IP_GU
 default_start = max(last_date - timedelta(days=29), first_date)
 
 
-def cbfilter(col, label, options, key, fmt=None):
+def cbfilter(col, label, options, key, fmt=None, parent_sig=None):
     """검색 + 체크박스 다중선택 필터. col 안에 라벨 + 팝오버(검색창·체크리스트).
     fmt=함수 를 주면 **보이는 이름만** 바꾼다(값·세션키는 원본 유지 — 예: 브랜드 한글 라벨).
     ★선택 상태의 단일 출처 = 각 체크박스 위젯(key=…__cb__옵션)★ — 별도 리스트를 두지 않아
@@ -1492,6 +1492,21 @@ def cbfilter(col, label, options, key, fmt=None):
 
     def _sel():
         return [o for o in options if st.session_state.get(pfx + str(o), False)]
+
+    # ★상위 필터가 바뀌면 **하위 선택을 초기화한다**(2026-08-18).
+    #   parent_sig = 상위 필터의 현재 선택. 이게 달라지면 이 필터의 체크를 전부 끈다.
+    #   ※아래 '목록에서 빠진 항목 끄기'(2026-08-11)만으로는 **안 잡힌다** — 그 코드는
+    #     목록이 *좁아질* 때만 듣는다. 정작 주석이 말하던 상황은 반대였다:
+    #     국가=한국 → 매장 고르기 → 국가 해제 → 매장 목록이 *넓어져* 한국 매장이
+    #     그대로 목록에 남으니 안 지워지고, 사용자는 국가만 풀었는데 매장 필터가
+    #     몰래 걸린 상태로 남았다. 그래서 상위가 바뀌면 그냥 끊는다.
+    if parent_sig is not None:
+        _psk = f"{key}__psig"
+        if st.session_state.get(_psk) != parent_sig:
+            if _psk in st.session_state:          # 첫 렌더에는 지울 게 없다
+                for _k in [k for k in st.session_state if str(k).startswith(pfx)]:
+                    st.session_state[_k] = False
+            st.session_state[_psk] = parent_sig
 
     # ★상위 필터가 바뀌어 **목록에서 빠진 항목의 체크를 끈다**(2026-08-11).
     #   예: 국가=한국 → 매장 '전체' → 국가 해제. 매장 목록은 전 세계로 넓어지는데
@@ -1563,7 +1578,7 @@ def _filterbar():
         _dc = [c for c in _opts["countries"] if st.session_state.get(f"ph_f_country__cb__{c}", False)]
         _sbc = _opts.get("stores_by_country", {})
         _std = (sorted(set().union(*[set(_sbc.get(c, [])) for c in _dc])) if _dc else _opts["stores"])
-        cbfilter(_fb[2], "매장", _std, "ph_f_store")
+        cbfilter(_fb[2], "매장", _std, "ph_f_store", parent_sig=tuple(_dc))
         # 포5: 스내피즘과 라벨 통일 — 브랜드(Box/Colored) = 상품 종류라 "상품" 으로 부른다.
         cbfilter(_fb[3], "상품", _opts["brands"], "ph_f_brand", fmt=brand_ko)
         cbfilter(_fb[4], "IP구분", IP_GUBUN_VIEW, "ph_f_gubun")

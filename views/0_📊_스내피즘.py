@@ -1018,7 +1018,7 @@ def _stores_by_country(v):               # ★밑줄 금지 — 위 _load_data �
 _sbc = _stores_by_country(data_io.file_version(MASTER_FILE))
 
 
-def cbfilter(col, label, options, key):
+def cbfilter(col, label, options, key, parent_sig=None):
     """검색 + 체크박스 다중선택 필터. 선택 단일출처 = 각 체크박스 위젯(key=…__cb__옵션).
     목록을 항상 펼쳐 보여주고(상위 200개), 검색은 좁히는 용도. 선택 리스트 반환."""
     options = list(options)
@@ -1026,6 +1026,21 @@ def cbfilter(col, label, options, key):
 
     def _sel():
         return [o for o in options if st.session_state.get(pfx + str(o), False)]
+
+    # ★상위 필터가 바뀌면 **하위 선택을 초기화한다**(2026-08-18).
+    #   parent_sig = 상위 필터의 현재 선택. 이게 달라지면 이 필터의 체크를 전부 끈다.
+    #   ※아래 '목록에서 빠진 항목 끄기'(2026-08-11)만으로는 **안 잡힌다** — 그 코드는
+    #     목록이 *좁아질* 때만 듣는다. 정작 주석이 말하던 상황은 반대였다:
+    #     국가=한국 → 매장 고르기 → 국가 해제 → 매장 목록이 *넓어져* 한국 매장이
+    #     그대로 목록에 남으니 안 지워지고, 사용자는 국가만 풀었는데 매장 필터가
+    #     몰래 걸린 상태로 남았다. 그래서 상위가 바뀌면 그냥 끊는다.
+    if parent_sig is not None:
+        _psk = f"{key}__psig"
+        if st.session_state.get(_psk) != parent_sig:
+            if _psk in st.session_state:          # 첫 렌더에는 지울 게 없다
+                for _k in [k for k in st.session_state if str(k).startswith(pfx)]:
+                    st.session_state[_k] = False
+            st.session_state[_psk] = parent_sig
 
     # ★상위 필터가 바뀌어 **목록에서 빠진 항목의 체크를 끈다**(2026-08-11).
     #   예: 국가=한국 → 매장 '전체' → 국가 해제. 매장 목록은 전 세계로 넓어지는데
@@ -1095,7 +1110,7 @@ def _filterbar():
         cbfilter(_fb[1], "국가", _country_opts, "f_country")
         _dc = [c for c in _country_opts if st.session_state.get(f"f_country__cb__{c}", False)]
         _std = (sorted(set().union(*[set(_sbc.get(c, [])) for c in _dc])) if _dc else _store_all)
-        cbfilter(_fb[2], "매장", _std, "f_store")
+        cbfilter(_fb[2], "매장", _std, "f_store", parent_sig=tuple(_dc))
         cbfilter(_fb[3], "상품", _prod_opts, "f_prod")
         # 도넛은 아티스트·캐릭터·기타 3분류로 두되, '기타' 안을 파고들 수 있게 필터를 준다
         # (후드입고나와 ₩4,747만 같은 기획전이 기타에 묻혀 개별 성과가 안 보였다).
