@@ -35,14 +35,31 @@ _APPROVAL_DEFAULT = {"stage1": "kyung@seobuk.kr",    # 1차 · 유경민
                      "stage2": "cbi9406@seobuk.kr"}  # 2차 · 최병인
 
 
+def _dashboard_url() -> str:
+    """대시보드 접속 주소. **로그인 리다이렉트 주소에서 끌어온다.**
+
+    ★2026-08-18 까지 승인 메일에 링크가 없었다 — config 에 `approval.dashboard_url`
+      을 적게 해 뒀는데 아무도 안 적어서 계속 빈 값이었다. 주소를 두 군데 적게 하면
+      언젠가 어긋나기도 한다(ngrok 도메인이 바뀌면 메일만 옛 주소를 가리킨다).
+    ★리다이렉트 주소는 **틀리면 로그인 자체가 안 되므로** 항상 맞다. 그걸 쓴다.
+      config 에 값을 넣으면 그게 우선한다(다른 주소로 안내해야 할 때를 위해).
+    """
+    try:
+        uri = str(st.secrets["auth"]["redirect_uri"]).strip()
+    except Exception:
+        return ""
+    return uri[:-len("/oauth2callback")] if uri.endswith("/oauth2callback") else uri
+
+
 def approval_cfg() -> dict:
+    v = dict(_APPROVAL_DEFAULT)
+    v["dashboard_url"] = _dashboard_url()
     try:
         c = json.loads((BASE_DIR / "config.json").read_text(encoding="utf-8"))
-        v = dict(_APPROVAL_DEFAULT)
         v.update({k: s for k, s in (c.get("approval") or {}).items() if s})
-        return v
     except Exception:
-        return dict(_APPROVAL_DEFAULT)
+        pass
+    return v
 
 
 def approver_of(stage: int) -> str:
