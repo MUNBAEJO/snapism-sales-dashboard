@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import date, timedelta
 
 import pyarrow.parquet as pq
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -578,6 +579,29 @@ def _load_data(agg_mtime, cfg_mtime):
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int32")
         else:
             df[col] = 0
+
+    # ── IP명 별칭 통합 ────────────────────────────────────────────
+    # ★집계(build_photoism_agg)도 별칭을 태우지만 **만들 때 한 번**이다. 그래서
+    #   ip_aliases.json 에 새 별칭을 넣어도 재집계 전까지는 화면이 옛 이름으로 남는다.
+    #   여기서 한 번 더 태워 **파일을 다시 만들지 않아도 즉시 반영**되게 한다.
+    #   (별칭 표는 자기참조를 포함해 멱등이라 두 번 태워도 결과가 같다)
+    # ★실제로 SM 이 이것 때문에 넷으로 갈려 있었다 — CMS 등록 표기가 시기마다
+    #   달라서다: 'sm'(25-04~) · 'SM Ent'(25-06~) · 'SM ent'(26-02~) ·
+    #   'SM ENTERTAINMENT'(26-02~03). 화면에선 서로 다른 IP 로 보였다.
+    # ★코드(codes)만 바꿔 치운다 — 370만 행에 .map/.astype(str) 을 태우면
+    #   그 한 줄이 로딩의 병목이 된다(같은 실수를 환율 계산에서 한 번 했다).
+    if "IP명" in df.columns and hasattr(df["IP명"], "cat"):
+        _amap = ip_classify.load_alias_map()
+        if _amap:
+            _cats = df["IP명"].cat.categories
+            _new = pd.Index([_amap.get(str(c).strip(), str(c).strip()) for c in _cats])
+            if not _new.equals(pd.Index([str(c) for c in _cats])):
+                _uniq = pd.Index(pd.unique(_new))
+                _remap = _uniq.get_indexer(_new)
+                _codes = df["IP명"].cat.codes.to_numpy()
+                df["IP명"] = pd.Categorical.from_codes(
+                    np.where(_codes >= 0, _remap[np.clip(_codes, 0, None)], -1),
+                    categories=_uniq)
 
     ex = load_exchange_rates()
     # ⚡ 결제단위·국가코드는 categorical(고유값 24/30개)이라 3.5M행 문자열 변환(.astype(str).str.…)이
