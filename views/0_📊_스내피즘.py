@@ -220,16 +220,6 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .mst-l{ font-size:11.5px; color:var(--text-2); font-weight:600; }
 .mst-v{ font-size:18px; font-weight:800; color:var(--text); margin-top:3px; }
 
-/* ── 매장별 탭 전용 필터 카드(포5) ── */
-.st-key-scard-storefilter{ background:#fbfbff !important; }
-.st-key-scard-storefilter [data-testid="stMultiSelect"] label{
-  font-size:11.5px !important; font-weight:800 !important; color:var(--text-2) !important; }
-/* ── 카테고리별 프레임 TOP5 — 칸 머리 미니카드 (포토이즘 .gzc 와 동일) ── */
-.gzc{ border:1px solid var(--border); border-left-width:3px; border-radius:10px;
-  padding:9px 11px 8px; margin:0 0 9px; background:var(--surface); }
-.gzc-l{ font-size:12px; font-weight:800; color:#39406b; display:flex; align-items:center; gap:6px; }
-.gzc-v{ font-size:17px; font-weight:800; color:var(--text); margin-top:3px; letter-spacing:-.02em; }
-.gzc-d{ font-size:11px; color:var(--text-3); margin-top:1px; }
 
 /* ── 즉시(hover) 매출 툴팁 — 딜레이 없이 커서 올리면 바로 박스 ── */
 /* 행 형태(가로막대·도넛 범례): 요소 위쪽에 즉시 박스 */
@@ -1139,6 +1129,11 @@ sel_ip = [o for o in _ip_opts if st.session_state.get(f"f_ip__cb__{o}", False)]
 
 _cfg = load_config()
 
+# ★매장별 탭 전용 필터를 뺐다(2026-08-18) — 위젯이 사라져도 세션 값은 남는다.
+#   나중에 되살리면 옛 선택이 같이 되살아나므로 여기서 지운다.
+for _k in ("sn_st_nat", "sn_st_prd"):
+    st.session_state.pop(_k, None)
+
 # ── 필터 적용 ──
 # ★이 .copy() 는 낭비가 아니다. df_all 은 cache_resource 로 전 사용자가 공유하는
 #   객체라, 이 한 줄이 없으면 아래 가공이 남의 화면까지 오염시킨다. 지우지 말 것.
@@ -1983,97 +1978,38 @@ with tab_nat:
         #    거기서 예고했던 '총매출 1위 ≠ 대당 효율 1위' 인사이트는 그 카드 안 스트립으로 옮겼다.
 
 # ════════════ 탭 4: 매장별 분석 (상세, 전체) ════════════
-# 포5: 포토이즘 매장별 탭과 동일 구성 — 전용 필터(국가·상품) → 매장 전체순위 → 카테고리별 TOP5.
-#      전용 필터는 상단 필터바와 별개로 **이 탭에서만** 걸린다.
-#      @st.fragment 로 격리 → 전용 필터를 만져도 다른 탭·차트는 재실행되지 않는다.
-@st.fragment
+# ════════════ 탭: 매장별 분석 ════════════
+# ★전용 필터(국가·상품)를 뺐다(2026-08-18 요청) — **상단 필터바를 그대로 따른다.**
+#   상단에 이미 국가·상품이 있어 같은 걸 두 겹으로 걸고 있었다. 두 겹이면 화면의
+#   숫자가 어느 필터의 결과인지 헷갈리고, 상단을 풀어도 여기 선택이 남아 몰래
+#   걸리는 사고가 난다. 포토이즘 매장별 탭도 같이 정리했다.
+# ★'🧩 카테고리별 프레임(IP) TOP 5' 도 뺐다 — '상품 카테고리 분석' 탭의
+#   **프레임(IP) 전체 순위**가 같은 것을 전부 보여준다. 요약본이 두 군데 있을 이유가 없다.
+# ※위젯이 없어졌으니 @st.fragment 도 뗀다 — 격리할 조작이 더는 없다.
 def _store_tab():
-    def _opts_of(col):
-        """매출 큰 순서의 선택지(매출 0인 값은 뺀다)."""
-        if col not in rev.columns:
-            return []
-        s = rev.groupby(col)["정산금액"].sum().sort_values(ascending=False)
-        return [str(x) for x in s[s > 0].index.tolist()]
-
-    with card("🔎 매장별 전용 필터 <span class='muted'>(이 탭에서만 적용돼요)</span>",
-              key="scard-storefilter"):
-        _f1, _f2 = st.columns(2)
-        f_nat = _f1.multiselect("국가", _opts_of("국가"), key="sn_st_nat", placeholder="전체 국가")
-        f_prd = _f2.multiselect("상품", _opts_of("상품 카테고리"), key="sn_st_prd",
-                                placeholder="전체 상품")
-
-        _sc = rev
-        if f_nat:
-            _sc = _sc[_sc["국가"].astype(str).isin(f_nat)]
-        if f_prd:
-            _sc = _sc[_sc["상품 카테고리"].astype(str).isin(f_prd)]
-
-        statrow([("매출", fmt_krw(int(_sc["정산금액"].sum()))),
-                 ("건수", f"{len(_sc):,}건"),
-                 ("매장 수", f"{_sc['매장 이름'].nunique():,}개")])
-        st.caption("상단 필터바(기간·국가·매장·상품·IP)로 거른 데이터에 **한 번 더** 걸러요. 미선택 = 전체.")
-        helpbox("""
-**매장별 전용 필터**
-- 상단 필터바 결과에 **이 탭에서만** 국가·상품 카테고리를 추가로 걸러요. 다른 탭에는 영향이 없어요.
-- 선택지는 현재 필터 범위에서 **매출이 있는 값만**, 매출 큰 순서로 나와요.
-- 아래 지표 3칸 = 이 조건의 `정산금액` 합 · 거래 건수 · `매장 이름` 고유 개수.
-""")
-
     with card("🏬 매장 전체 순위"):
         # 정산금액(실결제+쿠폰) 하나로 순위 — 전액 쿠폰 매장도 같은 막대에 들어온다.
-        #   예전엔 실결제 순위 + '🎟 쿠폰만 매장' 스트립으로 나눠 그렸는데 이제 불필요.
-        ss = (_sc.groupby("매장 이름")
+        ss = (rev.groupby("매장 이름")
               .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
               .reset_index())
         ss = ss[ss["매출"] > 0].sort_values("매출", ascending=False)
-        st.caption(f"매장 {len(ss):,}개 · TOP 10 + 나머지 접기")
+        # ★이 탭의 축은 **매장**이다. 매출·건수는 맨 위 요약과 다른 탭에 이미 있다.
+        statrow([("매장 수", f"{rev['매장 이름'].nunique():,}개"),
+                 ("매출 발생 매장", f"{len(ss):,}개")])
+        st.caption("상단 필터바(기간·국가·매장·상품·IP)를 그대로 따라요.")
         if ss.empty:
-            st.info("해당 조건에 맞는 매장이 없어요. 위 전용 필터를 넓혀 보세요.")
+            st.info("해당 조건에 맞는 매장이 없어요. 위 필터바를 넓혀 보세요.")
         else:
             # 매장 전체 순위 = 전체 목록이라 비중을 켜도 분모가 맞다.
             hbar_list(ss, "매장 이름", collapse_after=10, show_pct=True)
         helpbox("""
 **매장 전체 순위**
-- 전용 필터를 적용한 뒤 `매장 이름`별 `정산금액`(실결제+쿠폰) 합·건수 → 순위(TOP10 + 나머지 접기).
+- **상단 필터바**(기간·국가·매장·상품·IP)로 거른 결과의 `매장 이름`별 `정산금액`(실결제+쿠폰) 합·건수 순위예요.
+  (예전엔 이 탭에만 있는 국가·상품 필터를 한 겹 더 걸었는데, 상단 필터바와 겹쳐서 뺐어요.)
+- **매장 수** = 그 조건에 나타난 매장 개수, **매출 발생 매장** = 그중 매출이 0보다 큰 곳이에요.
+  둘이 다르면 그 차이만큼은 **기간 안에 거래가 없던 매장**이에요.
 - 전액 쿠폰 결제 매장(대만 등)도 **같은 막대 순위**에 들어와요.
-""")
-
-    # 포5: 포토이즘 '구좌별 타이틀 TOP 5' 와 같은 자리.
-    #   스내피즘엔 구좌(BASIC/WITH/EVENT)가 없어 **상품 카테고리**로 나눈다.
-    with card("🧩 카테고리별 프레임(IP) TOP 5"):
-        _cats = (_sc.groupby("상품 카테고리")["정산금액"].sum()
-                 .sort_values(ascending=False)) if "상품 카테고리" in _sc.columns else pd.Series(dtype="int64")
-        _cats = [str(c) for c in _cats[_cats > 0].index.tolist()][:3]
-        if not _cats:
-            st.info("해당 조건에 맞는 데이터가 없어요.")
-        else:
-            _cols = st.columns(len(_cats))
-            _clr = ["var(--brand-2)", "var(--amber)", "#7c77ee"]
-            for _i, (_cat, _c) in enumerate(zip(_cats, _cols)):
-                with _c:
-                    _g = _sc[_sc["상품 카테고리"].astype(str) == _cat]
-                    _f = (_g[_g["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
-                          .groupby("프레임 이름")
-                          .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count")).reset_index())
-                    _f = _f[_f["매출"] > 0]
-                    st.markdown(
-                        f'<div class="gzc" style="border-color:{_clr[_i % len(_clr)]}">'
-                        f'<div class="gzc-l">🧩 {_cat}</div>'
-                        f'<div class="gzc-v num">{fmt_krw(int(_g["정산금액"].sum()))}</div>'
-                        f'<div class="gzc-d">{len(_g):,}건 · 프레임 {len(_f):,}개</div></div>',
-                        unsafe_allow_html=True)
-                    if _f.empty:
-                        st.caption("해당 조건에 데이터가 없어요.")
-                    else:
-                        hbar_list(_f, "프레임 이름", top=5)
-            st.caption("매출 상위 **상품 카테고리 3종**만 보여줘요. 전체는 '상품 카테고리 분석' 탭에서 봐요.")
-        helpbox("""
-**카테고리별 프레임(IP) TOP 5**
-- `상품 카테고리`(와이드 스티커·미니 스티커·포토카드 등) 상위 3종을 칸으로 나눠, 각 칸에서
-  **`프레임 이름`(=IP) 매출 상위 5개**를 가로막대로 보여줘요.
-- 큰 숫자 = 그 카테고리의 **전체 매출액 합**(TOP5 합이 아니라 카테고리 전체). 건수·프레임 수도 같은 기준.
-- 포토이즘의 '구좌별 타이틀 TOP 5' 와 같은 자리예요. 스내피즘엔 구좌(BASIC/WITH/EVENT)가 없어
-  **상품 카테고리**로 나눠요.
+- 카테고리별 프레임(IP)은 **'🧩 상품 카테고리 분석' 탭**에서 전체를 봐요.
 """)
 
 
