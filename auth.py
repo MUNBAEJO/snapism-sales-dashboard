@@ -20,12 +20,23 @@ import pages_registry
 
 import streamlit as st
 
+import dev_mode
+
 BASE_DIR           = Path(__file__).parent
-ALLOWED_USERS_PATH = BASE_DIR / "allowed-users.json"
-ACCESS_LOG_PATH    = BASE_DIR / "logs" / "dashboard_access.log"
+# ★개발 서버는 계정·접속로그를 따로 쓴다. 실서비스 권한을 테스트로 건드리면 안 된다.
+ALLOWED_USERS_PATH = BASE_DIR / ("allowed-users.dev.json" if dev_mode.IS_DEV
+                                 else "allowed-users.json")
+ACCESS_LOG_PATH    = BASE_DIR / "logs" / ("dev_access.log" if dev_mode.IS_DEV
+                                          else "dashboard_access.log")
 
 # 소유자 — 전체 권한 + 계정 승인 권한 (deploy-checker ALLOWED_EMAILS 와 동일)
 OWNER_EMAILS = {"ansqo34@seobuk.kr", "kyung@seobuk.kr", "cbi9406@seobuk.kr"}
+# 개발 서버의 **기본 신분만** 소유자로 넣는다 — 안 그러면 dev 를 띄우자마자
+# 가입 신청 화면이 떠서 아무것도 못 본다. 신분을 직접 지정해 띄우면
+# (`python run_dashboard_dev.py viewer@…`) 그 계정의 진짜 역할을 그대로 타므로
+# 뷰어·에디터·미승인 화면도 dev 에서 그대로 시험할 수 있다.
+if dev_mode.IS_DEV and dev_mode.DEV_EMAIL == "dev@local":
+    OWNER_EMAILS = OWNER_EMAILS | {dev_mode.DEV_EMAIL}
 
 # ── 2단계 가입 승인 (2026-08-07) ─────────────────────────────────
 # 신규 가입 → 1차 승인 → 2차 승인 → 접속 가능. **둘 다 끝나야** 열린다.
@@ -679,8 +690,32 @@ def _render_pending_page(email: str) -> None:
 
 
 # ── 라우터 진입점 ─────────────────────────────────────────────────
+class _DevUser(dict):
+    """dev 전용 가짜 신분. `st.user` 를 이걸로 갈아끼운다.
+
+    ★페이지 6곳이 `st.user.email` 을 직접 읽는다. 그 자리를 다 고치는 대신
+      `st.user` 하나만 바꾸면 **권한 로직은 진짜 그대로 돈다** — 신분만 고정이다.
+      역할·팀·페이지 권한은 allowed-users.dev.json 을 그대로 타므로,
+      '뷰어에게 이게 보이나' 같은 것도 그 파일만 고쳐 시험할 수 있다.
+    """
+    is_logged_in = True
+
+    def __init__(self, email: str):
+        super().__init__(email=email, name="개발", given_name="개발")
+
+    def __getattr__(self, k):
+        return self.get(k)
+
+
 def require_login() -> str:
     """라우터 최상단에서 호출. 통과 못 하면 화면 렌더 후 st.stop()."""
+    # ★개발 서버는 구글 로그인을 못 한다(OIDC 리디렉션이 실서버 도메인에 묶여 있다).
+    #   가짜 신분을 끼우고 넘어간다. **그래서 dev 는 127.0.0.1 에만 띄운다** —
+    #   외부에 열리면 인증 없이 매출이 보인다.
+    if dev_mode.IS_DEV and not isinstance(getattr(st, "user", None), _DevUser):
+        dev_mode.seed()                     # dev 저장소가 비어 있으면 한 번 채운다
+        st.user = _DevUser(dev_mode.DEV_EMAIL)
+
     if not getattr(st, "user", None) or not st.user.is_logged_in:
         _render_login_page()
         st.stop()

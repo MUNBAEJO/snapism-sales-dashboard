@@ -22,7 +22,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
+# ★개발 서버(SNAPISM_ENV=dev)면 data_dev/ 로 간다 — 테스트가 실서비스 정산·계정
+#   데이터를 덮어쓰지 않게. 큰 parquet 은 여기 안 걸린다(그건 실서버 것을 읽는다).
+import dev_mode
+DATA_DIR = dev_mode.data_dir()
 
 _LOCK_TIMEOUT = 5.0     # 락 획득 대기 상한
 _LOCK_STALE = 15.0      # 이보다 오래된 락은 죽은 것으로 보고 제거

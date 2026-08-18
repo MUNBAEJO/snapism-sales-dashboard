@@ -1040,7 +1040,9 @@ def record_issue(ctx: dict, by: str, reason: str = "") -> dict:
 #   받을 방법이 없었다.** 스냅샷(JSON)만 남기고 결과물은 안 남긴 셈이다.
 #   대외로 나간 문서라 원본 그대로 다시 꺼낼 수 있어야 한다 → 파일로 보관한다.
 #   reports/ 는 .gitignore 에 있어 커밋되지 않는다.
-ISSUED_DIR = BASE_DIR / "reports" / "issued"
+import dev_mode  # noqa: E402
+# ★개발 서버는 발행분을 따로 쌓는다 — 대외로 나간 실제 문서와 섞이면 안 된다.
+ISSUED_DIR = BASE_DIR / "reports" / ("issued_dev" if dev_mode.IS_DEV else "issued")
 _SAFE_RE = re.compile(r'[\\/:*?"<>|\s]+')
 
 

@@ -2,6 +2,7 @@ import json
 import re
 import sys
 import streamlit as st
+from json_store import JsonStore
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
@@ -21,7 +22,6 @@ import data_io
 BASE_DIR    = Path(__file__).parent.parent
 MASTER      = BASE_DIR / "data" / "master.csv"
 CONFIG      = BASE_DIR / "config.json"
-MAPPING_FILE = BASE_DIR / "data" / "frame_mapping.json"   # 수동 저장 매핑
 
 CURRENCY_SYMBOLS = {
     "KRW": "₩", "CNY": "¥", "JPY": "¥",
@@ -89,24 +89,31 @@ def load_exchange_rates():
         return {"KRW": 1}
 
 
+# ★JsonStore 로 옮긴다(2026-08-18). 여기가 **JsonStore 를 만든 바로 그 이유**였는데
+#   (json_store.py 첫 주석이 이 파일을 콕 집어 말한다) 정작 안 옮겨져 있었다:
+#   read → modify → write 를 아무 보호 없이 해서, 두 사람이 같이 저장하면 나중
+#   쓰기가 앞의 것을 통째로 덮어썼다. 원자적 저장도 아니라 쓰는 도중 죽으면 깨진다.
+#   덤으로 개발 서버(SNAPISM_ENV=dev)에서는 data_dev/ 로 갈려 실서비스를 안 건드린다.
+_map_store = JsonStore("frame_mapping.json", default={})
+
+
 def load_saved_mapping() -> dict:
     """저장된 IP → 프레임 목록 매핑 불러오기"""
-    if MAPPING_FILE.exists():
-        try:
-            with open(MAPPING_FILE, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    v = _map_store.load()
+    return v if isinstance(v, dict) else {}
 
 
 def save_mapping(ip_name: str, frames: list):
-    """IP → 프레임 매핑 저장"""
-    mapping = load_saved_mapping()
-    mapping[ip_name] = frames
-    MAPPING_FILE.parent.mkdir(exist_ok=True)
-    with open(MAPPING_FILE, "w", encoding="utf-8") as f:
-        json.dump(mapping, f, ensure_ascii=False, indent=2)
+    """IP → 프레임 매핑 저장. 락 + 원자적 저장(JsonStore).
+
+    ★mutate 에 넘기는 함수는 **아무것도 반환하면 안 된다** — JsonStore 는 반환값이
+      있으면 그걸로 파일을 통째 교체한다. `lambda d: d.pop(k)` 같은 걸 넘기면
+      팝된 값이 파일이 돼 버린다(실제로 시험 중에 그랬다).
+    """
+    def _set(d):
+        d[ip_name] = list(frames)
+
+    _map_store.mutate(_set)
 
 
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효

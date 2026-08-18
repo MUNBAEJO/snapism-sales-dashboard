@@ -43,3 +43,10 @@ reports/
 scratch_*.txt
 _redesign_backup/
 _preview_snap.py
+
+# 개발 서버(SNAPISM_ENV=dev) 산출물 — 실서비스 데이터와 같은 이유로 커밋 금지
+data_dev/
+allowed-users.dev.json
+logs/dev_access.log
+logs/dev_mail_blocked.log
+reports/issued_dev/

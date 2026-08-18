@@ -22,6 +22,16 @@ _ME = auth.require_login()
 # (유출 '방지'가 아니라 '추적'이다. 자세한 한계는 auth.render_watermark 주석 참고.)
 auth.render_watermark(_ME)
 
+# ★개발 서버면 **한눈에 알아보게** 띠를 두른다. dev 와 실서버를 헷갈린 채로
+#   정산서를 만들거나 계정을 승인하면 그게 사고다. 실서버에서는 아무것도 안 그린다.
+import dev_mode
+if dev_mode.IS_DEV:
+    st.markdown(
+        '<div style="position:sticky;top:0;z-index:999999;margin:-8px 0 10px;'
+        'padding:7px 14px;border-radius:9px;background:#fff4e6;border:1px solid #ffd8a8;'
+        'color:#a8590c;font-weight:800;font-size:13px;font-family:Pretendard,sans-serif">'
+        + dev_mode.banner() + '</div>', unsafe_allow_html=True)
+
 INK = "#1a1a2e"
 st.markdown(f"""
 <style>

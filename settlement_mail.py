@@ -84,6 +84,23 @@ def build_message(ip: str, start: str, end: str, files: dict[str, bytes],
 
 
 def send(msg: EmailMessage, to: list[str], cc: list[str]) -> None:
+    # ★★개발 서버에서는 **절대 내보내지 않는다**(2026-08-18). 정산서 발송이든 가입
+    #   승인 알림이든, dev 에서 눌러 본 게 진짜 담당자에게 가면 되돌릴 수 없다.
+    #   여기 한 곳만 막으면 정산서·계정 알림이 모두 걸린다(둘 다 이 함수를 탄다).
+    import dev_mode
+    if dev_mode.IS_DEV:
+        _p = dev_mode.BASE_DIR / "logs" / "dev_mail_blocked.log"
+        try:
+            _p.parent.mkdir(exist_ok=True)
+            with open(_p, "a", encoding="utf-8") as f:
+                _row = [datetime.now().isoformat(timespec="seconds"),
+                        str(msg.get("Subject", "")),
+                        "-> " + ", ".join(list(to) + list(cc))]
+                f.write(chr(9).join(_row) + chr(10))
+        except Exception:
+            pass
+        return
+
     m = mail_config()
     sender = (m.get("sender") or "").strip()
     app_pw = (m.get("app_password") or "").strip()
