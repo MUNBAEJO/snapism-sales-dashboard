@@ -124,10 +124,6 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .thtree .fmr{ padding-top:3px; padding-bottom:3px; }
 .thtree .fname{ padding-left:15px; font-size:12.5px; color:var(--text-2); }
 .thtree .fmore{ padding-left:15px; font-size:12px; color:var(--text-3); }
-/* '전체' 탭에서 아티스트·캐릭터·PICK·렌탈이 한 줄에 섞여 나오므로 구분을 이름 옆에 단다 */
-.gtag{ margin-left:7px; font-weight:600; font-size:11px; color:var(--text-2);
-       background:#f1f3f9; border:1px solid #e5e8f2; border-radius:6px;
-       padding:1px 6px; white-space:nowrap; vertical-align:1px; }
 /* 타이틀 상태 배지 + 판매기간 (타이틀 순위표) */
 .tstat{ display:inline-block; margin-left:7px; font-size:10.5px; font-weight:700;
         border-radius:6px; padding:1.5px 6px; white-space:nowrap; vertical-align:middle; }
@@ -1385,14 +1381,10 @@ def _period_str(o, e):
 
 
 def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None,
-               nested_key=None, tag_map=None):
+               nested_key=None):
     """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개 + 나머지 접기.
     status_map={이름:{오픈일,종료일,...}} 를 주면 **판매기간(지라 오픈~종료)** 칸이 붙는다.
-    (상태 배지 신규/확인필요/판매중/종료 는 2026-07-28 제거 — 스내피즘과 동일 기준.)
-
-    tag_map={이름: 표시문자열} 을 주면 이름 옆에 **구분 배지**가 붙는다. '전체' 탭에서만 쓴다 —
-    거기선 아티스트·캐릭터·PICK·렌탈이 한 줄에 섞여 나오는데 뭐가 뭔지 알 수가 없었다.
-    구분별 탭에서는 이미 그 구분만 나오므로 붙이지 않는다(같은 배지가 열 줄 반복될 뿐이다)."""
+    (상태 배지 신규/확인필요/판매중/종료 는 2026-07-28 제거 — 스내피즘과 동일 기준.)"""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
@@ -1423,11 +1415,7 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None,
             rk = f'<span class="rk {"top" if i == 0 else ""}">{i + 1}</span>'
             cnt = (f'<span class="r num" style="color:var(--text-2)">{int(r["건수"]):,}</span>'
                    if has_cnt else "")
-            _tg = (tag_map or {}).get(r[name_col])      # (배지글자, 마우스올림 설명)
-            _lab, _tip = _tg if isinstance(_tg, tuple) else (_tg, "")
-            nm = (f'<span class="nname">{r[name_col]}'
-                  + (f'<span class="gtag" title="{_tip}">{_lab}</span>' if _lab else "")
-                  + '</span>')
+            nm = f'<span class="nname">{r[name_col]}</span>'
             per = ""
             if has_st:
                 s = status_map.get(r[name_col]) or {}
@@ -2234,36 +2222,7 @@ with tab_ip:
                         else:
                             # 판매기간(지라)은 **타이틀**에만 붙는다 — IP명으로 합치면
                             # 회차가 여럿이라 한 기간으로 못 적는다.
-                            # '전체' 탭에서만 구분 배지를 단다 — 여기선 아티스트·캐릭터·
-                            # PICK·렌탈이 한 줄에 섞여 나오는데 뭐가 뭔지 알 수가 없었다.
-                            # ★한 IP 가 여러 구분에 **실제로** 걸친다. 코르티스는 아티스트
-                            #   타이틀과 `PW` PICK 타이틀, 렌탈까지 있다(3,326개 중 1,406개가
-                            #   둘 이상). 대표 하나만 적으면 속이는 셈이라 `+N` 을 붙인다.
-                            #   대표는 **매출이 큰** 구분 — 중앙값이 98.8% 라 거의 한쪽이다.
-                            _tag = None
-                            if _g == "전체":
-                                _tg = (_sub[(_sub[_KEY] != "") & _sub[_KEY].notna()]
-                                       .groupby([_KEY, "IP구분"], observed=True)["매출액"]
-                                       .sum().reset_index())
-                                _tg = _tg[_tg["매출액"] > 0].sort_values("매출액", ascending=False)
-                                # ★`+N` 을 무조건 붙이면 거의 모든 줄에 붙어 잡음이 된다
-                                #   (1위 구분 점유율 중앙값 98.8% — 나머지는 대개 렌탈 몇 건).
-                                #   **1위가 90% 미만일 때만** 붙이고, 자세한 구성은 배지에
-                                #   마우스를 올리면 보이게 둔다.
-                                _tag = {}
-                                for _n, _grp2 in _tg.groupby(_KEY, observed=True, sort=False):
-                                    _sum = _grp2["매출액"].sum()
-                                    if _sum <= 0:
-                                        continue
-                                    _rows2 = list(zip(_grp2["IP구분"].astype(str),
-                                                      _grp2["매출액"] / _sum))
-                                    _gb, _sh = _rows2[0]
-                                    _lab = f'{_GUB_EMOJI.get(_gb, "🎬")} {_gb}'
-                                    if _sh < 0.9 and len(_rows2) > 1:
-                                        _lab += f' +{len(_rows2) - 1}'
-                                    _tag[str(_n)] = (_lab, " · ".join(
-                                        f"{k} {v * 100:.0f}%" for k, v in _rows2[:5]))
-                            rank_table(_t, _KEY, collapse_after=10, tag_map=_tag,
+                            rank_table(_t, _KEY, collapse_after=10,
                                        status_map=(_tstat or None) if _KEY == "타이틀" else None)
                             # ── 타이틀 → 테마 → 프레임 ──────────────────
                             # ★한 서랍에서 **층을 다 보여 준다.** 전엔 '프레임별'과
@@ -2305,11 +2264,6 @@ with tab_ip:
   **2026-06 이후 기준 132개 IP · 326개 타이틀이 합쳐져요**(SM ent 11회차 · 코르티스 6회차 …).
   기간 구분은 **위 조회 기간**이 하므로 합쳐도 섞이지 않아요.
 - **🔍 검색** — 타이틀·IP 이름 일부로 걸러요.
-- **구분 배지** — '전체' 탭은 아티스트·캐릭터·PICK·렌탈이 한 줄에 섞여 나와서, 이름 옆에 구분을 달았어요.
-  - 한 IP 가 **여러 구분에 실제로 걸쳐요** — 코르티스는 아티스트 타이틀과 `PW` PICK 타이틀, 렌탈까지 있어요.
-    배지는 **매출이 가장 큰 구분**이고, 마우스를 올리면 `아티스트 90% · PICK 10%` 처럼 구성이 다 보여요.
-  - `+N` 은 **1위 구분이 90%가 안 될 때만** 붙여요 (예: `⭐ PICK +2` = 가나디는 PICK 75% · 캐릭터 24%).
-    안 그러면 거의 모든 줄에 붙어서 표시의 의미가 없어져요(1위 점유율 중앙값이 98.8%예요).
 - **🎨 테마 · 프레임별로 보기** — 고른 타이틀(또는 IP)을 **타이틀 → 테마 → 프레임** 으로 펼쳐요.
 
   ```
