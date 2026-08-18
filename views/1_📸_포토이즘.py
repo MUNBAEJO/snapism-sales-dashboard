@@ -799,7 +799,7 @@ def load_frames(raw_titles, start_date, end_date, countries=(), stores=(), brand
 #   환산은 국가코드 → 결제단위 → config 환율 순서로, 원장(`_load_data`)과 같은 표를 쓴다.
 @st.cache_data(ttl=300, max_entries=16, show_spinner="테마를 세는 중이에요…")
 def _load_themes(raw_titles, start_date, end_date, ccodes=()):
-    """[테마, 프레임, 국가코드, 건수, 촬영수, 현지금액] — 원화 환산은 부르는 쪽에서.
+    """[테마, 프레임, 국가코드, 건수, 촬영수, 현지 금액 3종] — 환산·가산은 부르는 쪽에서.
 
     ★타이틀 → 테마 → 프레임이 **한 표에 다 있다.** 그래서 계층을 그대로 낼 수 있다.
       원장으로는 못 하는 일이다 — 원장엔 테마가 아예 없다."""
@@ -830,7 +830,9 @@ def _load_themes(raw_titles, start_date, end_date, ccodes=()):
                    LOWER(CAST("국가코드" AS VARCHAR)) AS "국가코드",
                    CAST(SUM(TRY_CAST("주문수"       AS DOUBLE)) AS BIGINT) AS "건수",
                    CAST(SUM(TRY_CAST("촬영수"       AS DOUBLE)) AS BIGINT) AS "촬영수",
-                          SUM(TRY_CAST("최종결제금액" AS DOUBLE))          AS "현지금액"
+                          SUM(TRY_CAST("최종결제금액" AS DOUBLE))          AS "최종 결제 금액",
+                          SUM(TRY_CAST("쿠폰할인금액" AS DOUBLE))          AS "쿠폰 할인 금액",
+                          SUM(TRY_CAST("서비스코인"   AS DOUBLE))          AS "서비스코인"
             FROM read_parquet('{str(THEME_FILE).replace(chr(92), "/")}')
             WHERE {" AND ".join(where)}
             GROUP BY 1, 2, 3
@@ -842,24 +844,37 @@ def _load_themes(raw_titles, start_date, end_date, ccodes=()):
     return d
 
 
+def _theme_revenue(d, unit_map=None):
+    """테마 리포트 행에 **원장과 똑같은 규칙**으로 '매출액' 을 붙인다.
+
+    ★전엔 실결제(최종결제금액)만 환산해서, 구좌타입 분석과 2% 가까이 벌어졌다
+      (SM ent 30일 기준 1,423만 원). 담당자 문의가 들어온 게 이 차이다.
+    ★리포트에 쿠폰할인금액·서비스코인이 **같이 들어 있다.** 그래서 photoism_rules
+      한 곳에 있는 가산 규칙(8개국)을 그대로 태우면 같은 잣대가 된다 — 적용 후
+      차이 0.011%. 남는 건 자정 경계라 두 API 구조상 못 없앤다.
+    ★규칙을 여기서 다시 쓰지 않는다. photoism_rules 를 부르는 이유가 그것이다.
+    """
+    d = d.copy()
+    d["결제 단위"] = d["국가코드"].map(lambda c: str((unit_map or {}).get(c, "")).strip() or "KRW")
+    return photoism_rules.add_revenue(d, load_exchange_rates())
+
+
 def load_themes(raw_titles, start_date, end_date, ccodes=(), unit_map=None):
     """[테마, 프레임, 매출(원), 건수] — 원화 환산까지 끝난 표.
     unit_map = {국가코드: 결제단위} (원장에서 뽑아 넘긴다 — 표를 두 벌 두면 어긋난다)."""
     d = _load_themes(tuple(raw_titles), start_date, end_date, tuple(ccodes))
     if d.empty:
         return d
-    ex = load_exchange_rates()
-    rate = d["국가코드"].map(lambda c: ex.get(str((unit_map or {}).get(c, "")).strip(), 1))
-    d = d.assign(매출=(d["현지금액"] * pd.to_numeric(rate, errors="coerce").fillna(1)).round(0))
+    d = _theme_revenue(d, unit_map)
     g = (d.groupby(["테마", "프레임"], as_index=False)
-           .agg(매출=("매출", "sum"), 건수=("건수", "sum")))
+           .agg(매출=("매출액", "sum"), 건수=("건수", "sum")))
     g["매출"] = g["매출"].astype("int64")
     return g[g["매출"] > 0].sort_values("매출", ascending=False)
 
 
 @st.cache_data(ttl=300, max_entries=8, show_spinner="테마를 모으는 중이에요…")
 def _load_theme_titles(start_date, end_date, ccodes=()):
-    """[타이틀, 국가코드, 테마수, 건수, 현지금액] — **전 타이틀**을 한 번에.
+    """[타이틀, 국가코드, 테마수, 건수, 현지 금액 3종] — **전 타이틀**을 한 번에.
 
     ★테마 탭의 순위(IP·타이틀별)를 그리려면 전체가 필요하다. 타이틀 하나씩
       부르면 수백 번 질의하게 된다. 날짜·국가로 좁힌 뒤 한 번만 훑는다.
@@ -886,7 +901,9 @@ def _load_theme_titles(start_date, end_date, ccodes=()):
                    LOWER(CAST("국가코드" AS VARCHAR)) AS "국가코드",
                    COUNT(DISTINCT "테마") AS "테마수",
                    CAST(SUM(TRY_CAST("주문수" AS DOUBLE)) AS BIGINT) AS "건수",
-                          SUM(TRY_CAST("최종결제금액" AS DOUBLE))     AS "현지금액"
+                          SUM(TRY_CAST("최종결제금액" AS DOUBLE))     AS "최종 결제 금액",
+                          SUM(TRY_CAST("쿠폰할인금액" AS DOUBLE))     AS "쿠폰 할인 금액",
+                          SUM(TRY_CAST("서비스코인"   AS DOUBLE))     AS "서비스코인"
             FROM read_parquet('{str(THEME_FILE).replace(chr(92), "/")}')
             WHERE {" AND ".join(where)}
             GROUP BY 1, 2
@@ -903,11 +920,9 @@ def theme_titles(start_date, end_date, ccodes=(), unit_map=None):
     d = _load_theme_titles(start_date, end_date, tuple(ccodes))
     if d.empty:
         return d
-    ex = load_exchange_rates()
-    rate = d["국가코드"].map(lambda c: ex.get(str((unit_map or {}).get(c, "")).strip(), 1))
-    d = d.assign(매출=(d["현지금액"] * pd.to_numeric(rate, errors="coerce").fillna(1)).round(0))
+    d = _theme_revenue(d, unit_map)
     g = (d.groupby("타이틀명", as_index=False)
-           .agg(매출=("매출", "sum"), 건수=("건수", "sum"),
+           .agg(매출=("매출액", "sum"), 건수=("건수", "sum"),
                 테마수=("테마수", "max"), 국가수=("국가코드", "nunique")))
     g["매출"] = g["매출"].astype("int64")
     return g[g["매출"] > 0]
@@ -2442,7 +2457,7 @@ def _theme_tab():
         statrow([("매출", fmt_krw(int(_tt["매출"].sum()))),
                  ("테마 수", f"{int(_tt['테마수'].sum()):,}개"),
                  ("IP 수" if _KEY == "IP명" else "타이틀 수", f"{len(_r):,}개")])
-        st.caption("실결제 기준(쿠폰·코인 제외) · 원화 환산 · "
+        st.caption("다른 탭과 **같은 매출 기준**이에요(실결제 + 쿠폰·코인 가산) · 원화 환산 · "
                    "**매장 필터는 안 걸려요**(날짜·국가만) · 오리지널은 이 리포트에 안 와요")
 
         if _r.empty:
@@ -2475,14 +2490,15 @@ def _theme_tab():
   (`260711 SM ent` · `260721 SM ent` …) 타이틀로 두면 같은 IP 가 흩어져요.
 - 테마·프레임은 **거래 원장에 없는 값**이에요. CMS 프레임 리포트에서 따로 캐요
   (원장과 붙이면 (타이틀, 프레임) 조합이 테마에 유일하지 않아 매출이 불어나요).
-- ⚠️ **다른 탭의 매출과 숫자가 달라요. 정산 근거로 쓰지 마세요** — 이유는 둘뿐이에요.
-  1. **쿠폰·코인** — 대시보드 '매출액'은 지정 8개국의 쿠폰·서비스코인을 매출로 더하는데,
-     이 리포트엔 그 항목이 아예 없어요(실결제만 줘요). 차이의 대부분이 이거예요.
-     (예: SM ent 30일 — 구좌타입 분석 708,344,316 vs 테마 694,104,576, 차이 14,231,282 = 쿠폰·코인분)
-  2. **자정 경계** — 한국과 시차가 큰 서쪽 나라(미국·멕시코·캐나다·영국)는 자정을 걸친 촬영이
-     양쪽에 하루씩 다르게 잡혀요. 기간 안에서는 상쇄되고 양 끝에서만 남아요.
-     한국·일본·중국·대만·태국·인도네시아는 **현지통화 기준으로 1원도 안 틀려요.**
-- **정산은 '구좌타입 분석'(원장) 기준**이에요. 이 탭은 어느 테마·멤버가 팔렸는지 보는 용도예요.
+- 매출 기준은 **다른 탭과 같아요** — 실결제에 지정 8개국의 쿠폰·서비스코인을 더한 값이에요.
+  (2026-08-18 전까지는 이 탭만 실결제였어요. 그래서 구좌타입 분석과 2% 가까이 벌어졌고
+   문의가 들어와 맞췄어요. 규칙은 `photoism_rules.py` 한 곳에만 있어요.)
+- 그래도 **아주 조금은 달라요 — 0.005% 안팎.** 없앨 수 없는 차이예요.
+  거래 원장과 이 리포트는 **자정을 걸친 촬영을 서로 다른 날로 끊어요.** 시차가 큰 서쪽
+  나라(미국·멕시코·캐나다·영국)에서만 생기고, 기간 안에서는 상쇄되며 양 끝에만 남아요.
+  한국·일본·중국·대만·태국·인도네시아는 **현지통화 기준으로 1원도 안 틀려요.**
+- ⚠️ 그러니 **정산은 '구좌타입 분석'(원장) 기준**으로 하세요. 숫자가 거의 같아졌다고
+  이 탭 값을 정산에 그대로 쓰면 안 돼요 — 날짜를 끊는 기준이 다르니까요.
 - ⚠️ **매장 필터가 안 걸려요**(날짜·국가만). 이 리포트엔 매장이 없어요.
 - ⚠️ **오리지널은 이 리포트에 안 들어와요.**
 - 데이터는 **2025-01-01부터** 있어요.
