@@ -119,6 +119,26 @@ h2, h3{ letter-spacing:-0.02em !important; }
 .ntr:not(.nth):hover{ background:var(--surface-2); }
 .ntr .r{ text-align:right; } .ntr .c{ text-align:center; }
 .nname{ font-weight:700; }
+/* ── 누를 수 있는 순위줄 — 표 모양은 그대로 두고 투명 버튼을 겹친다 ──
+   (오픈 캘린더 ip_calendar_ui 에서 쓰던 방법을 그대로 가져왔다)
+   ★높이는 --rrh 한 곳에서만 정한다. 줄과 버튼이 같은 값을 써야 아래쪽이
+     안 눌리는 일이 없다 — 캘린더에서 16px 이 죽어 있던 그 문제다. */
+div[class*="st-key-rrrow"]{ --rrh:46px; position:relative; }
+div[class*="st-key-rrrow"] .rr1{ border:0; }
+div[class*="st-key-rrrow"] .ntr{ min-height:var(--rrh); align-items:center;
+  border-radius:9px; transition:background .12s; }
+div[class*="st-key-rrrow"]:hover .ntr{ background:var(--surface-2); }
+div[class*="st-key-rrrow"] .ntr.rr-on{ background:var(--brand-soft); }
+/* 버튼 묶음을 줄 위에 통째로 덮는다. 중간 래퍼가 하나라도 안 늘어나면
+   버튼이 쪼그라들어 줄 위쪽만 눌린다 — 전부 100% 로 편다. */
+div[class*="st-key-rrrow"] div[class*="st-key-rrbtn"]{
+  position:absolute; left:0; right:0; top:0; height:var(--rrh); z-index:5; }
+div[class*="st-key-rrrow"] div[class*="st-key-rrbtn"] div{ height:100% !important; }
+div[class*="st-key-rrrow"] div[class*="st-key-rrbtn"] button{
+  width:100%; height:100%; opacity:0; min-height:0 !important;
+  padding:0 !important; margin:0 !important; border:none;
+  background:transparent; cursor:pointer; }
+.rrcaret{ margin-left:6px; font-size:11px; color:var(--text-3); }
 /* 타이틀 → 테마 → 프레임 계층. 서랍을 겹칠 수 없어 들여쓰기로 층을 낸다. */
 .thtree .thr{ background:#fbfcff; border-top:1px solid #eef0f7; }
 .thtree .thr .nname{ font-weight:800; }
@@ -1605,6 +1625,46 @@ IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g in ip_classify.IP_GU
 default_start = max(last_date - timedelta(days=29), first_date)
 
 
+def rank_rows_clickable(dframe, name_col, tot, mx, status_map=None, key_prefix="rr",
+                        top=10, open_key="ph_slot_open", on_open=None):
+    """순위표를 **원래 모양 그대로** 그리되, 줄마다 투명 버튼을 겹쳐 누를 수 있게.
+
+    ★HTML 표는 예쁘지만 눌리지 않는다. 접기(expander)로 바꿔 봤더니 막대와 칸이
+      사라져 "기존 화면에서 눌리면 좋겠다" 는 얘기가 나왔다. 그래서 표는 그대로 두고
+      **오픈 캘린더에서 쓰던 투명 버튼 겹치기**를 그대로 가져온다(ip_calendar_ui).
+    ★높이를 --rrh 한 곳에서만 정한다. 줄·버튼이 같은 값을 써야 아래쪽이 안 눌리는
+      일이 없다 — 캘린더에서 16px 이 죽어 있던 그 문제다.
+    ★CSS 가 안 먹어도 버튼은 남는다. 기능이 죽지는 않고 모양만 투박해진다.
+    """
+    _open = st.session_state.get(open_key)
+    for i, (_, r) in enumerate(dframe.head(top).iterrows(), 1):
+        nm = str(r[name_col])
+        frac = (r["매출"] / tot) if tot else 0
+        per = ""
+        if status_map and status_map.get(nm):
+            _s = status_map[nm]
+            _ps = _period_str(_s.get("오픈일"), _s.get("종료일"))
+            per = f'<span class="tper num vs">{_ps or "—"}</span>'
+        grid = ("grid-template-columns:34px 1.7fr 1.2fr .7fr 1.3fr 1.1fr" if per else
+                "grid-template-columns:34px 1.7fr 1.3fr .8fr 1.5fr")
+        _sel = " rr-on" if _open == nm else ""
+        # ★키가 반드시 `rrrow` 로 **시작**해야 한다 — CSS 가 st-key-rrrow 를 찾는다.
+        #   전엔 f"{key_prefix}row{i}" 라 'rr0row1' 이 돼서 선택자가 안 걸렸고,
+        #   버튼이 겹치지 않고 줄 아래에 그대로 보였다.
+        with st.container(key=f"rrrow-{key_prefix}-{i}"):
+            st.markdown(
+                f'<div class="ntbl rr1"><div class="ntr{_sel}" style="{grid}">'
+                f'<span class="rk {"top" if i == 1 else ""}">{i}</span>'
+                f'<span class="nname">{nm}<span class="rrcaret">{"▾" if _sel else "▸"}</span></span>'
+                f'<span class="r num">{fmt_krw(r["매출"])}</span>'
+                f'<span class="r num" style="color:var(--text-2)">{int(r["건수"]):,}</span>'
+                f'{per}{pct_bar(frac, mx)}</div></div>', unsafe_allow_html=True)
+            if st.button(nm, key=f"rrbtn-{key_prefix}-{i}", help="눌러서 펼치기"):
+                st.session_state[open_key] = None if _open == nm else nm
+                _frag_rerun()
+        if _open == nm and on_open is not None:
+            on_open(nm)
+
 def cbfilter(col, label, options, key, fmt=None, parent_sig=None):
     """검색 + 체크박스 다중선택 필터. col 안에 라벨 + 팝오버(검색창·체크리스트).
     fmt=함수 를 주면 **보이는 이름만** 바꾼다(값·세션키는 원본 유지 — 예: 브랜드 한글 라벨).
@@ -2387,43 +2447,40 @@ with tab_ip:
                         if _t.empty:
                             st.info("해당 조건에 맞는 게 없어요. 검색어나 날짜·국가·매장 필터를 바꿔 보세요.")
                         else:
-                            # ── 줄마다 접기 — 누르면 그 자리에서 테마·프레임 구성 ──
-                            # ★요청(2026-08-18): 별도 탭 말고 **여기서 바로** 펼쳐 보기.
-                            #   'SM ent 를 누르면 테마별·프레임별 매출 포션이 나온다'.
-                            # ★테마 표는 위에서 **한 번만** 읽어 온다(_thall). 접기 본문은
-                            #   펼치지 않아도 먼저 도니까, 줄마다 질의하면 열 줄이면 열 번이다.
+                            # ── 줄을 눌러 그 자리에서 펼치기 ──────────────
+                            # ★표 모양(막대·칸)은 그대로 두고 **투명 버튼을 겹친다**.
+                            #   접기(expander)로 바꿔 봤더니 막대가 사라져 "기존 화면에서
+                            #   눌리면 좋겠다" 는 얘기가 나왔다. 오픈 캘린더에서 쓰던
+                            #   방법을 그대로 가져왔다(ip_calendar_ui).
+                            # ★정렬을 여기서 한다 — 전엔 rank_table 이 **안에서** 정렬해
+                            #   줘서 이 표는 정렬 없이 넘겨도 됐다. 안 넘겨받아 1위 아일릿·
+                            #   3위 코르티스로 뒤죽박죽이 된 적이 있다.
                             # ★오리지널 구분은 이 블록에 안 온다(위 분기에서 갈림) —
-                            #   테마 리포트에 오리지널이 없어 열어도 빈 화면이라 접기를 안 만든다.
-                            # ★정렬을 여기서 한다 — 전엔 rank_table 이 **안에서**
-                            #   정렬해 줘서 이 표는 정렬 없이 넘겨도 됐다. 접기로
-                            #   바꾸며 그걸 넘겨받지 않아 순위가 뒤죽박죽이 됐다.
+                            #   테마 리포트에 오리지널이 없어 열어도 빈 화면이다.
                             _t = _t.sort_values("매출", ascending=False)
                             _tot = int(_t["매출"].sum()) or 1
-                            _stat = (_tstat or {}) if _KEY == "타이틀" else {}
-                            for _n, (_, _row) in enumerate(_t.head(10).iterrows(), 1):
-                                _nm = str(_row[_KEY])
-                                _fr = _row["매출"] / _tot
-                                _per = ""
-                                if _stat.get(_nm):
-                                    _p = _period_str(_stat[_nm].get("오픈일"),
-                                                     _stat[_nm].get("종료일"))
-                                    _per = f"  ·  {_p}" if _p else ""
-                                with st.expander(
-                                        f"**{_n}. {_nm}**　{fmt_krw(_row['매출'])}　"
-                                        f"{int(_row['건수']):,}건　{_fr * 100:.1f}%{_per}"):
-                                    _one = (_thall[_thall["_ip"].astype(str) == _nm]
-                                            if not _thall.empty else pd.DataFrame())
+                            _mx = (_t["매출"] / _tot).max()
+
+                            def _open_row(_nm, _g=_g):
+                                _one = (_thall[_thall["_ip"].astype(str) == _nm]
+                                        if not _thall.empty else pd.DataFrame())
+                                with card(key=f"scard-open-{_g}"):
                                     _theme_portion(_one, _nm)
+
+                            rank_rows_clickable(
+                                _t, _KEY, _tot, _mx,
+                                status_map=(_tstat or None) if _KEY == "타이틀" else None,
+                                key_prefix=f"rr{_i}", top=10,
+                                open_key=f"ph_slot_open_{_g}", on_open=_open_row)
                             if len(_t) > 10:
                                 with st.expander(f"나머지 {len(_t) - 10:,}개 더보기 "
                                                  f"· 11~{len(_t):,}위"):
-                                    # 여긴 접기 안이라 rank_table 의 더보기를 체크박스로
                                     rank_table(_t.iloc[10:], _KEY, collapse_after=40,
                                                nested_key=f"ph_slot_rest_{_g}",
                                                status_map=(_tstat or None)
                                                if _KEY == "타이틀" else None)
-                                    st.caption("11위부터는 테마·프레임 펼치기가 없어요 — "
-                                               "검색으로 위로 올리면 펼칠 수 있어요.")
+                                    st.caption("11위부터는 펼치기가 없어요 — "
+                                               "검색으로 위로 올리면 눌러서 펼칠 수 있어요.")
         helpbox("""
 **구좌별 상세**
 - **묶기 `타이틀` / `IP명(회차 합산)`** — 같은 IP가 회차마다 다른 타이틀로 갈려요
