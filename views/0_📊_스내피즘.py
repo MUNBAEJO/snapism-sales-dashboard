@@ -17,6 +17,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
+import name_alias  # 프레임 한/영 통합 + 글자깨짐 교정
 import data_io
 import auth
 import xlsx_export  # 내려받기 → 엑셀(.xlsx)
@@ -531,6 +532,12 @@ def _load_data(v):
     df["쿠폰KRW"] = (df["쿠폰 할인 금액"] * df["환율"]).round(0).astype(int)
     df["정산금액"] = df["KRW환산금액"] + df["쿠폰KRW"]
     df["총원화금액"] = df["최종 결제 금액"] + df["쿠폰 할인 금액"]
+    # 프레임 이름의 한/영 통합 + 글자깨짐 교정. **캐시에 넣기 전** 한 번만 태운다 —
+    # 필터·순위·내려받기가 전부 이 열을 보므로 여기서 통일해야 다 같이 맞는다.
+    df["프레임 이름"] = df["프레임 이름"].astype(str).map(name_alias.fold)
+    _fm = name_alias.mapping("스내피즘", "프레임")
+    if _fm:
+        df["프레임 이름"] = df["프레임 이름"].map(lambda x: _fm.get(x, x))
     return df
 
 

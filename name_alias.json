@@ -1,0 +1,1014 @@
+{
+ "_meta": {
+  "만든날": "2026-08-18",
+  "만든법": "build_name_alias.py — 데이터에 실재하는 '한글(ENG)' 결합 표기만 근거로 씀",
+  "주의": "손으로 고쳐도 되지만, 다시 돌리면 덮어써요. IP 안에서만 짝이 맞아요.",
+  "짝수": {
+   "포토이즘": 684,
+   "스내피즘": 1
+  }
+ },
+ "포토이즘": {
+  "테마": {
+   "ATEEZ": {
+    "YEOSANG": "여상(YEOSANG)",
+    "민기": "민기(MINGI)",
+    "여상": "여상(YEOSANG)"
+   },
+   "BTOB COMPANY": {
+    "이민혁": "이민혁 (HUTA)"
+   },
+   "ITZY": {
+    "ITZY": "잇지(ITZY)"
+   },
+   "NOWZ": {
+    "NOWZ": "NOWZ (나우즈)"
+   },
+   "TREASURE": {
+    "박정우": "박정우(PARK JEONG WOO)",
+    "아사히": "아사히(ASAHI)",
+    "윤재혁": "윤재혁(YOON JAE HYUK)",
+    "준규": "준규(JUNKYU)"
+   },
+   "xikers": {
+    "xikers": "xikers(싸이커스)"
+   },
+   "青岛啤酒节": {
+    "LUCY": "루시(LUCY)"
+   },
+   "규현": {
+    "규현": "규현(KYUHYUN)"
+   },
+   "김민규": {
+    "KIM MIN KYU": "김민규(KIM MIN KYU)",
+    "김민규": "김민규(KIM MIN KYU)"
+   },
+   "김준수": {
+    "김준수": "김준수(KIM JUNSU)"
+   },
+   "김지연": {
+    "김지연": "김지연(Kim Jiyeon)"
+   },
+   "남규리": {
+    "남규리": "남규리(Nam Gyuri)"
+   },
+   "넥스지": {
+    "NEXZ": "NEXZ(넥스지)"
+   },
+   "누에라": {
+    "누에라": "누에라(NouerA)"
+   },
+   "대성": {
+    "DAESUNG": "대성(DAESUNG)",
+    "대성": "대성(DAESUNG)"
+   },
+   "덱스": {
+    "덱스": "덱스(DEX)"
+   },
+   "레오": {
+    "레오": "레오 (LEO)"
+   },
+   "리슨": {
+    "리슨": "리슨(LYSON)"
+   },
+   "리오": {
+    "리오": "리오(LEO)"
+   },
+   "몬스타엑스": {
+    "민혁": "민혁(MINHYUK)",
+    "셔누": "셔누(SHOWNU)",
+    "주헌": "주헌(JOOHONEY)"
+   },
+   "미니틴": {
+    "MINITEEN": "미니틴(MINITEEN)",
+    "미니틴": "미니틴(MINITEEN)"
+   },
+   "미야오": {
+    "미야오": "미야오(MEOVV)"
+   },
+   "박규리": {
+    "박규리": "박규리(Park Gyuri)"
+   },
+   "박재범": {
+    "박재범": "박재범(Jay Park)"
+   },
+   "배인혁": {
+    "배인혁": "배인혁(BAE INHYUK)"
+   },
+   "백호": {
+    "백호": "백호(BAEKHO)"
+   },
+   "브레드이발소": {
+    "브레드이발소": "브레드이발소(photo card)"
+   },
+   "비투비 컴퍼니": {
+    "서은광": "서은광 (SEO EUNKWANG)"
+   },
+   "빌리": {
+    "빌리": "Billlie (빌리)"
+   },
+   "세븐틴 2차": {
+    "SEVENTEEN": "세븐틴(SEVENTEEN)"
+   },
+   "손호준": {
+    "손호준": "손호준(SON HOJUN)"
+   },
+   "수진": {
+    "수진": "수진(SOOJIN)"
+   },
+   "싸이코드": {
+    "싸이코드": "싸이코드(PSYCHORD)"
+   },
+   "씨엔블루": {
+    "이정신": "이정신(Lee Jung Shin)"
+   },
+   "아크": {
+    "아크": "ARrC (아크)"
+   },
+   "엔믹스": {
+    "NMIXX": "NMIXX(콘서트)"
+   },
+   "엔플라잉": {
+    "엔플라잉": "엔플라잉(N.Flying)"
+   },
+   "여진구": {
+    "여진구": "여진구(Yeo Jingoo)"
+   },
+   "온앤오프": {
+    "온앤오프": "온앤오프(ONF)"
+   },
+   "온유": {
+    "온유": "온유(ONEW)"
+   },
+   "와코": {
+    "와코": "와코(WAKO)"
+   },
+   "우주소녀": {
+    "WJSN": "우주소녀(WJSN)",
+    "설아": "설아(SEOLA)",
+    "우주소녀": "우주소녀(WJSN)"
+   },
+   "원호": {
+    "원호": "원호(WONHO)"
+   },
+   "웨이커": {
+    "권협": "권협(KWONHYEOP)",
+    "새별": "새별(SAEBYEOL)"
+   },
+   "이루다": {
+    "이루다": "이루다(LUDA)"
+   },
+   "이재인": {
+    "이재인": "이재인(Lee Jaein)"
+   },
+   "이지한": {
+    "이지한": "이지한(LEE JIHAN)"
+   },
+   "이채민": {
+    "이채민": "이채민(LEE CHAE MIN)"
+   },
+   "이호정": {
+    "이호정": "이호정(Lee Hojung)"
+   },
+   "저스트비": {
+    "저스트비": "저스트비(JUSTB)"
+   },
+   "정용화": {
+    "정용화": "정용화(Jung Yong Hwa)"
+   },
+   "정해인": {
+    "정해인": "정해인(Jung Hae In)"
+   },
+   "조유리": {
+    "조유리": "조유리(JO YURI)"
+   },
+   "차우민": {
+    "차우민": "차우민(CHA WOOMIN)"
+   },
+   "채수빈": {
+    "채수빈": "채수빈(Chae Soo-bin)"
+   },
+   "최예나": {
+    "최예나": "YENA(최예나)"
+   },
+   "켄": {
+    "켄": "켄(KEN)"
+   },
+   "태호": {
+    "태호": "태호(TAEHO)"
+   },
+   "하지원": {
+    "하지원": "하지원(HAJIWON)"
+   },
+   "헤비": {
+    "헤비": "헤비(Hebi)"
+   },
+   "헤이즈": {
+    "헤이즈": "헤이즈(Heize)"
+   },
+   "혜리": {
+    "혜리": "혜리(HYERI)"
+   },
+   "휘인": {
+    "휘인": "휘인(WHEE IN)"
+   }
+  },
+  "프레임": {
+   "82MAJOR": {
+    "CHO SEONG IL": "조성일(CHO SEONG IL)",
+    "HWANG SEONG BIN": "황성빈(HWANG SEONG BIN)",
+    "KIM DO GYUN": "김도균(KIM DO GYUN)",
+    "NAM SEONG MO": "남성모(NAM SEONG MO)",
+    "PARK SEOK JOON": "박석준(PARK SEOK JOON)",
+    "YOON YE CHAN": "윤예찬(YOON YE CHAN)",
+    "김도균": "김도균(KIM DO GYUN)",
+    "남성모": "남성모(NAM SEONG MO)",
+    "박석준": "박석준(PARK SEOK JOON)",
+    "윤예찬": "윤예찬(YOON YE CHAN)",
+    "조성일": "조성일(CHO SEONG IL)",
+    "황성빈": "황성빈(HWANG SEONG BIN)"
+   },
+   "8TURN": {
+    "HAE MIN": "해민(HAE MIN)",
+    "JAE YUN": "재윤(JAE YUN)",
+    "KYUNG MIN": "경민(KYUNG MIN)",
+    "MIN HO": "민호(MIN HO)",
+    "MYUNG HO": "명호(MYUNG HO)",
+    "SEUNG HEON": "승헌(SEUNG HEON)",
+    "YOON SUNG": "윤성(YOON SUNG)",
+    "YUN GYU": "윤규(YUN GYU)",
+    "경민": "경민(KYUNG MIN)",
+    "명호": "명호(MYUNG HO)",
+    "민호": "민호(MIN HO)",
+    "승헌": "승헌(SEUNG HEON)",
+    "윤규": "윤규(YUN GYU)",
+    "윤성": "윤성(YOON SUNG)",
+    "재윤": "재윤(JAE YUN)",
+    "해민": "해민(HAE MIN)"
+   },
+   "Baby DONT Cry": {
+    "미아": "미아(Mia)",
+    "베니": "베니(Beni)",
+    "이현": "이현(Yihyun)",
+    "쿠미": "쿠미(Kumi)"
+   },
+   "ENHYPEN": {
+    "HEESEUNG": "희승(HEESEUNG)",
+    "JAKE": "제이크(JAKE)",
+    "JAY": "제이(JAY)",
+    "JUNGWON": "정원(JUNGWON)",
+    "NI-KI": "니키(NI-KI)",
+    "SUNGHOON": "성훈(SUNGHOON)",
+    "SUNOO": "선우(SUNOO)",
+    "니키": "니키(NI-KI)",
+    "선우": "선우(SUNOO)",
+    "성훈": "성훈(SUNGHOON)",
+    "정원": "정원(JUNGWON)",
+    "제이": "제이(JAY)",
+    "제이크": "제이크(JAKE)",
+    "희승": "희승(HEESEUNG)"
+   },
+   "KickFlip": {
+    "Donghwa": "동화(Donghwa)",
+    "Donghyeon": "동현(Donghyeon)",
+    "Juwang": "주왕(Juwang)",
+    "Keiju": "케이주(Keiju)",
+    "Kyehoon": "계훈(Kyehoon)",
+    "Minje": "민제(Minje)",
+    "계훈": "계훈(Kyehoon)",
+    "동현": "동현(Donghyeon)",
+    "동화": "동화(Donghwa)",
+    "민제": "민제(Minje)",
+    "아마루": "아마루(Amaru)",
+    "주왕": "주왕(Juwang)",
+    "케이주": "케이주(Keiju)"
+   },
+   "MOMOLAND": {
+    "나윤": "나윤(NAYUN)",
+    "낸시": "낸시(NANCY)",
+    "아인": "아인(AHIN)",
+    "제인": "제인(JANE)",
+    "주이": "주이(JOOE)",
+    "혜빈": "혜빈(HYEBIN)"
+   },
+   "NMIXX": {
+    "BAE": "배이(BAE)",
+    "HAEWON": "해원(HAEWON)",
+    "JIWOO": "지우(JIWOO)",
+    "KYUJIN": "규진(KYUJIN)",
+    "LILY": "릴리(LILY)",
+    "SULLYOON": "설윤(SULLYOON)",
+    "규진": "규진(KYUJIN)",
+    "릴리": "릴리(LILY)",
+    "배이": "배이(BAE)",
+    "설윤": "설윤(SULLYOON)",
+    "지우": "지우(JIWOO)",
+    "해원": "해원(HAEWON)"
+   },
+   "NTX": {
+    "CHANGHUN": "창훈(CHANGHUN)",
+    "EUNHO": "은호(EUNHO)",
+    "HOJUN": "호준(HOJUN)",
+    "HYEONGJIN": "형진(HYEONGJIN)",
+    "RAWHYUN": "로현(RAWHYUN)",
+    "SEUNGWON": "승원(SEUNGWON)",
+    "XIHA": "시하(XIHA)",
+    "YUNHYEOK": "윤혁(YUNHYEOK)",
+    "로현": "로현(RAWHYUN)",
+    "승원": "승원(SEUNGWON)",
+    "시하": "시하(XIHA)",
+    "윤혁": "윤혁(YUNHYEOK)",
+    "은호": "은호(EUNHO)",
+    "창훈": "창훈(CHANGHUN)",
+    "형진": "형진(HYEONGJIN)",
+    "호준": "호준(HOJUN)"
+   },
+   "P1Harmony": {
+    "INTAK": "인탁(INTAK)",
+    "JIUNG": "지웅(JIUNG)",
+    "JONGSEOB": "종섭(JONGSEOB)",
+    "KEEHO": "기호(KEEHO)",
+    "SOUL": "소울(SOUL)",
+    "THEO": "테오(THEO)",
+    "기호": "기호(KEEHO)",
+    "소울": "소울(SOUL)",
+    "인탁": "인탁(INTAK)",
+    "종섭": "종섭(JONGSEOB)",
+    "지웅": "지웅(JIUNG)",
+    "테오": "테오(THEO)"
+   },
+   "SEVENTOEIGHT": {
+    "디옴": "디옴(DOM)",
+    "엑시": "엑시(EXXI)",
+    "엠": "엠(M)",
+    "재거": "재거(JAGGER)",
+    "치원": "치원(CHIWON)",
+    "쿄준": "쿄준(KYOJUN)"
+   },
+   "SM ent": {
+    "ANTON": "앤톤(ANTON)",
+    "CHENLE": "천러(CHENLE)",
+    "DOYOUNG": "도영(DOYOUNG)",
+    "EUNSEOK": "은석(EUNSEOK)",
+    "GISELLE": "지젤(GISELLE)",
+    "HAECHAN": "해찬(HAECHAN)",
+    "HENDERY": "헨드리(HENDERY)",
+    "JAEHEE": "재희(JAEHEE)",
+    "JAEHYUN": "재현(JAEHYUN)",
+    "JAEMIN": "재민(JAEMIN)",
+    "JENO": "제노(JENO)",
+    "JISUNG": "지성(JISUNG)",
+    "JOHNNY": "쟈니(JOHNNY)",
+    "JUNGWOO": "정우(JUNGWOO)",
+    "KARINA": "카리나(KARINA)",
+    "KUN": "쿤(KUN)",
+    "MARK": "마크(MARK)",
+    "MINHO": "민호(MINHO)",
+    "NINGNING": "닝닝(NINGNING)",
+    "RENJUN": "런쥔(RENJUN)",
+    "RIKU": "리쿠(RIKU)",
+    "RYEOWOOK": "려욱(RYEOWOOK)",
+    "RYO": "료(RYO)",
+    "SAKUYA": "사쿠야(SAKUYA)",
+    "SHOTARO": "쇼타로(SHOTARO)",
+    "SION": "시온(SION)",
+    "SOHEE": "소희(SOHEE)",
+    "SUNGCHAN": "성찬(SUNGCHAN)",
+    "TEN": "텐(TEN)",
+    "WINTER": "윈터(WINTER)",
+    "WONBIN": "원빈(WONBIN)",
+    "XIAOJUN": "샤오쥔(XIAOJUN)",
+    "YANGYANG": "양양(YANGYANG)",
+    "YUSHI": "유우시(YUSHI)",
+    "YUTA": "유타(YUTA)",
+    "닝닝": "닝닝(NINGNING)",
+    "런쥔": "런쥔(RENJUN)",
+    "려욱": "려욱(RYEOWOOK)",
+    "료": "료(RYO)",
+    "리쿠": "리쿠(RIKU)",
+    "마크": "마크(MARK)",
+    "민호": "민호(MINHO)",
+    "사쿠야": "사쿠야(SAKUYA)",
+    "샤오쥔": "샤오쥔(XIAOJUN)",
+    "성찬": "성찬(SUNGCHAN)",
+    "소희": "소희(SOHEE)",
+    "쇼타로": "쇼타로(SHOTARO)",
+    "스텔라": "스텔라(STELLA)",
+    "시온": "시온(SION)",
+    "앤톤": "앤톤(ANTON)",
+    "양양": "양양(YANGYANG)",
+    "에이나": "에이나(A-NA)",
+    "예온": "예온(YE-ON)",
+    "원빈": "원빈(WONBIN)",
+    "윈터": "윈터(WINTER)",
+    "유우시": "유우시(YUSHI)",
+    "유하": "유하(YUHA)",
+    "은석": "은석(EUNSEOK)",
+    "이안": "이안(IAN)",
+    "재민": "재민(JAEMIN)",
+    "재현": "재현(JAEHYUN)",
+    "재희": "재희(JAEHEE)",
+    "정우": "정우(JUNGWOO)",
+    "제노": "제노(JENO)",
+    "주은": "주은(JUUN)",
+    "지성": "지성(JISUNG)",
+    "지우": "지우(JIWOO)",
+    "지젤": "지젤(GISELLE)",
+    "천러": "천러(CHENLE)",
+    "카르멘": "카르멘(CARMEN)",
+    "카리나": "카리나(KARINA)",
+    "쿤": "쿤(KUN)",
+    "텐": "텐(TEN)",
+    "해찬": "해찬(HAECHAN)",
+    "헨드리": "헨드리(HENDERY)"
+   },
+   "SMU Artist": {
+    "EUNSEOK": "은석(EUNSEOK)",
+    "JAEHEE": "재희(JAEHEE)",
+    "RIKU": "리쿠(RIKU)",
+    "SUNGCHAN": "성찬(SUNGCHAN)",
+    "WONBIN": "원빈(WONBIN)",
+    "리쿠": "리쿠(RIKU)",
+    "성찬": "성찬(SUNGCHAN)",
+    "원빈": "원빈(WONBIN)",
+    "은석": "은석(EUNSEOK)",
+    "재희": "재희(JAEHEE)"
+   },
+   "Stray Kids": {
+    "Bang Chan": "방찬(Bang Chan)",
+    "Changbin": "창빈(Changbin)",
+    "Felix": "필릭스(Felix)",
+    "HAN": "한(HAN)",
+    "Hyunjin": "현진(Hyunjin)",
+    "I.N": "아이엔(I.N)",
+    "Lee Know": "리노(Lee Know)",
+    "Seungmin": "승민(Seungmin)",
+    "리노": "리노(Lee Know)",
+    "방찬": "방찬(Bang Chan)",
+    "승민": "승민(Seungmin)",
+    "아이엔": "아이엔(I.N)",
+    "창빈": "창빈(Changbin)",
+    "필릭스": "필릭스(Felix)",
+    "한": "한(HAN)",
+    "현진": "현진(Hyunjin)"
+   },
+   "TNX": {
+    "HWI": "은휘(HWI)",
+    "HYUN SOO": "장현수(HYUN SOO)",
+    "JUN HYEOK": "천준혁(JUN HYEOK)",
+    "SUNG JUN": "오성준(SUNG JUN)",
+    "TAE HUN": "최태훈(TAE HUN)",
+    "오성준": "오성준(SUNG JUN)",
+    "은휘": "은휘(HWI)",
+    "장현수": "장현수(HYUN SOO)",
+    "천준혁": "천준혁(JUN HYEOK)",
+    "최태훈": "최태훈(TAE HUN)"
+   },
+   "WAKER": {
+    "IJUN": "이준(IJUN)"
+   },
+   "YENA(최예나)": {
+    "YENA": "YENA(최예나)",
+    "최예나": "YENA(최예나)"
+   },
+   "cosmosy": {
+    "디하나": "디하나(de hana)",
+    "에이메이": "에이메이(amei)",
+    "카미온": "카미온(kamion)",
+    "히메샤": "히메샤(himesha)"
+   },
+   "xikers": {
+    "HUNTER": "헌터(HUNTER)",
+    "HYUNWOO": "현우(HYUNWOO)",
+    "JINSIK": "진식(JINSIK)",
+    "JUNGHOON": "정훈(JUNGHOON)",
+    "JUNMIN": "준민(JUNMIN)",
+    "MINJAE": "민재(MINJAE)",
+    "SEEUN": "세은(SEEUN)",
+    "SUMIN": "수민(SUMIN)",
+    "YECHAN": "예찬(YECHAN)",
+    "YUJUN": "유준(YUJUN)"
+   },
+   "青岛啤酒节": {
+    "MOON SUA": "문수아 (MOON SUA)",
+    "SIYOON": "시윤 (SIYOON)",
+    "SUHYEON": "수현 (SUHYEON)",
+    "TSUKI": "츠키 (TSUKI)"
+   },
+   "김고은": {
+    "김고은": "김고은(KIM GO EUN)"
+   },
+   "넥스지": {
+    "HARU": "하루(HARU)",
+    "HYUI": "휴이(HYUI)",
+    "SEITA": "세이타(SEITA)",
+    "SO GEON": "소 건(SO GEON)",
+    "TOMOYA": "토모야(TOMOYA)",
+    "YU": "유우(YU)",
+    "YUKI": "유키(YUKI)",
+    "세이타": "세이타(SEITA)",
+    "소 건": "소 건(SO GEON)",
+    "유우": "유우(YU)",
+    "유키": "유키(YUKI)",
+    "토모야": "토모야(TOMOYA)",
+    "하루": "하루(HARU)",
+    "휴이": "휴이(HYUI)"
+   },
+   "누에라": {
+    "FAN": "판(FAN)",
+    "LIN": "린(LIN)",
+    "MIRAKU": "미라쿠(MIRAKU)",
+    "YUSEOP": "유섭(YUSEOP)",
+    "기현": "기현(GIHYEON)",
+    "린": "린(LIN)",
+    "미라쿠": "미라쿠(MIRAKU)",
+    "유섭": "유섭(YUSEOP)",
+    "준표": "준표(JUNPYO)",
+    "판": "판(FAN)",
+    "현준": "현준(HYUNJUN)"
+   },
+   "대성": {
+    "DAESUNG": "대성(DAESUNG)",
+    "대성": "대성(DAESUNG)"
+   },
+   "대성2차": {
+    "DAESUNG": "대성(DAESUNG)"
+   },
+   "더보이즈": {
+    "영훈": "영훈(YOUNGHOON)"
+   },
+   "더보이즈 콘서트 케빈": {
+    "KEVIN": "케빈(KEVIN)",
+    "케빈": "케빈(KEVIN)"
+   },
+   "데이식스": {
+    "DOWOON": "도운(DOWOON)",
+    "SUNGJIN": "성진(SUNGJIN)",
+    "WONPIL": "원필(WONPIL)",
+    "Young K": "영케이(Young K)",
+    "도운": "도운(DOWOON)",
+    "성진": "성진(SUNGJIN)",
+    "원필": "원필(WONPIL)"
+   },
+   "덱스": {
+    "DEX": "덱스(DEX)",
+    "덱스": "덱스(DEX)"
+   },
+   "도영 위시": {
+    "DOYOUNG": "도영(DOYOUNG)",
+    "JAEHEE": "재희(JAEHEE)",
+    "RIKU": "리쿠(RIKU)",
+    "SAKUYA": "사쿠야(SAKUYA)",
+    "YUSHI": "유우시(YUSHI)"
+   },
+   "려운": {
+    "려운": "려운(Ryeoun)"
+   },
+   "리슨": {
+    "리슨": "리슨(LYSON)"
+   },
+   "리오": {
+    "리오": "리오(LEO)"
+   },
+   "몬스타엑스": {
+    "HYUNGWON": "형원(HYUNGWON)",
+    "JOOHONEY": "주헌(JOOHONEY)",
+    "KIHYUN": "기현(KIHYUN)",
+    "MINHYUK": "민혁(MINHYUK)",
+    "SHOWNU": "셔누(SHOWNU)",
+    "기현": "기현(KIHYUN)",
+    "민혁": "민혁(MINHYUK)",
+    "셔누": "셔누(SHOWNU)",
+    "아이엠": "아이엠(I.M)",
+    "주헌": "주헌(JOOHONEY)",
+    "형원": "형원(HYUNGWON)"
+   },
+   "미르": {
+    "미르": "미르(MIR)"
+   },
+   "미야오": {
+    "ANNA": "안나(ANNA)",
+    "ELLA": "엘라(ELLA)",
+    "GAWON": "가원(GAWON)",
+    "NARIN": "나린(NARIN)",
+    "SOOIN": "수인(SOOIN)",
+    "가원": "가원(GAWON)",
+    "나린": "나린(NARIN)",
+    "수인": "수인(SOOIN)",
+    "안나": "안나(ANNA)",
+    "엘라": "엘라(ELLA)"
+   },
+   "백현": {
+    "백현": "백현(BAEKHYUN)"
+   },
+   "백호": {
+    "백호": "백호(BAEKHO)"
+   },
+   "보넥도": {
+    "JAEHYUN": "명재현(JAEHYUN)",
+    "LEEHAN": "이한(LEEHAN)",
+    "RIWOO": "리우(RIWOO)",
+    "SUNGHO": "성호(SUNGHO)",
+    "TAESAN": "태산(TAESAN)",
+    "WOONHAK": "운학(WOONHAK)",
+    "리우": "리우(RIWOO)",
+    "명재현": "명재현(JAEHYUN)",
+    "성호": "성호(SUNGHO)",
+    "운학": "운학(WOONHAK)",
+    "이한": "이한(LEEHAN)",
+    "태산": "태산(TAESAN)"
+   },
+   "비비지": {
+    "SINB": "신비(SINB)"
+   },
+   "비투비 컴퍼니": {
+    "SEO EUNKWANG": "서은광 (SEO EUNKWANG)",
+    "서은광": "서은광 (SEO EUNKWANG)"
+   },
+   "빅오션": {
+    "지석": "지석(JISEOK)",
+    "찬연": "찬연(CHANYEON)"
+   },
+   "빌리": {
+    "문수아": "문수아 (MOON SUA)",
+    "션": "션 (SHEON)",
+    "수현": "수현 (SUHYEON)",
+    "시윤": "시윤 (SIYOON)",
+    "츠키": "츠키 (TSUKI)",
+    "하람": "하람 (HARAM)",
+    "하루나": "하루나 (HARUNA)"
+   },
+   "세븐틴 2차": {
+    "DINO": "디노(DINO)",
+    "DK": "도겸(DK)",
+    "HOSHI": "호시(HOSHI)",
+    "JEONGHAN": "정한(JEONGHAN)",
+    "JOSHUA": "조슈아(JOSHUA)",
+    "JUN": "준(JUN)",
+    "MINGYU": "민규(MINGYU)",
+    "S.COUPS": "에스쿱스(S.COUPS)",
+    "SEUNGKWAN": "승관(SEUNGKWAN)",
+    "THE 8": "디에잇(THE 8)",
+    "VERNON": "버논(VERNON)",
+    "WONWOO": "원우(WONWOO)",
+    "WOOZI": "우지(WOOZI)"
+   },
+   "손호영": {
+    "손호영": "손호영(Son Hoyoung)"
+   },
+   "손호준": {
+    "손호준": "손호준(SON HOJUN)"
+   },
+   "수진": {
+    "수진": "수진(SOOJIN)"
+   },
+   "신수현": {
+    "신수현": "신수현(Shin Su Hyun)"
+   },
+   "싸이커스": {
+    "민재": "민재(MINJAE)",
+    "세은": "세은(SEEUN)",
+    "수민": "수민(SUMIN)",
+    "예찬": "예찬(YECHAN)",
+    "유준": "유준(YUJUN)",
+    "정훈": "정훈(JUNGHOON)",
+    "준민": "준민(JUNMIN)",
+    "진식": "진식(JINSIK)",
+    "헌터": "헌터(HUNTER)",
+    "현우": "현우(HYUNWOO)"
+   },
+   "싸이코드": {
+    "감제이": "감제이(GAMJAY)",
+    "늦잠": "늦잠(OVERSLEEP)",
+    "루이쨘": "루이쨘(LOUISZZAN)",
+    "연이": "연이(YEONI)",
+    "하루토": "하루토(HARUTO)"
+   },
+   "아이칠린": {
+    "예주": "예주(YEJU)",
+    "이지": "이지(E.JI)",
+    "재키": "재키(JACKIE)",
+    "주니": "주니(JOONIE)",
+    "지윤": "지윤(JIYOON)",
+    "채린": "채린(CHAERIN)",
+    "초원": "초원(CHOWON)"
+   },
+   "아일릿 BOX": {
+    "IROHA": "이로하(IROHA)",
+    "MINJU": "민주(MINJU)",
+    "MOKA": "모카(MOKA)",
+    "WONHEE": "원희(WONHEE)",
+    "YUNAH": "윤아(YUNAH)"
+   },
+   "아크": {
+    "끼엔": "끼엔(KIEN)",
+    "도하": "도하(DOHA)",
+    "리오토": "리오토(RIOTO)",
+    "앤디": "앤디(ANDY)",
+    "지빈": "지빈(JIBEEN)",
+    "최한": "최한(CHOI HAN)",
+    "현민": "현민(HYUNMIN)"
+   },
+   "앰퍼샌드원": {
+    "BRIAN": "브라이언(BRIAN)",
+    "JIHO": "최지호(JIHO)",
+    "KAMDEN": "나캠든(KAMDEN)",
+    "KYRELL": "카이렐(KYRELL)",
+    "MACKIAH": "마카야(MACKIAH)",
+    "SEUNGMO": "김승모(SEUNGMO)",
+    "SIYUN": "윤시윤(SIYUN)",
+    "김승모": "김승모(SEUNGMO)",
+    "나캠든": "나캠든(KAMDEN)",
+    "마카야": "마카야(MACKIAH)",
+    "브라이언": "브라이언(BRIAN)",
+    "윤시윤": "윤시윤(SIYUN)",
+    "최지호": "최지호(JIHO)",
+    "카이렐": "카이렐(KYRELL)"
+   },
+   "에잇턴": {
+    "HAE MIN": "해민(HAE MIN)",
+    "JAE YUN": "재윤(JAE YUN)",
+    "KYUNG MIN": "경민(KYUNG MIN)",
+    "MIN HO": "민호(MIN HO)",
+    "MYUNG HO": "명호(MYUNG HO)",
+    "SEUNG HEON": "승헌(SEUNG HEON)",
+    "YOON SUNG": "윤성(YOON SUNG)",
+    "YUN GYU": "윤규(YUN GYU)",
+    "경민": "경민(KYUNG MIN)",
+    "명호": "명호(MYUNG HO)",
+    "민호": "민호(MIN HO)",
+    "승헌": "승헌(SEUNG HEON)",
+    "윤규": "윤규(YUN GYU)",
+    "윤성": "윤성(YOON SUNG)",
+    "재윤": "재윤(JAE YUN)",
+    "해민": "해민(HAE MIN)"
+   },
+   "엔믹스": {
+    "BAE": "배이(BAE)",
+    "HAEWON": "해원(HAEWON)",
+    "JIWOO": "지우(JIWOO)",
+    "KYUJIN": "규진(KYUJIN)",
+    "LILY": "릴리(LILY)",
+    "SULLYOON": "설윤(SULLYOON)",
+    "규진": "규진(KYUJIN)",
+    "릴리": "릴리(LILY)",
+    "배이": "배이(BAE)",
+    "설윤": "설윤(SULLYOON)",
+    "지우": "지우(JIWOO)",
+    "해원": "해원(HAEWON)"
+   },
+   "엔하이픈 1127 1225": {
+    "니키": "니키(NI-KI)",
+    "선우": "선우(SUNOO)",
+    "성훈": "성훈(SUNGHOON)",
+    "정원": "정원(JUNGWON)",
+    "제이": "제이(JAY)",
+    "제이크": "제이크(JAKE)",
+    "희승": "희승(HEESEUNG)"
+   },
+   "엔하이픈 단독": {
+    "HEESEUNG": "희승(HEESEUNG)",
+    "JAY": "제이(JAY)",
+    "SUNGHOON": "성훈(SUNGHOON)"
+   },
+   "엔하이픈 프리미엄": {
+    "HEESEUNG": "희승(HEESEUNG)",
+    "JAKE": "제이크(JAKE)",
+    "JAY": "제이(JAY)",
+    "JUNGWON": "정원(JUNGWON)",
+    "NI-KI": "니키(NI-KI)",
+    "SUNGHOON": "성훈(SUNGHOON)",
+    "SUNOO": "선우(SUNOO)"
+   },
+   "온앤오프": {
+    "E TION": "이션(E TION)",
+    "HYOJIN": "효진(HYOJIN)",
+    "MINKYUN": "민균(MINKYUN)",
+    "SEUNGJUN": "승준(SEUNGJUN)",
+    "U": "유(U)",
+    "WYATT": "와이엇(WYATT)",
+    "민균": "민균(MINKYUN)",
+    "승준": "승준(SEUNGJUN)",
+    "와이엇": "와이엇(WYATT)",
+    "유": "유(U)",
+    "이션": "이션(E TION)",
+    "효진": "효진(HYOJIN)"
+   },
+   "온유": {
+    "ONEW": "온유(ONEW)",
+    "온유": "온유(ONEW)"
+   },
+   "올아워즈": {
+    "HYUNBIN": "현빈(HYUNBIN)",
+    "KUNHO": "건호(KUNHO)",
+    "MASAMI": "마사미(MASAMI)",
+    "MINJE": "민제(MINJE)",
+    "ON:N": "온(ON:N)",
+    "XAYDEN": "제이든(XAYDEN)",
+    "YOUMIN": "유민(YOUMIN)",
+    "건호": "건호(KUNHO)",
+    "마사미": "마사미(MASAMI)",
+    "민제": "민제(MINJE)",
+    "온": "온(ON:N)",
+    "유민": "유민(YOUMIN)",
+    "제이든": "제이든(XAYDEN)",
+    "현빈": "현빈(HYUNBIN)"
+   },
+   "와코": {
+    "와코": "와코(WAKO)"
+   },
+   "우주소녀": {
+    "설아": "설아(SEOLA)"
+   },
+   "우즈": {
+    "WOODZ": "우즈(WOODZ)",
+    "우즈": "우즈(WOODZ)"
+   },
+   "원어스": {
+    "건희": "건희(KEON HEE)",
+    "시온": "시온(XION)",
+    "이도": "이도(LEE DO)",
+    "환웅": "환웅(HWAN WOONG)"
+   },
+   "원호": {
+    "원호": "원호(WONHO)"
+   },
+   "웨이커": {
+    "SAEBYEOL": "새별(SAEBYEOL)",
+    "권협": "권협(KWONHYEOP)",
+    "새별": "새별(SAEBYEOL)"
+   },
+   "위치스": {
+    "NIAA": "니아(NIAA)",
+    "니아": "니아(NIAA)",
+    "루시아": "루시아(LUCIA)",
+    "마고": "마고(MAGO)",
+    "마리": "마리(MARI)",
+    "뮤": "뮤(MEW)"
+   },
+   "이브": {
+    "이브": "이브(Yves)"
+   },
+   "이븐": {
+    "KEITA": "케이타(KEITA)",
+    "문정현": "문정현(JUNGHYUN)",
+    "박지후": "박지후(JIHOO)",
+    "박한빈": "박한빈(HANBIN)",
+    "유승언": "유승언(SEUNGEON)",
+    "이정현": "이정현(JEONGHYEON)",
+    "지윤서": "지윤서(YUNSEO)",
+    "케이타": "케이타(KEITA)"
+   },
+   "이재인": {
+    "이재인": "이재인(Lee Jaein)"
+   },
+   "이지한": {
+    "이지한": "이지한(LEE JIHAN)"
+   },
+   "이진욱": {
+    "이진욱": "이진욱(LEE JIN UK)"
+   },
+   "이채민": {
+    "이채민": "이채민(LEE CHAE MIN)"
+   },
+   "저스트비": {
+    "BAIN": "배인(BAIN)",
+    "DY": "전도염(DY)",
+    "GEONU": "이건우(GEONU)",
+    "LIM JIMIN": "임지민(LIM JIMIN)",
+    "SANGWOO": "김상우(SANGWOO)",
+    "SIWOO": "시우(SIWOO)",
+    "김상우": "김상우(SANGWOO)",
+    "배인": "배인(BAIN)",
+    "시우": "시우(SIWOO)",
+    "이건우": "이건우(GEONU)",
+    "임지민": "임지민(LIM JIMIN)",
+    "전도염": "전도염(DY)"
+   },
+   "전소미": {
+    "전소미": "전소미(JEON SOMI)"
+   },
+   "첸": {
+    "첸": "첸(CHEN)"
+   },
+   "코르티스": {
+    "JAMES": "제임스(JAMES)",
+    "JUHOON": "주훈(JUHOON)",
+    "KEONHO": "건호(KEONHO)",
+    "MARTIN": "마틴(MARTIN)",
+    "SEONGHYEON": "성현(SEONGHYEON)",
+    "건호": "건호(KEONHO)",
+    "마틴": "마틴(MARTIN)",
+    "성현": "성현(SEONGHYEON)",
+    "제임스": "제임스(JAMES)",
+    "주훈": "주훈(JUHOON)"
+   },
+   "킥플립": {
+    "Donghwa": "동화(Donghwa)",
+    "Donghyeon": "동현(Donghyeon)",
+    "Juwang": "주왕(Juwang)",
+    "Keiju": "케이주(Keiju)",
+    "Kyehoon": "계훈(Kyehoon)",
+    "Minje": "민제(Minje)",
+    "계훈": "계훈(Kyehoon)",
+    "동현": "동현(Donghyeon)",
+    "동화": "동화(Donghwa)",
+    "민제": "민제(Minje)",
+    "아마루": "아마루(Amaru)",
+    "주왕": "주왕(Juwang)",
+    "케이주": "케이주(Keiju)"
+   },
+   "테스트 전용": {
+    "니키": "니키(NI-KI)",
+    "대성": "대성(DAESUNG)",
+    "리우": "리우(RIWOO)",
+    "명재현": "명재현(JAEHYUN)",
+    "모카": "모카(MOKA)",
+    "민주": "민주(MINJU)",
+    "선우": "선우(SUNOO)",
+    "성호": "성호(SUNGHO)",
+    "성훈": "성훈(SUNGHOON)",
+    "운학": "운학(WOONHAK)",
+    "원희": "원희(WONHEE)",
+    "윤아": "윤아(YUNAH)",
+    "이로하": "이로하(IROHA)",
+    "이한": "이한(LEEHAN)",
+    "정원": "정원(JUNGWON)",
+    "제이": "제이(JAY)",
+    "제이크": "제이크(JAKE)",
+    "태산": "태산(TAESAN)",
+    "희승": "희승(HEESEUNG)"
+   },
+   "텐 nct": {
+    "MARK": "마크(MARK)",
+    "TEN": "텐(TEN)"
+   },
+   "템페스트": {
+    "루": "LEW(루)",
+    "은찬": "은찬(EUNCHAN)",
+    "태래": "태래(TAERAE)",
+    "한빈": "한빈(HANBIN)",
+    "혁": "혁(HYUK)",
+    "형섭": "형섭(HYEONGSEOP)"
+   },
+   "트와이스": {
+    "나연": "나연(NAYEON)",
+    "다현": "다현(DAHYUN)",
+    "모모": "모모(MOMO)",
+    "미나": "미나(MINA)",
+    "사나": "사나(SANA)",
+    "정연": "정연(JEONGYEON)",
+    "지효": "지효(JIHYO)",
+    "쯔위": "쯔위(TZUYU)",
+    "채영": "채영(CHAEYOUNG)"
+   },
+   "틴탑": {
+    "니엘": "니엘(NIEL)",
+    "리키": "리키(RICKY)",
+    "창조": "창조(CHANGJO)",
+    "천지": "천지(CHUNJI)"
+   },
+   "파우": {
+    "DONGYEON": "동연(DONGYEON)",
+    "HONG": "홍(HONG)",
+    "HYUNBIN": "현빈(HYUNBIN)",
+    "JUNGBIN": "정빈(JUNGBIN)",
+    "YORCH": "요치(YORCH)",
+    "동연": "동연(DONGYEON)",
+    "요치": "요치(YORCH)",
+    "정빈": "정빈(JUNGBIN)",
+    "현빈": "현빈(HYUNBIN)",
+    "홍": "홍(HONG)"
+   },
+   "표예진": {
+    "표예진": "표예진(Pyo YeJin)"
+   },
+   "하이브 엔하이픈": {
+    "HEESEUNG": "희승(HEESEUNG)",
+    "JAKE": "제이크(JAKE)",
+    "JAY": "제이(JAY)",
+    "JUNGWON": "정원(JUNGWON)",
+    "NI-KI": "니키(NI-KI)",
+    "SUNGHOON": "성훈(SUNGHOON)",
+    "SUNOO": "선우(SUNOO)"
+   },
+   "헤비": {
+    "Hebi": "헤비(Hebi)",
+    "헤비": "헤비(Hebi)"
+   },
+   "헤이즈": {
+    "Heize": "헤이즈(Heize)"
+   },
+   "휘인": {
+    "휘인": "휘인(WHEE IN)"
+   }
+  }
+ },
+ "스내피즘": {
+  "프레임": {
+   "*": {
+    "8TURN": "8TURN (에잇턴)"
+   }
+  }
+ }
+}

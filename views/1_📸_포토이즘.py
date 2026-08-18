@@ -22,6 +22,7 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
 import ip_classify  # IP구분/IP명 분류 공용 모듈
+import name_alias  # 테마·프레임 한/영 통합 + 글자깨짐 교정
 import photoism_rules  # 매출액 가산 규칙(쿠폰·코인 국가)
 import auth
 import xlsx_export  # 내려받기 → 엑셀(.xlsx)
@@ -123,19 +124,24 @@ h2, h3{ letter-spacing:-0.02em !important; }
    (오픈 캘린더 ip_calendar_ui 에서 쓰던 방법을 그대로 가져왔다)
    ★높이는 --rrh 한 곳에서만 정한다. 줄과 버튼이 같은 값을 써야 아래쪽이
      안 눌리는 일이 없다 — 캘린더에서 16px 이 죽어 있던 그 문제다. */
-div[class*="st-key-rrrow"]{ --rrh:46px; position:relative; }
+/* ★줄 상자에 높이를 준다 — 안 주면 상자(36px)가 표(46px)보다 낮아서
+     덮개(inset:0)가 아래 10px 을 못 덮는다. 높이는 여기 한 곳에서만 정한다. */
+div[class*="st-key-rrrow"]{ --rrh:46px; position:relative; min-height:var(--rrh); }
 div[class*="st-key-rrrow"] .rr1{ border:0; }
 div[class*="st-key-rrrow"] .ntr{ min-height:var(--rrh); align-items:center;
   border-radius:9px; transition:background .12s; }
 div[class*="st-key-rrrow"]:hover .ntr{ background:var(--surface-2); }
 div[class*="st-key-rrrow"] .ntr.rr-on{ background:var(--brand-soft); }
-/* 버튼 묶음을 줄 위에 통째로 덮는다. 중간 래퍼가 하나라도 안 늘어나면
-   버튼이 쪼그라들어 줄 위쪽만 눌린다 — 전부 100% 로 편다. */
+/* 버튼 묶음을 줄 위에 통째로 덮는다. inset:0 이라 줄 높이가 바뀌어도 따라간다.
+   ★중간 래퍼가 하나라도 안 늘어나면 그만큼이 안 눌린다 — **높이도 폭도** 편다.
+     help= 을 주면 스트림릿이 버튼을 툴팁 상자로 한 번 더 감싸는데, 그 상자는
+     글자 폭(50px)만큼만 넓어진다. 그래서 이름 칸은 안 눌리고 숫자 칸만 눌렸다. */
 div[class*="st-key-rrrow"] div[class*="st-key-rrbtn"]{
-  position:absolute; left:0; right:0; top:0; height:var(--rrh); z-index:5; }
-div[class*="st-key-rrrow"] div[class*="st-key-rrbtn"] div{ height:100% !important; }
+  position:absolute; inset:0; z-index:5; }
+div[class*="st-key-rrrow"] div[class*="st-key-rrbtn"] div{
+  height:100% !important; width:100% !important; }
 div[class*="st-key-rrrow"] div[class*="st-key-rrbtn"] button{
-  width:100%; height:100%; opacity:0; min-height:0 !important;
+  width:100% !important; height:100% !important; opacity:0; min-height:0 !important;
   padding:0 !important; margin:0 !important; border:none;
   background:transparent; cursor:pointer; }
 .rrcaret{ margin-left:6px; font-size:11px; color:var(--text-3); }
@@ -2269,6 +2275,22 @@ with tab_ip:
                          .set_index("타이틀명").iloc[:, 0].to_dict())
                 _thall = _thall.assign(_ip=_thall["타이틀명"].map(_ipof))
                 _thall = _thall[_thall["_ip"].notna()]
+                # ── 한/영 이름 통합 · 글자깨짐 교정 ───────────────────
+                # 같은 멤버가 `리쿠(RIKU)` · `리쿠` · `RIKU` 로 갈려 있었다.
+                # ★짝표는 **IP명** 으로 찾는다 — 묶기가 '타이틀' 이면 _ip 가
+                #   '260624 SM ent' 라 표를 못 찾는다. 그래서 IP명을 따로 붙인다.
+                # ★이름이 합쳐지면 줄이 겹치므로 **다시 합산**해야 한다.
+                if not _thall.empty:
+                    _ipname = (sales[["타이틀명", "IP명"]].dropna().astype(str)
+                               .drop_duplicates("타이틀명")
+                               .set_index("타이틀명")["IP명"].to_dict())
+                    _thall = _thall.assign(
+                        _ipn=_thall["타이틀명"].map(_ipname).fillna(""))
+                    for _ax in ("테마", "프레임"):
+                        _thall = name_alias.apply(_thall, _ax, "포토이즘", ip_col="_ipn")
+                    _thall = (_thall.groupby(["타이틀명", "테마", "프레임", "_ip"],
+                                             observed=True, as_index=False)
+                              [["매출", "건수"]].sum())
 
             # 테마 리포트는 국가를 **코드**로, 금액을 **현지통화**로 들고 있다.
             # 원장에 둘 다 있으니 여기서 뽑아 넘긴다 — 따로 표를 두면 어긋난다.
@@ -2369,6 +2391,46 @@ with tab_ip:
                     "매장수": "매장수(개)", "회차수": "회차수(회)",
                     "판매 국가 수": "판매 국가 수(개국)"})
 
+            def _theme_export():
+                """줄을 눌러서 보는 **테마 · 프레임 구성**을 그대로 편다.
+
+                ★1번 시트와 **합치지 않는다.** 원장(1번)과 테마 리포트(2번)는 출처가
+                  달라 자정 경계에서 0.005% 어긋나고, 테마 리포트엔 오리지널이 아예
+                  없다. 한 장에 섞으면 국가 합계가 조용히 두 번 세진다.
+                ★이름은 화면과 같은 통합 표기(`리쿠(RIKU)`)로 나간다 — name_alias 를
+                  이미 태운 _thall 을 쓰기 때문이다.
+                """
+                if _thall.empty:
+                    return pd.DataFrame(columns=["이름", "테마", "프레임", "매출(원)"])
+                _t = _thall.rename(columns={"_ip": "이름"})
+                if _kw:
+                    _t = _t[_t["이름"].astype(str).str.contains(_kw, case=False, na=False)]
+                if _t.empty:
+                    return pd.DataFrame(columns=["이름", "테마", "프레임", "매출(원)"])
+                _t = (_t.groupby(["이름", "테마", "프레임"], observed=True, as_index=False)
+                      [["매출", "건수"]].sum())
+                _t = _t[_t["매출"] > 0]
+                if _t.empty:
+                    return _t
+                _t["매출"] = _t["매출"].round(0).astype("int64")
+                _t["건수"] = _t["건수"].astype("int64")
+                # 합계행을 섞지 않고 각 줄에 반복해 넣는다 — 피벗이 깨지지 않게.
+                _ig = _t.groupby("이름", observed=True)["매출"].transform("sum")
+                _tg = _t.groupby(["이름", "테마"], observed=True)["매출"].transform("sum")
+                _t["IP 매출 합계"] = _ig
+                _t["테마 매출 합계"] = _tg
+                _t["IP 내 비중(%)"] = (_t["매출"] / _ig.replace(0, 1) * 100).round(1)
+                _t["테마 내 비중(%)"] = (_t["매출"] / _tg.replace(0, 1) * 100).round(1)
+                _t["건당 평균"] = (_t["매출"] / _t["건수"].replace(0, 1)).round(0).astype("int64")
+                _t = (_t[["이름", "IP 매출 합계", "테마", "테마 매출 합계", "프레임",
+                          "매출", "IP 내 비중(%)", "테마 내 비중(%)", "건수", "건당 평균"]]
+                      .sort_values(["IP 매출 합계", "이름", "테마 매출 합계", "매출"],
+                                   ascending=[False, True, False, False])
+                      .reset_index(drop=True))
+                return _t.rename(columns={
+                    "IP 매출 합계": "IP 매출 합계(원)", "테마 매출 합계": "테마 매출 합계(원)",
+                    "매출": "매출(원)", "건수": "건수(건)", "건당 평균": "건당 평균(원)"})
+
             with _q3, st.container(key="dlbtn"):
                 _dlb, _dlm = "ph_slot_dl_b", "ph_slot_dl_m"
                 _sig = (_KEY, _kw, str(date_range), tuple(sel_countries), tuple(sel_stores))
@@ -2379,7 +2441,10 @@ with tab_ip:
                     "· 한 줄이 **IP × 국가** 라 국가별로 나눠 보거나 피벗을 바로 돌릴 수 있어요\n"
                     "· 매출·건수는 **쉼표가 찍힌 숫자**로 들어가요(합계·수식 그대로 돼요)\n"
                     "· 건당 평균 · 국가 비중 · 매장수 · 첫/마지막 거래일도 같이 들어가요\n"
-                    "· 지금 화면의 **묶기 · 검색 · 기간 · 국가 · 매장** 조건이 그대로 반영돼요")
+                    "· 지금 화면의 **묶기 · 검색 · 기간 · 국가 · 매장** 조건이 그대로 반영돼요\n"
+                    "· 시트가 **두 장**이에요 — `IP×국가` 와 "
+                    "`테마·프레임`(줄을 눌러 보던 그 구성)\n"
+                    "· 두 장은 출처가 달라요(원장 / CMS 프레임 리포트) — **더하지 마세요**")
                 if st.session_state.get(_dlb) is not None and _mm and _mm[1] == _sig:
                     # ★받고 나면 '내려받기' 로 되돌린다 — 안 그러면 다 받은 뒤에도
                     #   '⬇ 4,436줄' 인 채로 남아 방금 만든 건지 헷갈린다(요청).
@@ -2399,20 +2464,31 @@ with tab_ip:
                                use_container_width=True, disabled=not _CAN_DL,
                                help=_HELP if _CAN_DL else
                                "엑셀 다운로드는 팀장 권한이 있어야 해요."):
-                    _d = _slot_export()
-                    st.session_state[_dlb] = xlsx_export.to_xlsx(
-                        _d, "구좌별 상세", note=[
-                            "포토이즘 · 구좌별 상세  |  조회기간 "
-                            + (f"{date_range[0]} ~ {date_range[1]}" if len(date_range) == 2
-                               else "전체")
-                            + f"  |  묶기 {_KEY}" + (f"  |  검색 '{_kw}'" if _kw else "")
-                            + (f"  |  국가 {', '.join(sel_countries)}" if sel_countries else "")
-                            + (f"  |  매장 {len(sel_stores)}곳 선택" if sel_stores else ""),
-                            "금액 단위: 원(KRW) — 현지 통화 매출을 대시보드 환율표로 "
-                            "원화 환산한 값이에요(정산서의 기준일 환율과 다를 수 있어요). "
-                            "매출 = 실결제 + 쿠폰 + 서비스코인(지정 국가 가산) · 취소 반영.",
-                        ])
-                    st.session_state[_dlm] = (len(_d), _sig)
+                    _d, _d2 = _slot_export(), _theme_export()
+                    _cond = ("포토이즘 · 구좌별 상세  |  조회기간 "
+                             + (f"{date_range[0]} ~ {date_range[1]}"
+                                if len(date_range) == 2 else "전체")
+                             + f"  |  묶기 {_KEY}" + (f"  |  검색 '{_kw}'" if _kw else "")
+                             + (f"  |  국가 {', '.join(sel_countries)}"
+                                if sel_countries else "")
+                             + (f"  |  매장 {len(sel_stores)}곳 선택" if sel_stores else ""))
+                    _money = ("금액 단위: 원(KRW) — 현지 통화 매출을 대시보드 환율표로 "
+                              "원화 환산한 값이에요(정산서의 기준일 환율과 다를 수 있어요). "
+                              "매출 = 실결제 + 쿠폰 + 서비스코인(지정 국가 가산) · 취소 반영.")
+                    _sheets = {"IP×국가": _d}
+                    _notes = {"IP×국가": [_cond, _money,
+                                          "한 줄 = 이름 × 국가. 원장(결제 원본) 기준이에요."]}
+                    if not _d2.empty:      # 줄을 눌러 보던 구성을 그대로 한 장 더
+                        _sheets["테마·프레임"] = _d2
+                        _notes["테마·프레임"] = [
+                            _cond, _money,
+                            "한 줄 = 이름 × 테마 × 프레임. 출처가 **CMS 프레임 리포트**라 "
+                            "1번 시트(원장)와 자정 경계에서 0.005%쯤 달라요. "
+                            "오리지널·매장 필터는 안 들어가요 — 두 장을 더하지 마세요.",
+                            "이름 표기는 화면과 같아요 — 한/영으로 갈려 있던 건 "
+                            "`리쿠(RIKU)` 처럼 합쳐서 나가요."]
+                    st.session_state[_dlb] = xlsx_export.to_xlsx(_sheets, note=_notes)
+                    st.session_state[_dlm] = (len(_d) + len(_d2), _sig)
                     _frag_rerun()
 
             _gtabs = st.tabs([("🗂 전체" if g == "전체" else f"{_GUB_EMOJI.get(g, '🎬')} {g}") for g in _gall])

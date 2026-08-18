@@ -61,46 +61,58 @@ def _width_of(col: str, series: pd.Series) -> int:
     return int(min(max(head + 2, body + 2, 8), 42))
 
 
-def to_xlsx(df: pd.DataFrame, sheet_name: str = "데이터", note="") -> bytes:
-    """DataFrame → xlsx 바이트.
-
-    note 는 문자열 하나 또는 여러 줄(리스트). 표 위에 **조건과 기준**을 적는다 —
-    받은 파일만 보고도 "이 숫자가 뭘 어떻게 센 건지" 알 수 있어야 한다.
-    """
+def _write_sheet(xw, name: str, df: pd.DataFrame, note) -> None:
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     notes = [n for n in ([note] if isinstance(note, str) else list(note or [])) if n]
-    buf = io.BytesIO()
     start = len(notes)                # 안내줄 아래부터 표
+    name = name[:31]
+    df.to_excel(xw, sheet_name=name, index=False, startrow=start)
+    ws = xw.sheets[name]
+    hdr = start + 1                   # 머리줄의 엑셀 행 번호(1-base)
+
+    for r, n in enumerate(notes, start=1):
+        c = ws.cell(row=r, column=1, value=n)
+        c.font = Font(size=9, bold=(r == 1), color="2B3350" if r == 1 else "6B7488")
+
+    fill = PatternFill("solid", start_color="EEF1F8")
+    for c in range(1, len(df.columns) + 1):
+        cell = ws.cell(row=hdr, column=c)
+        cell.font = Font(bold=True, color="2B3350")
+        cell.fill = fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for i, col in enumerate(df.columns, start=1):
+        letter = get_column_letter(i)
+        ws.column_dimensions[letter].width = _width_of(col, df[col])
+        fmt = _fmt_of(col, df[col])
+        if not fmt:
+            continue
+        for r in range(hdr + 1, hdr + 1 + len(df)):
+            ws.cell(row=r, column=i).number_format = fmt
+
+    ws.freeze_panes = ws.cell(row=hdr + 1, column=1)          # 머리줄 고정
+    if len(df):
+        ws.auto_filter.ref = (f"A{hdr}:"
+                              f"{get_column_letter(len(df.columns))}{hdr + len(df)}")
+
+
+def to_xlsx(df, sheet_name: str = "데이터", note="") -> bytes:
+    """DataFrame → xlsx 바이트.
+
+    note 는 문자열 하나 또는 여러 줄(리스트). 표 위에 **조건과 기준**을 적는다 —
+    받은 파일만 보고도 "이 숫자가 뭘 어떻게 센 건지" 알 수 있어야 한다.
+
+    ★시트를 여러 장 쓰려면 df 에 {시트이름: 표} 를 넘긴다. note 도 같은 키의
+      dict 로 주면 시트마다 다른 안내가 붙는다(문자열 하나면 첫 시트에만).
+      기준이 다른 표(원장 vs 테마 리포트)를 한 장에 섞으면 합계가 조용히
+      두 번 세진다 — 그래서 장을 나눈다.
+    """
+    sheets = df if isinstance(df, dict) else {sheet_name: df}
+    notes = note if isinstance(note, dict) else {next(iter(sheets)): note}
+    buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
-        df.to_excel(xw, sheet_name=sheet_name[:31], index=False, startrow=start)
-        ws = xw.sheets[sheet_name[:31]]
-        hdr = start + 1               # 머리줄의 엑셀 행 번호(1-base)
-
-        for r, n in enumerate(notes, start=1):
-            c = ws.cell(row=r, column=1, value=n)
-            c.font = Font(size=9, bold=(r == 1),
-                          color="2B3350" if r == 1 else "6B7488")
-
-        fill = PatternFill("solid", start_color="EEF1F8")
-        for c in range(1, len(df.columns) + 1):
-            cell = ws.cell(row=hdr, column=c)
-            cell.font = Font(bold=True, color="2B3350")
-            cell.fill = fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        for i, col in enumerate(df.columns, start=1):
-            letter = get_column_letter(i)
-            ws.column_dimensions[letter].width = _width_of(col, df[col])
-            fmt = _fmt_of(col, df[col])
-            if not fmt:
-                continue
-            for r in range(hdr + 1, hdr + 1 + len(df)):
-                ws.cell(row=r, column=i).number_format = fmt
-
-        ws.freeze_panes = ws.cell(row=hdr + 1, column=1)      # 머리줄 고정
-        if len(df):
-            ws.auto_filter.ref = (f"A{hdr}:"
-                                  f"{get_column_letter(len(df.columns))}{hdr + len(df)}")
+        for nm, one in sheets.items():
+            _write_sheet(xw, nm, one, notes.get(nm, ""))
     return buf.getvalue()

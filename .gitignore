@@ -50,3 +50,5 @@ allowed-users.dev.json
 logs/dev_access.log
 logs/dev_mail_blocked.log
 reports/issued_dev/
+# dev 공개용 ngrok 관문 정책 — 사내 메일이 들어가므로 커밋 금지
+ngrok_dev_policy.yml
