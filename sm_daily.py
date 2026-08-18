@@ -28,6 +28,36 @@ except Exception:
 
 BASE_DIR = Path(__file__).parent
 LOOKBACK_DAYS = 3
+MAX_CATCHUP_DAYS = 45      # 밀린 구간을 메울 때의 상한 — CMS 부담을 막는 안전선
+
+
+def _catchup_start(default_start):
+    """마지막으로 받은 날짜를 보고 **빈 만큼 창을 앞으로 늘린다.**
+
+    ★롤링 창(3일)만 받으면 그보다 오래 멈춘 구간은 **영구히 빈다.** 창이 지나가
+      버리면 아무도 다시 안 받기 때문이다. 실제로 테마가 그랬다 — 매일 수집에
+      테마가 들어간 게 2026-08-12 라, 2026-08-01~11 이 통째로 비어 있었고
+      월 단위 백필은 '이번 달은 매일 수집이 채운다'며 건너뛰어서 아무도 안 채웠다.
+    ★상한을 두는 이유 — 파일이 비었거나 처음 도는 경우 1년 치를 한 번에 받으려
+      들면 CMS 에 부담이 된다. 그런 건 백필(theme_backfill.py)이 할 일이다.
+    ※한계: 파일 전체의 마지막 날짜만 본다. **한 나라만** 빠진 구간은 못 잡는다 —
+      그건 수집 때 남는 skipped 목록과 coverage_audit.py 가 볼 몫이다.
+    """
+    try:
+        import pandas as _pd
+        last = _pd.read_parquet(sm_collect.THEME_PARQUET, columns=["날짜"])["날짜"]
+        last = _pd.to_datetime(last, errors="coerce").max().date()
+    except Exception as ex:
+        sm_collect.log(f"밀린 구간 확인 실패(평소대로 진행): {ex}")
+        return default_start
+    want = last + timedelta(days=1)          # 마지막 받은 날 다음 날부터
+    if want >= default_start:
+        return default_start                  # 안 밀렸다
+    floor = date.today() - timedelta(days=MAX_CATCHUP_DAYS)
+    start = max(want, floor)
+    sm_collect.log(f"### 밀린 구간 감지: 마지막 {last} → {start} 부터 받습니다"
+                   + (f" (상한 {MAX_CATCHUP_DAYS}일로 잘림)" if want < floor else "") + " ###")
+    return start
 
 
 def main():
@@ -47,7 +77,9 @@ def main():
         except Exception as ex:
             sm_collect.log(f"직전 스냅샷 실패: {ex}")
 
-    sm_collect.log(f"### 일일 자동 수집 시작: {start}~{end} ({len(codes)}개국, 최근 {lookback}일) ###")
+    start = _catchup_start(start)       # 밀렸으면 창을 앞으로 늘린다
+    sm_collect.log(f"### 일일 자동 수집 시작: {start}~{end} ({len(codes)}개국, "
+                   f"{(end - start).days + 1}일) ###")
     sm_collect.collect(start, end, codes, delay=8)
 
     # 수집 후 — 직전 대비 변동(같은 날짜·국가·멤버의 값 변화)을 변경내역에 기록
