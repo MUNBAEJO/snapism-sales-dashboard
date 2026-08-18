@@ -53,6 +53,12 @@ NAT_WEEKDAY_DAYS = 84  # 국가 이탈: 요일별 등장률은 이 기간(12주)
 MIN_MEDIAN = 200   # 주변 중앙값이 이보다 작은 구간은 '아직 규모가 없다'고 보고 건너뛴다
 NAT_MIN_ROWS = 30  # 국가 이탈: 평소 하루 이만큼은 나오는 국가만 대상으로 본다
 
+# ★★두 번째 눈 — 테마 리포트(포토이즘 전용). 거래 원장과 **완전히 다른 엔드포인트**다.
+#   국가 이탈이 잡혔을 때 이쪽도 같이 0 이면 **정말 안 팔린 날**이고, 이쪽엔
+#   있는데 원장만 비면 그건 진짜 수집 사고다. 손으로 두 번(스페인 08-07~09,
+#   08-15~17) 이 교차확인을 해서 오탐을 걸렀다 — 그 판단을 도구에 넣는다.
+THEME_PARQUET = DATA_DIR / "theme_daily.parquet"
+
 # ★최근 며칠은 아예 판정하지 않는다 — 시차 때문이다.
 #   CMS 파일은 한국 날짜로 끊기는데 서쪽 국가는 그보다 늦다. 실제로
 #   photoism_de_20260802.xlsx 안에 들어 있는 건 08-01 거래다(독일 = 한국-7h).
@@ -101,6 +107,15 @@ def audit_brand(name: str, parq: Path, nat: str, days: int | None = None,
             SELECT TRY_CAST("날짜" AS DATE) d, "{nat}" g, COUNT(*) n
             FROM read_parquet('{src}') {where}
             GROUP BY 1,2 HAVING d IS NOT NULL""").fetchall()
+        # 테마 리포트는 국가를 **코드**로 들고 있다. 이름↔코드를 여기서 뽑아 둔다.
+        code_of = {}
+        if name == "포토이즘":
+            try:
+                code_of = {g: str(c).lower() for g, c in con.execute(f'''
+                    SELECT DISTINCT "{nat}", "국가코드"
+                    FROM read_parquet(\'{src}\')''').fetchall() if g and c}
+            except Exception:
+                code_of = {}
     finally:
         con.close()
 
@@ -197,9 +212,26 @@ def audit_brand(name: str, parq: Path, nat: str, days: int | None = None,
             return {g for g, c in seen.items()
                     if c >= len(ds) * 0.8 and _typical_on(g, w) >= NAT_MIN_ROWS}
 
+        # ★두 번째 눈을 뜬다 — 테마 리포트(다른 엔드포인트)로 교차확인.
+        _th_sold, _th_days = _theme_seen() if name == "포토이즘" else (None, None)
+
+        def _really_missing(g: str, d) -> bool:
+            """원장에만 없는가(=진짜 사고), 아니면 그날 정말 안 팔렸나."""
+            if not _th_sold or not code_of:
+                return True                     # 교차확인할 수단이 없으면 그대로 올린다
+            ds = str(d)
+            if ds not in _th_days:
+                return True                     # 그날 테마를 안 받았으면 판단 불가
+            cc = code_of.get(g)
+            if not cc:
+                return True
+            # 테마에도 매출이 없으면 **정말 안 판 날**이다 → 경보에서 뺀다
+            return (ds, cc) in _th_sold
+
         for d in recent:
             w = d.weekday()
             gone = sorted(_regular_on(w) - by_day[d], key=lambda g: -_typical_on(g, w))
+            gone = [g for g in gone if _really_missing(g, d)]
             # 부분·완전 결손으로 이미 잡힌 날은 중복 보고하지 않는다
             if gone and not any(p["date"] == str(d) for p in problems):
                 problems.append({
@@ -220,6 +252,32 @@ def audit_brand(name: str, parq: Path, nat: str, days: int | None = None,
 
     return {"brand": name, "first": str(first), "last": str(last),
             "days": len(rows), "rows": sum(counts.values()), "problems": problems}
+
+
+def _theme_seen():
+    """테마 리포트에서 (날짜, 국가코드) 로 **매출이 있었던** 조합과, 그 날짜에
+    테마 수집이 돌기는 했는지를 돌려준다.
+
+    ★날짜 자체가 통째로 없으면 '테마도 0' 인지 '테마를 안 받았는지' 구분이 안 된다.
+      그럴 땐 아무 판단도 하지 않는다(경보를 그대로 올린다).
+    """
+    if not THEME_PARQUET.exists():
+        return None, None
+    con = _con()
+    try:
+        rows = con.execute(f"""
+            SELECT CAST(TRY_CAST("날짜" AS DATE) AS VARCHAR) d,
+                   LOWER(CAST("국가코드" AS VARCHAR)) g,
+                   SUM(TRY_CAST("주문수" AS DOUBLE)) n
+            FROM read_parquet('{str(THEME_PARQUET).replace(chr(92), "/")}')
+            GROUP BY 1, 2 HAVING d IS NOT NULL""").fetchall()
+    except Exception:
+        return None, None
+    finally:
+        con.close()
+    sold = {(d, g) for d, g, n in rows if (n or 0) > 0}
+    days = {d for d, _, _ in rows}
+    return sold, days
 
 
 def audit(days: int | None = None, report_days: int | None = None) -> list[dict]:
