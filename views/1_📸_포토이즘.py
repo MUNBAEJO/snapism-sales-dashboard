@@ -2020,11 +2020,42 @@ with tab_ip:
                 css_donut(list(zip(gg["IP구분"].astype(str), gg["매출"])), colors)
             with _g2:
                 hbar_list(gg.rename(columns={"IP구분": "_n"}), "_n")
+
+            # ── 구분 안에서 구좌가 어떻게 갈리나 ─────────────────────
+            # ★매장별 탭에 있던 걸 여기로 옮겼다(2026-08-18). 구좌 축의 제자리는
+            #   '구좌타입 분석' 탭이다 — 매장별 탭에 IP구분·구좌 얘기가 들어가
+            #   있어서 탭 이름과 내용이 어긋나 있었다.
+            # ★이게 **구좌(BASIC/WITH/EVENT)를 보여주는 유일한 자리**다. 캐릭터가
+            #   BASIC(라이선스분)과 WITH(위드 상품)로 어떻게 갈리는지가 여기서만 보인다.
+            _gz = (sales[sales["IP구분"].isin(gg["IP구분"])]
+                   .assign(_gz=lambda d: d["구좌"].astype(str).str.strip()
+                           .replace("", "미지정"))
+                   .groupby(["IP구분", "_gz"], observed=True)["매출액"].sum()
+                   .reset_index())
+            _gz = _gz[_gz["매출액"] > 0]
+            if not _gz.empty:
+                st.markdown('<div class="ct" style="margin-top:16px">🎫 구분 안의 '
+                            '구좌 구성</div>', unsafe_allow_html=True)
+                _segs2 = [g for g in gg["IP구분"].astype(str) if g in set(_gz["IP구분"].astype(str))]
+                for _i0 in range(0, len(_segs2), 3):
+                    for _sg, _c in zip(_segs2[_i0:_i0 + 3], st.columns(3)):
+                        with _c:
+                            _one = _gz[_gz["IP구분"].astype(str) == _sg]
+                            st.markdown(
+                                f'<div style="font-size:12.5px;font-weight:700;'
+                                f'color:var(--text-2);margin:2px 0 4px">'
+                                f'{_GUB_EMOJI.get(_sg, "🎬")} {_sg}</div>',
+                                unsafe_allow_html=True)
+                            hbar_list(_one.rename(columns={"_gz": "_n",
+                                                           "매출액": "매출"}), "_n")
         else:
             st.info("데이터가 없어요.")
         helpbox("""
 **IP 구분 (비중 · 매출)**
 - `IP구분`별 매출액 합. 왼쪽 도넛=비중, 오른쪽 막대=구분별 매출액.
+- **구분 안의 구좌 구성** — 그 구분이 `BASIC`·`WITH`·`EVENT` 중 어디서 팔렸는지예요.
+  캐릭터가 `BASIC`(라이선스분)과 `WITH`(위드 상품)로 어떻게 갈리는지가 여기서 보여요.
+  (매장별 탭에 있던 걸 2026-08-18 에 이리로 옮겼어요 — 구좌 축의 제자리는 이 탭이에요.)
 """)
 
     # 포3.3/포4: 하위탭 = 전체 + 아티스트/캐릭터/PICK(타이틀 단위, 판매기간 지라) + 오리지널 2종(프레임 단위).
@@ -2563,6 +2594,65 @@ with tab_nat:
 - 가동 대수는 CMS 장비관리 기준이에요(설치일은 기기 S/N 앞 6자리 YYMMDD). '중지' 상태 장비는 분모(가동 대수)에서 빠져요.
 """)
 
+        # ── 국가 × IP구분 ───────────────────────────────────────────
+        # ★매장별 탭에 있던 표를 여기로 옮겼다(2026-08-18). 축이 **국가**라 여기가
+        #   제자리다 — 매장별 탭에 있으니 탭 이름과 내용이 어긋나 있었다.
+        # ★옮기면서 기준이 바뀐다: 전엔 매장별 탭 전용 필터(국가·상품)를 탔고
+        #   지금은 **상단 필터바**를 탄다. 표 모양은 같아도 숫자가 달라진다.
+        _nsegs = [g for g in present if g in _GUB_COLORS] or list(present)
+        if _nsegs and "IP구분" in sales.columns:
+          with card("🎫 국가 × IP구분 <span class='muted'>나라마다 구성이 어떻게 다른가</span>",
+                    key="scard-natgz"):
+            # IP구분이 노출 대상이 아닌 행이 소수 섞일 수 있다. 그대로 두면 칸별 비중
+            # 합이 100%가 안 되므로 걷어내고, 얼마를 뺐는지 캡션에 밝힌다.
+            _gsrc = sales[sales["IP구분"].isin(_nsegs)]
+            _drop = int(sales["매출액"].sum()) - int(_gsrc["매출액"].sum())
+            _ng = (_gsrc.groupby(["국가", "IP구분"], observed=True)["매출액"].sum()
+                   .reset_index())
+            _ng = _ng[_ng["매출액"] > 0]
+            if _ng.empty:
+                st.info("해당 조건에 데이터가 없어요. 필터를 넓혀 보세요.")
+            else:
+                _piv = (_ng.pivot_table(index="국가", columns="IP구분", values="매출액",
+                                        aggfunc="sum", fill_value=0, observed=True)
+                        .reindex(columns=_nsegs, fill_value=0))
+                _piv["합계"] = _piv.sum(axis=1)
+                _piv = _piv.sort_values("합계", ascending=False)
+                _grid = f"grid-template-columns:1.3fr repeat({len(_nsegs)},1fr) 1.05fr 1.1fr"
+                _h = (f'<div class="ntbl"><div class="ntr nth" style="{_grid}">'
+                      '<span>국가</span>'
+                      + "".join(f'<span class="r">{x}</span>' for x in _nsegs)
+                      + '<span class="r">합계</span><span class="vs">구성</span></div>')
+                for _n, _r in _piv.iterrows():
+                    _t3 = _r["합계"] or 1
+                    _bar = "".join(
+                        f'<i style="width:{_r[x] / _t3 * 100:.2f}%;'
+                        f'background:{_GUB_COLORS.get(x, "#c7ccd6")}"></i>'
+                        for x in _nsegs if _r[x] > 0)
+                    _h += (f'<div class="ntr" style="{_grid}">'
+                           f'<span class="nname">{flag_img(_n)}{_n}</span>'
+                           + "".join(
+                               f'<span class="r num">{fmt_krw(int(_r[x]))}</span>' if _r[x]
+                               else '<span class="r num" style="color:var(--text-3)">–</span>'
+                               for x in _nsegs)
+                           + f'<span class="r num"><b>{fmt_krw(int(_r["합계"]))}</b></span>'
+                           f'<span class="vs"><span class="gzbar" style="flex:1">{_bar}'
+                           '</span></span></div>')
+                st.markdown(_h + "</div>", unsafe_allow_html=True)
+                _c2 = (f"{len(_piv)}개국 · 매출 내림차순. 막대는 그 나라 안에서의 "
+                       "구성비예요(나라끼리의 크기 비교가 아니에요). "
+                       "분류·색은 '매출 추이'와 같아요.")
+                if _drop:
+                    _c2 += (f" IP구분이 분류되지 않은 {fmt_krw(_drop)}은 이 표에서만 "
+                            "빠져 있어요.")
+                st.caption(_c2)
+            helpbox("""
+**국가 × IP구분**
+- 나라마다 **무엇으로 매출이 나는지** 구성을 비교해요. 맨 오른쪽 막대는 **그 나라 안에서의 구성비**(100% 기준이 나라마다 달라요) — 나라끼리 크기를 비교하는 막대가 아니에요.
+- 나누는 축은 `IP구분` 5종 — 아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본). **'매출 추이'·'구좌 타입별 비중'과 같은 분류·같은 색**이에요.
+- 원래 **매장별 분석 탭**에 있던 표예요(2026-08-18 이동). 그땐 그 탭의 전용 필터(국가·상품)를 탔지만, 지금은 **상단 필터바**를 타요 — 그래서 예전과 숫자가 다를 수 있어요.
+""")
+
         # [숨김] '국가별 타이틀 TOP 10' — UI 에서만 뺐다(요청). 코드·데이터는 그대로다.
         #        되살리려면 SHOW_NAT_TITLE = True 로만 바꾸면 된다(위 SHOW_TAB_ETC 와 같은 방식).
         if SHOW_NAT_TITLE:
@@ -2624,15 +2714,15 @@ def _store_tab(sales, date_range, sel_countries):
         if f_prd:
             _sc = _sc[_sc["브랜드"].isin(f_prd)]
 
-        statrow([("매출", fmt_krw(int(_sc["매출액"].sum()))),
-                 ("건수", f"{tx_count(_sc):,}건"),
-                 ("매장 수", f"{_sc['매장 이름'].nunique():,}개")])
+        # ★이 탭의 축은 **매장**이다. 매출·건수는 위 요약 카드와 다른 탭에 이미 있고,
+        #   여기서 알고 싶은 건 '이 조건에 매장이 몇 개인가' 하나다(요청).
+        statrow([("매장 수", f"{_sc['매장 이름'].nunique():,}개")])
         st.caption("상단 필터바(기간·국가·매장·상품·IP)로 거른 데이터에 **한 번 더** 걸러요. 미선택 = 전체.")
         helpbox("""
 **매장별 전용 필터**
 - 상단 필터바 결과(`sales`)에 **이 탭에서만** 국가·상품(브랜드)을 추가로 걸러요. 다른 탭에는 영향이 없어요.
 - 선택지는 현재 필터 범위에서 **매출이 있는 값만**, 매출 큰 순서로 나와요.
-- 아래 지표 3칸 = 이 조건의 `매출액` 합 · `건수` 합 · `매장 이름` 고유 개수.
+- 아래 지표 = 이 조건의 `매장 이름` 고유 개수예요. (매출·건수는 맨 위 요약과 다른 탭에서 봐요.)
 """)
 
     with card("🏬 매장 전체 순위"):
@@ -2650,122 +2740,6 @@ def _store_tab(sales, date_range, sel_countries):
 - 전용 필터를 적용한 뒤 `매장 이름`별 매출액 합·건수 → 순위(TOP10 + 나머지 접기).
 """)
 
-    # ── 구좌타입 분석 (전용 필터 반영) ──────────────────────────────────
-    # ★'구좌별 타이틀 TOP 5' 를 이걸로 갈았다(요청). TOP5 는 어느 타이틀이 잘 팔렸나를
-    #   보여줬는데, 매장 탭에서 필요한 건 **고른 국가에서 구좌 구성이 어떻게 다른가**다.
-    #   전용 필터의 국가를 그대로 물려받아 국가 × 구좌타입으로 쪼개 준다.
-    with card("🎫 구좌타입 분석 <span class='muted'>IP구분별 · 전용 필터 반영 "
-              "(국가를 고르면 그 국가 기준)</span>", key="scard-storegz"):
-        # ★★쪼개는 축은 **매출 추이와 같은 IP구분 5종**이다
-        #   (아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본)).
-        #   구좌(BASIC/WITH/EVENT) 3종으로 묶으면 BASIC 안에 자체 IP(오리지널)와
-        #   라이선스(캐릭터)가 섞이고, 캐릭터가 BASIC·WITH 양쪽에 흩어져 같은 이름이
-        #   두 칸에 나온다. IP구분으로 나누면 캐릭터가 한 칸으로 모이고 위 매출 추이·
-        #   비중 도넛과 분류·색이 그대로 맞는다. 구좌는 칸 안 막대로 내려보냈다.
-        _segs = [g for g in present if g in _GUB_COLORS] or list(present)
-        _scope = " · ".join(f_nat) if f_nat else "전체 국가"
-        # ★IP구분이 노출 대상(IP_GUBUN_SHOWN)이 아닌 행이 소수 섞일 수 있다. 그대로 두면
-        #   칸별 비중 합이 100%가 안 되고 표 합계가 위 '매장 전체 순위'와 어긋난다 →
-        #   여기서만 걷어내고 얼마를 뺐는지 캡션에 밝힌다(조용히 사라지게 두지 않는다).
-        if "IP구분" in _sc.columns and _segs:
-            _gsrc = _sc[_sc["IP구분"].isin(_segs)]   # astype(str) 불필요(위 주석 참고)
-        else:
-            _gsrc = _sc.iloc[0:0]
-        _drop_rev = int(_sc["매출액"].sum()) - int(_gsrc["매출액"].sum())
-        _tot_gz = int(_gsrc["매출액"].sum())
-
-        if _tot_gz <= 0:
-            st.info("해당 조건에 데이터가 없어요. 위 전용 필터를 넓혀 보세요.")
-        else:
-            # 원본을 복사하면 무거우니 (국가 × IP구분 × 구좌) 로 먼저 줄이고 그 위에서 센다.
-            _agg = (_gsrc.groupby(["국가", "IP구분", "구좌"], observed=True)
-                    .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
-            _agg["IP구분"] = _agg["IP구분"].astype(str)
-            _agg["구좌"] = _agg["구좌"].astype(str).str.strip().replace("", "미지정")
-
-            st.markdown(
-                '<div style="font-size:13px;color:var(--text-2);margin:2px 0 14px">'
-                f'<b style="color:var(--text)">{_scope}</b>'
-                '<span style="color:var(--text-3);margin:0 8px">·</span>'
-                f'매출 <b style="color:var(--text)">{fmt_krw(_tot_gz)}</b>'
-                '<span style="color:var(--text-3);margin:0 8px">·</span>'
-                f'매장 {_gsrc["매장 이름"].nunique():,}개</div>', unsafe_allow_html=True)
-
-            # ① IP구분 칸 + 그 안의 구좌 구성 (한 줄에 3칸씩)
-            for _i0 in range(0, len(_segs), 3):
-                _chunk = _segs[_i0:_i0 + 3]
-                for _sg, _c in zip(_chunk, st.columns(3)):
-                    with _c:
-                        _g = _agg[_agg["IP구분"] == _sg]
-                        _rev = int(_g["매출"].sum())
-                        _gzs = sorted(set(_g.loc[_g["매출"] > 0, "구좌"]))
-                        st.markdown(
-                            f'<div class="gzc" style="border-color:{_GUB_COLORS.get(_sg, "#c7ccd6")}">'
-                            f'<div class="gzc-l">{_GUB_EMOJI.get(_sg, "🎬")} {_sg}'
-                            f'<span class="gzc-b">{" · ".join(_gzs) or "—"}</span></div>'
-                            f'<div class="gzc-v num">{fmt_krw(_rev)}</div>'
-                            f'<div class="gzc-d">{int(_g["건수"].sum()):,}건 · 비중 '
-                            f'{_rev / _tot_gz * 100:.1f}%</div></div>', unsafe_allow_html=True)
-                        # 구좌는 여기로 내려왔다 — 캐릭터가 BASIC(라이선스)/WITH 로
-                        # 어떻게 갈리는지가 이 줄에서 보인다.
-                        _gi = _g.groupby("구좌")["매출"].sum().reset_index()
-                        _gi = _gi[_gi["매출"] > 0]
-                        if _gi.empty:
-                            st.caption("해당 조건에 데이터가 없어요.")
-                        else:
-                            hbar_list(_gi.rename(columns={"구좌": "_n"}), "_n")
-
-            # ② 국가 × IP구분 — 나라마다 구성이 어떻게 다른지가 이 카드의 핵심.
-            _nat_gz = (_agg.groupby(["국가", "IP구분"], observed=True)["매출"].sum()
-                       .reset_index())
-            _nat_gz = _nat_gz[_nat_gz["매출"] > 0]
-            if not _nat_gz.empty:
-                _piv = (_nat_gz.pivot_table(index="국가", columns="IP구분", values="매출",
-                                            aggfunc="sum", fill_value=0, observed=True)
-                        .reindex(columns=_segs, fill_value=0))
-                _piv["합계"] = _piv.sum(axis=1)
-                _piv = _piv.sort_values("합계", ascending=False)
-                _grid = (f"grid-template-columns:1.3fr repeat({len(_segs)},1fr) "
-                         "1.05fr 1.1fr")
-                _h = (f'<div class="ntbl"><div class="ntr nth" style="{_grid}">'
-                      '<span>국가</span>'
-                      + "".join(f'<span class="r">{s}</span>' for s in _segs)
-                      + '<span class="r">합계</span><span class="vs">구성</span></div>')
-                for _n, _r in _piv.iterrows():
-                    _t3 = _r["합계"] or 1
-                    # 한 줄 누적막대 — 나라별 구성이 한눈에 비교되는 게 목적이다.
-                    _bar = "".join(
-                        f'<i style="width:{_r[s] / _t3 * 100:.2f}%;'
-                        f'background:{_GUB_COLORS.get(s, "#c7ccd6")}"></i>'
-                        for s in _segs if _r[s] > 0)
-                    _h += (f'<div class="ntr" style="{_grid}">'
-                           f'<span class="nname">{flag_img(_n)}{_n}</span>'
-                           + "".join(
-                               f'<span class="r num">{fmt_krw(int(_r[s]))}</span>' if _r[s]
-                               else '<span class="r num" style="color:var(--text-3)">–</span>'
-                               for s in _segs)
-                           + f'<span class="r num"><b>{fmt_krw(int(_r["합계"]))}</b></span>'
-                           f'<span class="vs"><span class="gzbar" '
-                           f'style="flex:1">{_bar}</span></span></div>')
-                st.markdown(_h + "</div>", unsafe_allow_html=True)
-                st.caption(f"{len(_piv)}개국 · 매출 내림차순. 막대는 그 나라 안에서의 "
-                           "구성비예요(나라끼리의 크기 비교가 아니에요). "
-                           "분류·색은 위 '매출 추이'와 같아요.")
-            _cap2 = ("상단 필터바 + 매장별 전용 필터가 모두 반영된 값이에요. "
-                     "오리지널을 **프레임 단위**로 보려면 '구좌타입 분석' 탭에서 봐요.")
-            if _drop_rev:
-                _cap2 += (f" IP구분이 분류되지 않은 {fmt_krw(_drop_rev)}은 이 카드에서만 "
-                          "빠져 있어요(위 '매장 전체 순위' 합계와 그만큼 차이 나요).")
-            st.caption(_cap2)
-        helpbox("""
-**구좌타입 분석 (매장별 탭)**
-- 위 **전용 필터**(국가·상품)를 그대로 물려받아요. 국가를 고르면 그 국가만, 여러 개 고르면 고른 나라들만 나와요.
-- **나누는 축은 `IP구분` 5종** — 아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본). **위 '매출 추이'·'구좌 타입별 비중'과 같은 분류·같은 색**이에요.
-  - 구좌(BASIC/WITH/EVENT) 3종으로 묶지 않는 이유: `BASIC` 안에 **자체 IP(오리지널)** 와 **라이선스(캐릭터)** 가 섞이고, 캐릭터가 `BASIC`·`WITH` 양쪽에 흩어져 같은 이름이 두 칸에 나와요.
-  - 구좌는 **칸 안 막대**로 내려보냈어요 — 캐릭터가 `BASIC`(라이선스분)과 `WITH`(위드 상품)로 어떻게 갈리는지 그 줄에서 보여요. 칸 머리 회색 배지도 그 IP구분이 어느 구좌에서 팔렸는지예요.
-- **국가 × IP구분 표** = 나라별로 구성이 어떻게 다른지 봐요. 맨 오른쪽 막대는 **그 나라 안에서의 구성비**(100% 기준이 나라마다 달라요) — 나라끼리 크기를 비교하는 막대가 아니에요.
-- 오리지널을 **프레임 단위**로 보려면 '구좌타입 분석' 탭의 오리지널 하위탭에서 봐요(본 집계는 그룹 폭증 방지로 오리지널 타이틀을 접어 뒀어요).
-""")
 
 
 with tab_store:
