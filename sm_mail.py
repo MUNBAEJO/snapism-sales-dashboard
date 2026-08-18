@@ -72,6 +72,36 @@ def build_cumulative_xlsx():
     return data, start, end, fname
 
 
+def _smtp_send(host, port, sender, app_pw, msg, rcpts):
+    """SMTP 발송 한 곳 — **개발 서버에서는 내보내지 않는다**(2026-08-18).
+
+    ★settlement_mail 쪽만 막아 뒀더니 여기가 뚫려 있었다. sm_mail 은 smtplib 를
+      직접 쓰고 발송 지점이 셋(주간 리포트·신규 IP 알림·수집 실패 알림)이라,
+      dev 워크트리에서 주간 리포트를 한 번 시험하면 **담당부서에 진짜로 나간다.**
+      세 곳을 이 함수 하나로 모으고 여기서 막는다.
+    """
+    import dev_mode
+    if dev_mode.IS_DEV:
+        _p = dev_mode.BASE_DIR / "logs" / "dev_mail_blocked.log"
+        try:
+            _p.parent.mkdir(exist_ok=True)
+            with open(_p, "a", encoding="utf-8") as f:
+                _row = [datetime.now().isoformat(timespec="seconds"),
+                        "sm_mail", str(msg.get("Subject", "")),
+                        "-> " + ", ".join(rcpts)]
+                f.write(chr(9).join(_row) + chr(10))
+        except Exception:
+            pass
+        log(f"[dev] 발송 차단 — {msg.get('Subject','')} (수신 {len(rcpts)}명)")
+        return
+    ctx = ssl.create_default_context()
+    with smtplib.SMTP(host, int(port), timeout=60) as s:
+        s.ehlo()
+        s.starttls(context=ctx)
+        s.login(sender, app_pw)
+        s.send_message(msg, to_addrs=list(rcpts))
+
+
 def send(dry: bool = False, note: str | None = None):
     """주간 리포트 발송. note 를 주면 본문 맨 앞에 한 문단으로 붙는다.
 
@@ -126,12 +156,7 @@ def send(dry: bool = False, note: str | None = None):
     )
 
     all_rcpts = recipients + cc
-    ctx = ssl.create_default_context()
-    with smtplib.SMTP(host, port, timeout=60) as s:
-        s.ehlo()
-        s.starttls(context=ctx)
-        s.login(sender, app_pw)
-        s.send_message(msg, to_addrs=all_rcpts)
+    _smtp_send(host, port, sender, app_pw, msg, all_rcpts)
     log(f"발송 완료: {len(all_rcpts)}명 (To {len(recipients)} / Cc {len(cc)}), 첨부 {fname}")
 
 
@@ -187,12 +212,8 @@ def alert_new_groups(groups) -> list:
     msg["From"] = formataddr((m.get("sender_name", "포토이즘 대시보드"), sender))
     msg["To"] = ", ".join(admin)
     msg.set_content(body)
-    ctx = ssl.create_default_context()
-    with smtplib.SMTP(m.get("smtp_host", "smtp.gmail.com"), int(m.get("smtp_port", 587)), timeout=60) as s:
-        s.ehlo()
-        s.starttls(context=ctx)
-        s.login(sender, app_pw)
-        s.send_message(msg, to_addrs=admin)
+    _smtp_send(m.get("smtp_host", "smtp.gmail.com"), m.get("smtp_port", 587),
+               sender, app_pw, msg, admin)
     alerted.update(g["key"] for g in new)
     _save_alerted(alerted)
     keys = [g["key"] for g in new]
@@ -261,13 +282,8 @@ def alert_failure(job: str, detail: str = "", once_per_day: bool = True) -> bool
         msg["From"] = formataddr((m.get("sender_name", "스내피즘 대시보드"), sender))
         msg["To"] = ", ".join(admin)
         msg.set_content(body)
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP(m.get("smtp_host", "smtp.gmail.com"),
-                          int(m.get("smtp_port", 587)), timeout=60) as s:
-            s.ehlo()
-            s.starttls(context=ctx)
-            s.login(sender, app_pw)
-            s.send_message(msg, to_addrs=admin)
+        _smtp_send(m.get("smtp_host", "smtp.gmail.com"), m.get("smtp_port", 587),
+                   sender, app_pw, msg, admin)
 
         if once_per_day:
             done.add(key)

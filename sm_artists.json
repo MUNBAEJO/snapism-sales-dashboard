@@ -12,8 +12,42 @@
     {
       "name": "NCT WISH",
       "kws": [
-        "nct wish",
-        "wishberry"
+        "nct wish"
+      ],
+      "countries": null,
+      "members": {
+        "시온": [
+          "시온",
+          "sion"
+        ],
+        "리쿠": [
+          "리쿠",
+          "riku"
+        ],
+        "유우시": [
+          "유우시",
+          "유시",
+          "yushi"
+        ],
+        "사쿠야": [
+          "사쿠야",
+          "sakuya"
+        ],
+        "재희": [
+          "재희",
+          "jaehee"
+        ],
+        "료": [
+          "료",
+          "ryo"
+        ]
+      }
+    },
+    {
+      "name": "NCT WISH 위시베리",
+      "kws": [
+        "wishberry",
+        "위시베리"
       ],
       "countries": null,
       "members": {
