@@ -181,7 +181,7 @@ def _guess(cc, dc, axis, ip, rev, settled, block):
     # ②로 임자가 정해진 영문은 뺀다 — 띄어쓰기만 다른 표기가 남아 엉뚱한 한글이
     # 주워 간다(여상(YEOSANG) 합친 뒤 남은 'YEO SANG' 을 우영이 물었다).
     en = [n for n in rev if not HAN.search(n) and _loose(_base(n)) not in settled]
-    pairs, held, used = {}, [], set()
+    pairs, held, same, used = {}, [], [], set()
     for k in ko:
         ks, kr = _sfx(k), _loose(_rom(_base(k)))
         if len(kr) < 3:
@@ -208,9 +208,12 @@ def _guess(cc, dc, axis, ip, rev, settled, block):
         if cc.get((ip, k), frozenset()) & cc.get((ip, e), frozenset()):
             ad = dc.get((ip, k), frozenset()) & dc.get((ip, e), frozenset())
             if ad:                                    # C — 같은 날 공존
-                held.append((axis, ip, f"{k} + {e}",
-                             f"같은 날 같은 나라에 둘 다 있어요({len(ad)}일) — 딴 것일 수 있어요"))
-                continue
+                # 2026-08-19 사용자 확정: 같은 날 겹치는 건 "딴 상품" 근거가 못 된다.
+                # 21건을 손으로 다 본 결과 하나(렌탈 fromis 9)만 진짜 다른 상품이었고
+                # 나머지는 그냥 한/영 병기였다. → 막지 말고 합치되 **기록은 남긴다**.
+                # 새로 생기는 짝은 reports/한영통합_C_합침.csv 로 눈에 띄게 한다.
+                same.append((axis, ip, f"{k} + {e}",
+                             f"같은 날 같은 나라에 둘 다 있었지만 합쳤어요({len(ad)}일)"))
         # 접두어가 같으면 괄호 안에선 뗀다 — '260624_라이즈(260624_RIIZE)' 는 눈이 아프다.
         kb, eb = _base(k), _base(e)
         _pre = re.match(r"^([0-9]{5,8}_|wide_|[A-Za-z]+_)", kb)
@@ -219,18 +222,18 @@ def _guess(cc, dc, axis, ip, rev, settled, block):
         rep = f"{kb}({eb})" + (f" {ks}" if ks else "")
         pairs[k] = rep
         pairs[e] = rep
-    return pairs, held
+    return pairs, held, same
 
 
-def photoism() -> tuple[dict, list, list]:
+def photoism() -> tuple[dict, list, list, list]:
     f = DATA_DIR / "theme_daily.parquet"
     if not f.exists():
-        return {}, [], []
+        return {}, [], [], []
     d = pd.read_parquet(f, columns=["날짜", "국가코드", "타이틀",
                                     "테마", "프레임", "최종결제금액"])
     d["_ip"] = d["타이틀"].map(ip_name_of)
     block = _blocklist()
-    out, took, skipped = {}, [], []
+    out, took, skipped, cmerged = {}, [], [], []
     for axis in ("테마", "프레임"):
         d[axis] = d[axis].astype(str).map(name_alias.fold)
         g = d[~d[axis].isin(["", "None", "nan", "<NA>"])]
@@ -251,7 +254,8 @@ def photoism() -> tuple[dict, list, list]:
             for n, v in rev.items():
                 rev2[m.get(n, n)] = rev2.get(m.get(n, n), 0) + v
             settled = {_loose(v.split("(")[-1].rstrip(")")) for v in m.values()}
-            gp, hd = _guess(_cc, _dc, axis, ip, rev2, settled, block)
+            gp, hd, sm = _guess(_cc, _dc, axis, ip, rev2, settled, block)
+            cmerged += [(axis, x[1], x[2], x[3]) for x in sm]
             if gp:
                 t.setdefault(ip, {}).update(gp)
                 tk += [(ip, k, v, rev2.get(k, 0)) for k, v in gp.items()]
@@ -259,7 +263,7 @@ def photoism() -> tuple[dict, list, list]:
         out[axis] = {k: dict(sorted(v.items())) for k, v in t.items() if v}
         took += [(axis, *x) for x in tk]
         skipped += [(axis, *x) for x in sk]
-    return out, took, skipped
+    return out, took, skipped, cmerged
 
 
 def snapism() -> tuple[dict, list, list]:
@@ -279,7 +283,7 @@ def snapism() -> tuple[dict, list, list]:
 
 def main() -> None:
     dry = "--dry" in sys.argv
-    ph, ph_t, ph_s = photoism()
+    ph, ph_t, ph_s, ph_c = photoism()
     sn, sn_t, sn_s = snapism()
     try:
         _cur = json.loads(OUT.read_text(encoding="utf-8"))
@@ -302,6 +306,9 @@ def main() -> None:
     (BASE_DIR / "reports" / "한영통합_보류.csv").parent.mkdir(exist_ok=True)
     pd.DataFrame(ph_s + sn_s, columns=["축", "IP", "이름", "왜"]).to_csv(
         BASE_DIR / "reports" / "한영통합_보류.csv", index=False, encoding="utf-8-sig")
+    # 같은 날 겹쳤는데도 합친 짝 — 새로 생기면 여기서 눈에 띄게(2026-08-19)
+    pd.DataFrame(ph_c, columns=["축", "IP", "이름", "왜"]).to_csv(
+        BASE_DIR / "reports" / "한영통합_C_합침.csv", index=False, encoding="utf-8-sig")
     print(f"포토이즘 짝 {len(ph_t):,}개 · 스내피즘 {len(sn_t):,}개")
     for axis in ("테마", "프레임"):
         n = sum(len(v) for v in ph.get(axis, {}).values())

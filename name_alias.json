@@ -1,15 +1,22 @@
 {
  "_meta": {
-  "만든날": "2026-08-18",
+  "만든날": "2026-08-19",
   "만든법": "build_name_alias.py — ② 데이터에 실재하는 '한글(ENG)' 결합 표기 + ③ 로마자 추정(나라·날짜가 안 겹칠 때만)",
   "주의": "손으로 고쳐도 되지만, 다시 돌리면 덮어써요. 영영 빼려면 아래 _제외 에 적으세요 — 그건 다시 돌려도 남아요.",
   "짝수": {
-   "포토이즘": 3210,
+   "포토이즘": 3256,
    "스내피즘": 1
   },
-  "보류": 27
+  "보류": 4
  },
- "_제외": [],
+ "_제외": [
+  [
+   "fromis_9",
+   "렌탈 fromis 9",
+   "fromis 9",
+   "렌탈은 판매 채널이 달라 매출을 따로 봐야 해요(2026-08-19 사용자 확정)"
+  ]
+ ],
  "포토이즘": {
   "테마": {
    "ATEEZ": {
@@ -264,6 +271,10 @@
     "260809_KAZUHA": "260809_카즈하(KAZUHA)",
     "260809_카즈하": "260809_카즈하(KAZUHA)"
    },
+   "P1Harmony": {
+    "wide_P1Harmony": "wide_피원하모니(P1Harmony)",
+    "wide_피원하모니": "wide_피원하모니(P1Harmony)"
+   },
    "SM ent": {
     "260519_TAEYONG": "260519_태용(TAEYONG)",
     "260519_태용": "260519_태용(TAEYONG)",
@@ -281,10 +292,12 @@
     "260721_유노윤호": "260721_유노윤호(U-KNOW)",
     "260804_Red Velvet": "260804_레드벨벳(Red Velvet)",
     "260804_레드벨벳": "260804_레드벨벳(Red Velvet)",
+    "COVER JOB ver": "슈퍼주니어 COVER JOB ver(COVER JOB ver)",
     "HYOYEON": "효연(HYOYEON)",
     "JUNGWOO": "정우(JUNGWOO)",
     "NCT JNJM": "NCT 제노재민(NCT JNJM)",
     "NCT 제노재민": "NCT 제노재민(NCT JNJM)",
+    "슈퍼주니어 COVER JOB ver": "슈퍼주니어 COVER JOB ver(COVER JOB ver)",
     "정우": "정우(JUNGWOO)",
     "효연": "효연(HYOYEON)"
    },
@@ -318,9 +331,17 @@
     "KIM YOUNG DAE": "김영대(KIM YOUNG DAE)",
     "김영대": "김영대(KIM YOUNG DAE)"
    },
+   "다마고치": {
+    "Tamagotchi": "다마고치(Tamagotchi)",
+    "다마고치": "다마고치(Tamagotchi)"
+   },
    "드래곤포니": {
     "Dragon Pony": "드래곤포니(Dragon Pony)",
     "드래곤포니": "드래곤포니(Dragon Pony)"
+   },
+   "멜로망스": {
+    "MeloMance": "멜로망스(MeloMance)",
+    "멜로망스": "멜로망스(MeloMance)"
    },
    "박지훈": {
     "PARK JI HOON": "박지훈(PARK JI HOON)",
@@ -364,6 +385,10 @@
     "angyengmandu": "안경만두(angyengmandu)",
     "안경만두": "안경만두(angyengmandu)"
    },
+   "오잉보잉": {
+    "oingboing": "오잉보잉(oingboing)",
+    "오잉보잉": "오잉보잉(oingboing)"
+   },
    "유영재": {
     "YOO YOUNG JAE": "유영재(YOO YOUNG JAE)",
     "유영재": "유영재(YOO YOUNG JAE)"
@@ -390,7 +415,13 @@
    },
    "코르티스": {
     "CORTIS": "코르티스(CORTIS)",
-    "코르티스": "코르티스(CORTIS)"
+    "CORTIS ver 1": "코르티스 ver 1(CORTIS ver 1)",
+    "CORTIS ver 2": "코르티스 ver 2(CORTIS ver 2)",
+    "CORTIS ver 3": "코르티스 ver 3(CORTIS ver 3)",
+    "코르티스": "코르티스(CORTIS)",
+    "코르티스 ver 1": "코르티스 ver 1(CORTIS ver 1)",
+    "코르티스 ver 2": "코르티스 ver 2(CORTIS ver 2)",
+    "코르티스 ver 3": "코르티스 ver 3(CORTIS ver 3)"
    },
    "킥플립": {
     "KickFlip": "킥플립(KickFlip)",
@@ -1629,7 +1660,15 @@
     "채린": "채린(CHAERIN)"
    },
    "ENCHIN": {
+    "KISHU": "키슈(KISHU)",
+    "NoxStar": "녹스타(NoxStar)",
     "PU-NI": "퓨니(PU-NI)",
+    "SnoWe": "스노위(SnoWe)",
+    "WONCHU": "원츄(WONCHU)",
+    "녹스타": "녹스타(NoxStar)",
+    "스노위": "스노위(SnoWe)",
+    "원츄": "원츄(WONCHU)",
+    "키슈": "키슈(KISHU)",
     "퓨니": "퓨니(PU-NI)"
    },
    "EPEX": {
@@ -1848,6 +1887,7 @@
    },
    "TREASURE": {
     "ASAHI": "아사히(ASAHI)",
+    "ASAHI A": "아사히(ASAHI) A",
     "ASAHI B": "아사히(ASAHI) B",
     "CHOI HYUN SUK": "최현석(CHOI HYUN SUK)",
     "CHOI HYUN SUK A": "최현석(CHOI HYUN SUK) A",
@@ -1886,6 +1926,7 @@
     "소정환 A": "소정환(SO JUNG HWAN) A",
     "소정환 B": "소정환(SO JUNG HWAN) B",
     "아사히": "아사히(ASAHI)",
+    "아사히 A": "아사히(ASAHI) A",
     "아사히 B": "아사히(ASAHI) B",
     "요시": "요시(YOSHI)",
     "요시 A": "요시(YOSHI) A",
@@ -1975,6 +2016,7 @@
     "JIHOON": "지훈(JIHOON)",
     "JUNKYU": "준규(JUNKYU)",
     "PARK JEONG WOO": "박정우(PARK JEONG WOO)",
+    "PHARITA": "파리타(PHARITA)",
     "RORA": "로라(RORA)",
     "RUKA": "루카(RUKA)",
     "SO JUNG HWAN": "소정환(SO JUNG HWAN)",
@@ -1994,6 +2036,7 @@
     "지훈": "지훈(JIHOON)",
     "최현석": "최현석(CHOI HYUN SUK)",
     "치키타": "치키타(CHIQUITA)",
+    "파리타": "파리타(PHARITA)",
     "하루토": "하루토(HARUTO)"
    },
    "YG BOX": {
@@ -2176,7 +2219,9 @@
    },
    "김영대": {
     "KIM YOUNG DAE": "김영대(KIM YOUNG DAE)",
-    "김영대": "김영대(KIM YOUNG DAE)"
+    "YOUNG DAE": "영대(YOUNG DAE)",
+    "김영대": "김영대(KIM YOUNG DAE)",
+    "영대": "영대(YOUNG DAE)"
    },
    "김예림": {
     "Kim Yerim": "김예림(Kim Yerim)",
@@ -2345,6 +2390,16 @@
     "Siwoo": "시우(Siwoo)",
     "루시드": "루시드(Lucid)",
     "시우": "시우(Siwoo)"
+   },
+   "디플러스기아": {
+    "Aiming": "에이밍(Aiming)",
+    "BeryL": "베릴(BeryL)",
+    "Lucid": "루시드(Lucid)",
+    "Siwoo": "시우(Siwoo)",
+    "루시드": "루시드(Lucid)",
+    "베릴": "베릴(BeryL)",
+    "시우": "시우(Siwoo)",
+    "에이밍": "에이밍(Aiming)"
    },
    "레나": {
     "Rena": "레나(Rena)",
@@ -3575,6 +3630,16 @@
     "김태래": "김태래(KIM TAE RAE)",
     "리키": "리키(RICKY)",
     "성한빈": "성한빈(SUNG HAN BIN)",
+    "장하오": "장하오(ZHANG HAO)",
+    "한유진": "한유진(HAN YU JIN)"
+   },
+   "제로베이스원 BOX": {
+    "HAN YU JIN": "한유진(HAN YU JIN)",
+    "KIM GYU VIN": "김규빈(KIM GYU VIN)",
+    "RICKY": "리키(RICKY)",
+    "ZHANG HAO": "장하오(ZHANG HAO)",
+    "김규빈": "김규빈(KIM GYU VIN)",
+    "리키": "리키(RICKY)",
     "장하오": "장하오(ZHANG HAO)",
     "한유진": "한유진(HAN YU JIN)"
    },
