@@ -77,6 +77,46 @@ def _width_of(col: str, series: pd.Series) -> int:
     return int(min(max(head + 2, body + 2, 8), 42))
 
 
+def _apply_numfmt(data: bytes) -> bytes:
+    """엑셀이 표시 형식을 **무시하던 것**을 고친다 (2026-08-19).
+
+    ★openpyxl 3.1.5 는 `<xf numFmtId="3" …/>` 만 쓰고 **`applyNumberFormat="1"` 을
+      안 쓴다.** 그러면 엑셀은 그 형식을 안 쓴다 — 파일을 열어 보면 '표시 형식: G/표준'
+      이다. 쉼표도 안 찍히고 날짜는 `46224` 같은 일련번호로 보인다.
+      openpyxl 로 다시 읽으면 `#,##0` 이 멀쩡히 나오므로 **읽어서 확인하는 걸로는
+      절대 못 잡는다** — 엑셀에서 실제로 보이는 글자(`Range.Text`)로 확인해야 한다.
+      (글꼴·배경은 그 플래그 없이도 먹어서 머리줄만 보면 멀쩡해 보인다.)
+    그래서 저장한 뒤 styles.xml 의 cellXfs 를 훑어 플래그를 박아 넣는다.
+    """
+    import re
+    import zipfile
+
+    def fix(xml: str) -> str:
+        m = re.search(r"(<cellXfs[^>]*>)(.*?)(</cellXfs>)", xml, re.S)
+        if not m:
+            return xml
+
+        def one(x):
+            t = x.group(0)
+            fmt = re.search(r'numFmtId="(\d+)"', t)
+            if not fmt or fmt.group(1) == "0" or "applyNumberFormat" in t:
+                return t
+            return t.replace("<xf ", '<xf applyNumberFormat="1" ', 1)
+
+        body = re.sub(r"<xf [^>]*/>|<xf [^>]*>.*?</xf>", one, m.group(2), flags=re.S)
+        return xml[:m.start()] + m.group(1) + body + m.group(3) + xml[m.end():]
+
+    src = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for it in src.infolist():
+            raw = src.read(it.filename)
+            if it.filename == "xl/styles.xml":
+                raw = fix(raw.decode("utf-8")).encode("utf-8")
+            z.writestr(it, raw)
+    return out.getvalue()
+
+
 def _write_sheet(xw, name: str, df: pd.DataFrame, note) -> None:
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -131,4 +171,4 @@ def to_xlsx(df, sheet_name: str = "데이터", note="") -> bytes:
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         for nm, one in sheets.items():
             _write_sheet(xw, nm, one, notes.get(nm, ""))
-    return buf.getvalue()
+    return _apply_numfmt(buf.getvalue())
