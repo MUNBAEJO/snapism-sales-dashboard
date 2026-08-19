@@ -181,7 +181,14 @@ def resolve(rate_date: str) -> tuple[dict, str, str]:
     eff = ur.get_effective_date(rate_date) if rate_date else ""
     off = get(eff) if eff else None
     if off:
-        return off["rates"], eff, SRC_OFFICIAL
+        # ★공식 파일(TodayExRate.xls)엔 LAK·PEN 이 아예 없다. 스크래핑 경로만
+        #   _backfill 을 부르고 여기는 안 불러서, **공식 환율을 올리는 순간**
+        #   라오스·페루 매출이 있는 IP 는 fx.missing 에 걸려 정산서 만들기 버튼이
+        #   영영 안 켜졌다(스크래핑일 땐 되던 게 파일을 올리면 막히는 역전).
+        #   2026-08-19 수정. 못 채우면 키를 안 넣는 건 그대로다(1.0 부풀림 방지).
+        _r = dict(off["rates"])
+        _backfill(_r, eff)
+        return _r, eff, SRC_OFFICIAL
 
     if eff:
         # 서울외국환중개는 공개 API 가 없지만 날짜 검색 폼이 있어 과거도 조회된다.

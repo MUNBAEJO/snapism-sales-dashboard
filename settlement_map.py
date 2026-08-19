@@ -234,12 +234,32 @@ def _jira_pairs(brand: str) -> list:
     return pairs
 
 
+# 티켓 색인 캐시 — 아래 `_indexes` 와 같은 방식(캐시 파일 mtime 키).
+# ★★없으면 안 된다 (2026-08-19 추가). `ticket_index` 는 12.5MB 지라 캐시를
+#   매번 다시 파싱해 **호출당 0.24초**가 든다(실측). 그런데 IP정산서 화면의
+#   `st.selectbox(format_func=_lab)` 가 **옵션 하나하나마다** _lab → lookup_ticket
+#   → ticket_index 를 부른다. 타이틀 10개면 그것만 2.4초다.
+#   바로 아래 `_indexes` 에는 같은 캐시가 이미 있었는데 여기만 빠져 있었다.
+# ★반환 dict 를 **고치면 안 된다** — 호출부 전수 확인 결과 지금은 읽기만 한다
+#   (settlement_calc:97·948, views/8:202·253 · `{**e}` 로 복사해 쓴다).
+_TIDX: dict[tuple, dict] = {}
+
+
 def ticket_index(brand: str) -> dict:
     """{티켓번호: 대표 엔트리}. 캐시는 **타이틀이 키**라 티켓으로 찾으려면 뒤집어야 한다.
 
     한 티켓이 WBS 분리 때문에 여러 타이틀 키에 중복 등장한다 →
     타이틀을 모아 `titles` 로 넘기고, 날짜는 있는 쪽을 남긴다.
     """
+    try:
+        mt = JIRA_CACHE.stat().st_mtime
+    except OSError:
+        mt = 0.0
+    key = (brand, mt)
+    hit = _TIDX.get(key)
+    if hit is not None:
+        return hit
+
     out: dict = {}
     for title, e in _jira_pairs(brand):
         tk = str(e.get("ticket_key") or "").strip().upper()
@@ -255,6 +275,10 @@ def ticket_index(brand: str) -> dict:
         for f in ("startdate", "duedate"):
             if not cur.get(f) and e.get(f):
                 cur[f] = e[f]
+    # 캐시가 갱신되면 옛 mtime 키는 쓸모없다. 브랜드별 최신 것만 남긴다.
+    for k in [k for k in _TIDX if k[0] == brand]:
+        del _TIDX[k]
+    _TIDX[key] = out
     return out
 
 

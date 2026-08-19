@@ -681,17 +681,30 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
     #   구분은 파일명·문서번호(L/A)에만 남긴다.
     party = "소속사" if kind == "agency" else "대행사"      # 내부용
     rs_key = "agency" if kind == "agency" else "mgmt"
-    rs = next((v for v in ((ctx["rs"].get(b) or {}).get(rs_key)
-                           for b in ctx["details"]) if v), None)
-    # 국가별 예외 요율(소속사 문서에만). 있으면 표지·요약의 '요율'은 '국가별'로 적는다 —
-    # 한 숫자로 못 쓰는데 대표값을 적으면 받는 쪽이 그 값으로 검산하다 안 맞는다.
-    rs_cc = None
-    if rs_key == "agency":
-        _m = {}
-        for b in ctx["details"]:
-            _m.update((ctx["rs"].get(b) or {}).get("agency_cc") or {})
-        rs_cc = _m or None
-    rate_pct = ("국가별" if rs_cc else (f"{rs * 100:g}%" if rs else "—"))
+
+    # ★★요율은 **브랜드마다 따로**다 (2026-08-19 수정).
+    #   전엔 `next(... for b in ctx["details"])` 로 **처음 만난 브랜드의 요율 하나**를
+    #   뽑아 두 브랜드 표에 똑같이 썼다. BRANDS 순서가 photoism 먼저라 포토이즘이
+    #   항상 이겼고, 실제로 포토이즘은 20·25·30·35% 네 종류인데 스내피즘은 30% 하나라
+    #   섞인 문서에서 스내피즘 정산액이 어긋났다. 표지 요약표의 스내피즘 줄에도
+    #   포토이즘 요율이 인쇄됐다 — 대외 문서에 계약과 다른 요율이 박히는 것이다.
+    #   국가별 예외 요율(agency_cc)도 dict.update 라 뒤 브랜드가 앞을 덮었다.
+    # ★한 브랜드에만 요율이 있으면 다른 브랜드는 **0** 이다(빌려 쓰지 않는다).
+    #   화면 미리보기(views/8 `round(base * rm) if rm else 0`)가 이미 그렇게 센다.
+    def _b_rs(b):
+        return (ctx["rs"].get(b) or {}).get(rs_key)
+
+    def _b_cc(b):
+        # 국가별 예외 요율은 소속사 문서에만 있다
+        if rs_key != "agency":
+            return None
+        return ((ctx["rs"].get(b) or {}).get("agency_cc") or None)
+
+    def _b_pct(b):
+        # 국가별이 있으면 한 숫자로 못 쓴다 — 대표값을 적으면 받는 쪽이 그 값으로
+        # 검산하다 안 맞는다. '국가별'이라고 적고 상세 표에서 나라마다 보여 준다.
+        _r = _b_rs(b)
+        return "국가별" if _b_cc(b) else (f"{_r * 100:g}%" if _r else "—")
     ip, S, E = ctx["ip"], ctx["start"], ctx["end"]
     ym = f"{int(E[:4])}년 {int(E[5:7])}월"
     docno = ctx.get("docno") or ""
@@ -701,6 +714,10 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
     use_vat = bool(_p.get("vat", True))
 
     used = used_brands(ctx)
+    # 표지 hero 의 '요율' 칸은 한 칸뿐이다. 브랜드가 서로 다른 요율이면 한 숫자로
+    # 못 쓰므로 '브랜드별'이라고 적는다 — 바로 아래 브랜드별 요약표에 각자 값이 있다.
+    _pcts = list(dict.fromkeys(_b_pct(b) for b in used))
+    rate_pct = _pcts[0] if len(_pcts) == 1 else "브랜드별"
     used_label = " + ".join(BRAND_LABEL[b] for b in used)
     prose = "·".join(BRAND_LABEL[b] for b in used)      # 문장 안에서 쓸 표기
     multi = len(used) > 1
@@ -715,7 +732,7 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
         rows = (_d if "구분" in _d.columns
                 else _d.sort_values("매출액", ascending=False)).to_dict("records")
         tbl, krw, setl, qty = _country_table(rows, QTY_LABEL[b],
-                                             rate_pct, rs, rs_cc)
+                                             _b_pct(b), _b_rs(b), _b_cc(b))
         calc[b] = {"rows": rows, "tbl": tbl, "krw": krw, "set": setl, "qty": qty}
     base = sum(c["krw"] for c in calc.values())
     total = sum(c["set"] for c in calc.values())
@@ -736,7 +753,7 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
         brand_rows += (f'<tr><td>{BRAND_LABEL[b]}</td>'
                        f'<td>{_f(calc[b]["qty"])}</td>'
                        f'<td>{_f(calc[b]["krw"])}</td>'
-                       f'<td><small>{rate_pct}</small></td>'
+                       f'<td><small>{_b_pct(b)}</small></td>'
                        f'<td>{_f(calc[b]["set"])}</td>'
                        f'<td class="dim">{_f(s1)}</td>'
                        f'<td class="dim">{_f(v1)}</td></tr>')

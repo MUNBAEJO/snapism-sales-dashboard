@@ -281,7 +281,9 @@ def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
         loc = (q * up.where(up > 0)).fillna(0)             # 그 몫에 다시 단가를 곱한 정산 기준액
         # 단가를 못 구한 멤버(전부 0/누락)는 금액만 살린다 — 버리면 돈이 사라진다.
         loc = loc.where(up > 0, g["현지"])
-        _tot = int(round(float(loc.sum())))
+        # ★내장 round 금지(위 _round_half_up 주석). 현지통화 소계도 문서와
+        #   같은 규칙으로 맞춘다(2026-08-19).
+        _tot = _round_half_up(loc.sum())
         _big = g.loc[g["현지"].abs().idxmax(), "up"] if len(g) else None
         rec = {"국가": nat, "unit": unit, "수량": int(q.fillna(0).sum()),
                "현지": _tot,
@@ -861,7 +863,7 @@ def vat_split(pay: int, vat: bool = True) -> tuple[int, int]:
     pay = int(pay or 0)
     if not vat:
         return pay, 0
-    supply = round(pay / 1.1)
+    supply = _round_half_up(pay / 1.1)     # 내장 round(은행식) 금지 — 위 주석
     return supply, pay - supply
 
 

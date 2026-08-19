@@ -69,9 +69,20 @@ def _rerun():
 
 # ── 공통 데이터 ────────────────────────────────────────────────────────────
 # ★st.cache_data 는 밑줄로 시작하는 인자를 해시에서 제외한다. 버전 값에 밑줄 금지.
+# ★★환율 조회를 캐시한다 (2026-08-19). `sm.load_rates` → `settlement_fx.resolve`
+#   는 **저장된 공식환율이 있을 때만** 즉시 반환하고, 없으면 smbs.biz 를 매번
+#   스크래핑한다(timeout 20초). 지금 `data/settlement_fx.json` 에 저장된 기준일이
+#   0건이라 **전체 재실행마다 1.2~1.6초씩 네트워크를 물고 있었다**(실측).
+#   모듈 최상단이라 위젯을 하나 건드릴 때마다 발생한다.
+#   키에 fx.version() 을 넣어 공식환율을 저장하면 바로 반영되게 한다.
+@st.cache_data(ttl=1800, max_entries=8, show_spinner=False)
+def _rates(rate_date, fx_key):
+    return sm.load_rates(rate_date)
+
+
 @st.cache_data(ttl=900, max_entries=8, show_spinner="매출을 집계하는 중이에요…")
 def _titles(brand, start, end, rate_key, fx_key):
-    rates, eff, src = sm.load_rates(end)
+    rates, eff, src = _rates(end, fx_key)        # 위 캐시를 그대로 탄다
     return sm.title_revenue(brand, start, end, rates), eff, src
 
 
@@ -92,7 +103,7 @@ if start > end:
     st.stop()
 S, E = start.isoformat(), end.isoformat()
 
-RATES, EFF, SRC = sm.load_rates(E)
+RATES, EFF, SRC = _rates(E, fx.version())
 _official = SRC != fx.SRC_FALLBACK
 c3.markdown(
     f"<div style='padding-top:26px;font-size:12.5px;color:var(--text-2)'>"
@@ -401,24 +412,32 @@ def make_panel():
                           + " · ".join(f"<code>{t}</code>" for t in _diff)
                           + f"<div class='sub'>아래 값(<b>{tk}</b> 기준)으로 "
                             "한 장을 만들어요. 맞는지 확인해 주세요.</div>")
+        # ★★위젯 키에 **티켓**을 넣는다 (2026-08-19 수정). 전엔 `ra_{b}` 처럼
+        #   브랜드만 넣어서, IP 를 바꿔도 키가 같아 스트림릿이 `value=` 를 무시하고
+        #   **앞 IP 의 요율·파트너사명을 그대로 들고 있었다.** 화면은 25%인데 문서는
+        #   저장값 30% 로 나가고(미리보기 ≠ PDF), 그 화면을 믿고 💾 를 누르면
+        #   새 IP 의 모든 티켓에 앞 IP 값이 덮어써졌다. 파트너사명이 남으면
+        #   '제출처 ○○ 귀중'에 **남의 회사 이름**이 박혀 나간다.
+        #   같은 병을 331줄이 `ipname` 에 대해 이미 적어 뒀는데 여기만 빠져 있었다.
+        _wk = f"{b}_{tk}"
         k1, k2, k3, k4 = st.columns([1, 1, 1, 1.2])
         a = k1.number_input("소속사 %", 0.0, 100.0, float((cur["agency"] or 0) * 100),
-                            0.5, key=f"ra_{b}")
+                            0.5, key=f"ra_{_wk}")
         m = k2.number_input("대행사 %", 0.0, 100.0, float((cur["mgmt"] or 0) * 100),
-                            0.5, key=f"rm_{b}")
+                            0.5, key=f"rm_{_wk}")
         mg_cur = sc.get_mg(b, tk)
-        has = k3.checkbox("MG 있음", value=mg_cur["has_mg"], key=f"mgh_{b}")
+        has = k3.checkbox("MG 있음", value=mg_cur["has_mg"], key=f"mgh_{_wk}")
         amt = k4.number_input("MG 금액", 0, step=1_000_000,
                               value=int(mg_cur["amount"] or 0), disabled=not has,
-                              key=f"mga_{b}")
+                              key=f"mga_{_wk}")
         # 파트너사명 — 문서에 '제출처 ○○ 귀중' 과 정산 내역표 출자자명으로 들어간다.
         pt = sc.get_partner(b, tk)
         p1, p2, p3 = st.columns([1.3, 1.3, 0.9])
-        an = p1.text_input("소속사명", value=pt["agency_name"], key=f"pa_{b}",
+        an = p1.text_input("소속사명", value=pt["agency_name"], key=f"pa_{_wk}",
                            placeholder="예: 제이와이드컴퍼니")
-        mn = p2.text_input("대행사명", value=pt["mgmt_name"], key=f"pm_{b}",
+        mn = p2.text_input("대행사명", value=pt["mgmt_name"], key=f"pm_{_wk}",
                            placeholder="선택")
-        vt = p3.checkbox("부가세 적용", value=pt["vat"], key=f"vt_{b}",
+        vt = p3.checkbox("부가세 적용", value=pt["vat"], key=f"vt_{_wk}",
                          help="총 지급액을 부가세 포함으로 보고 공급가액·VAT 를 나눠 적어요. "
                               "해외 파트너면 꺼 주세요.")
         # ── 국가별 예외 요율 (소속사) ──────────────────────────────
@@ -446,7 +465,7 @@ def make_panel():
                     _v = _c.number_input(
                         _n, 0.0, 100.0,
                         (float(_saved_cc[_n]) * 100 if _n in _saved_cc else None),
-                        0.5, key=f"rcc_{b}_{_n}", placeholder=f"기본 {a:g}")
+                        0.5, key=f"rcc_{_wk}_{_n}", placeholder=f"기본 {a:g}")
                     _eff = _v if _v is not None else a
                     _c.caption(("↳ " + f"{_eff:g}%") if _v is not None
                                else f"↳ 기본 {a:g}%")
@@ -457,7 +476,7 @@ def make_panel():
                                                         for k, v in _cc_new.items())
                                + f" · 나머지 {len(_nats) - len(_cc_new)}개국 {a:g}%")
 
-        if st.button(f"💾 {sm.BRAND_LABEL[b]} 저장", key=f"sv_{b}",
+        if st.button(f"💾 {sm.BRAND_LABEL[b]} 저장", key=f"sv_{_wk}",
                      disabled=not CAN_EDIT):
             # 여러 장을 합쳐 정산하는 건이면 **전부에 같은 값을 저장**한다.
             # 대표 티켓에만 넣으면, 다음에 순서를 바꿔 넣었을 때 요율이 비어 보인다.
@@ -466,6 +485,28 @@ def make_panel():
                 sc.set_mg(b, _t, has, amt, mg_cur.get("note", ""), _email)
                 sc.set_partner(b, _t, an, mn, vt, _email)
             _rerun()
+        # ★★화면값과 저장값이 다르면 **미리보기와 문서가 어긋난다** (2026-08-19).
+        #   아래 '금액 확인'은 화면값으로 세는데, PDF 는 build_context 가
+        #   `get_rs(brand, ticket)` 로 **저장값**을 읽는다(settlement_calc:936).
+        #   `stop` 게이트는 "저장값이 있나"만 보므로 버튼이 멀쩡히 켜져 있어서,
+        #   저장을 안 누른 채 발행하면 화면과 다른 금액이 대외로 나간다.
+        _pend = []
+        if (a / 100 or None) != cur["agency"]:
+            _pend.append(f"소속사 {a:g}% <span class='muted'>(저장값 "
+                         f"{(cur['agency'] or 0) * 100:g}%)</span>")
+        if (m / 100 or None) != cur["mgmt"]:
+            _pend.append(f"대행사 {m:g}% <span class='muted'>(저장값 "
+                         f"{(cur['mgmt'] or 0) * 100:g}%)</span>")
+        if _cc_new != _saved_cc:
+            _pend.append("국가별 요율")
+        if (an, mn, vt) != (pt["agency_name"], pt["mgmt_name"], pt["vat"]):
+            _pend.append("파트너사명 · 부가세")
+        if _pend:
+            ui_theme.nbox("warn", "💾 <b>아직 저장 안 한 값이 있어요</b> — "
+                          + " · ".join(_pend)
+                          + "<div class='sub'>아래 금액은 <b>화면 값</b>으로 계산하지만 "
+                            "정산서는 <b>저장된 값</b>으로 만들어요. "
+                            f"<b>💾 {sm.BRAND_LABEL[b]} 저장</b>을 눌러 주세요.</div>")
         rs[b] = (a / 100 or None, m / 100 or None)
         rs_cc[b] = _cc_new or dict(_saved_cc)
 
@@ -493,8 +534,12 @@ def make_panel():
                 [int(x) for x in d["매출액"]], ra,
                 [_cc.get(n, ra) for n in d["국가"]]))
         else:
-            tot_a += round(base * ra) if ra else 0
-        tot_m += round(base * rm) if rm else 0
+            # ★파이썬 내장 round() 는 0.5 를 짝수로 보낸다(은행식). 문서는
+            #   `_round_half_up`(엑셀 ROUND)을 쓰므로 그대로 두면 **화면과 PDF 가
+            #   1원 어긋난다** — settlement_calc:214 가 브루나이 건으로 이미
+            #   못 박아 둔 그 함수를 여기만 안 쓰고 있었다(2026-08-19 수정).
+            tot_a += sc._round_half_up(base * ra) if ra else 0
+        tot_m += sc._round_half_up(base * rm) if rm else 0
         # ★여기서 쓰는 '수량'은 문서(settlement_pdf:189)가 쓰는 값과 **같은 것**이다.
         #   `floor(현지 ÷ 평균단가)` 라 한 거래에 두 장이면 2로 세고, 그래서
         #   country_detail 의 `건수`(거래 행 수)보다 크다(대한축구협회 3,709 vs 3,654).
