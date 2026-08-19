@@ -219,7 +219,10 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
 
     ★소계 정산액은 각 행 정산액의 합이면서 총액×요율과도 같다(_alloc_settle).
     """
-    tot_krw = sum(r["매출액"] for r in rows) or 1
+    # ★`or 1` 이었다 — 매출과 취소가 정확히 상쇄돼 합이 0 이면 분모가 1 이 돼
+    #   `100,000,000.0%` 가 찍힌다. 총합이 0 이하면 비중을 아예 안 적는다.
+    _t = sum(r["매출액"] for r in rows)
+    tot_krw = _t if _t > 0 else 0
     # 국가별 요율이 있으면 행마다 다른 요율을 쓴다. 없으면 전 행이 기본 요율.
     _rates = ([(rs_cc or {}).get(r["국가"], rs) for r in rows] if rs_cc else None)
     amts = _alloc_settle([int(r["매출액"]) for r in rows], rs, _rates)
@@ -272,7 +275,7 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
                 h += (f'<tr class="cathd"><td colspan="9">{k}'
                       f'<span>{_f(_sub[k][1])}원</span></td></tr>')
         tq += q; tk += krw; ts += amt
-        p = krw / tot_krw * 100
+        p = (krw / tot_krw * 100) if tot_krw else None
         zero = krw == 0
         dash = '<span style="color:#c3c9d4">—</span>'
         h += (f'<tr><td>{r["국가"]}'
@@ -284,9 +287,10 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
               f'<td>{_f(krw) if krw else dash}</td>'
               f'<td class="dim">{_pct(_rates[_i]) if _rates else rate_pct}</td>'
               f'<td>{"<b>" + _f(amt) + "</b>" if amt else dash}</td>'
-              '<td><span class="sharecell"><span class="bar">'
-              f'<i style="width:{max(p, 1.2):.1f}%"></i></span>{p:.1f}%</span>'
-              '</td></tr>')
+              + ('<td>' + dash + '</td></tr>' if p is None else
+                 '<td><span class="sharecell"><span class="bar">'
+                 f'<i style="width:{max(p, 1.2):.1f}%"></i></span>{p:.1f}%</span>'
+                 '</td></tr>'))
     if grouped and _cur is not None:            # 마지막 묶음 소계
         sq, sk, ss = _sub[_cur]
         h += (f'<tr class="csum"><td>{_cur} 소계</td><td></td><td>{_f(sq)}</td>'
@@ -300,9 +304,14 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
 
 
 def _k(n) -> str:
-    """원 → 천원. **내림**(1차 피드백 스펙 · 검증 체크리스트 기준)."""
+    """원 → 천원. **내림**(1차 피드백 스펙 · 검증 체크리스트 기준).
+
+    ★`//` 를 쓰면 안 된다 — 음수에서 -∞ 쪽으로 내려서 -1,500원이 **-2천원**이 된다.
+      취소만 남은 칸이 실제보다 크게 깎여 보인다. 문서 전체 규칙(`settlement_calc._trunc`)
+      대로 **0 쪽 절사**로 맞춘다(양수는 결과가 같다). 2026-08-19.
+    """
     try:
-        return f"{int(float(n)) // 1000:,}"
+        return f"{int(int(float(n)) / 1000):,}"
     except (TypeError, ValueError):
         return "—"
 
@@ -868,13 +877,21 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
         # 나라가 여러 번 나와 범례에 '한국'이 두 줄로 찍힌다(실제로 그랬다).
         _agg = {}
         for r in c["rows"]:
-            if int(r["매출액"]) <= 0:
-                continue
             k = r["국가"]
             _agg[k] = {"국가": k, "unit": r["unit"],
                        "매출액": _agg.get(k, {}).get("매출액", 0) + int(r["매출액"])}
-        pos = sorted(_agg.values(), key=lambda r: -r["매출액"])
-        bars = (CHARTS.get(chart) or _share_chart)(pos, c["krw"])
+        # ★0 이하는 **나라별로 합친 뒤에** 뺀다 (2026-08-19 수정). 전엔 행 단위로
+        #   먼저 뺐는데, 스내피즘처럼 한 나라가 항목별로 여러 줄이면 음수 항목만
+        #   사라져 그 나라가 부풀어 올랐다.
+        pos = sorted((v for v in _agg.values() if v["매출액"] > 0),
+                     key=lambda r: -r["매출액"])
+        # ★★분모는 **실제로 그린 것의 합**이다. 전엔 c["krw"](음수 국가까지 든 총합)를
+        #   썼다 — 분자에선 음수를 빼고 분모엔 남겨서 **비중 합이 100%를 넘었다.**
+        #   실측: 260601 FT아일랜드 2026-07 = 한국 -14,000 · 나머지 +46,115 →
+        #   분모 32,115 로 143.6% (도넛이 한 바퀴를 넘어 그려진다).
+        #   음수는 취소만 남은 나라에서 난다(2025년 이후 5칸 · 전부 한국).
+        _pos_tot = sum(v["매출액"] for v in pos)
+        bars = (CHARTS.get(chart) or _share_chart)(pos, _pos_tot)
         d = ctx["details"][b]
         top = pos[0] if pos else None
         bs, bv = vat3(c["set"], use_vat)
