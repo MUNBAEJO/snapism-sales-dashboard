@@ -678,6 +678,20 @@ def load_data():
     return _load_data(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
 
 
+# ★★첫/마지막 날짜를 캐시한다 (2026-08-19). `df_all["날짜"].max()/.min()` 두 줄이
+#   **전체 재실행 4.7초 중 0.96초**였다(구간별 실측). `날짜` 가 object dtype —
+#   `_load_data` 가 `.dt.date` 로 끝내서 datetime.date **객체 705만 개**라,
+#   min/max 가 파이썬 비교로 전수를 훑는다. 값은 집계 파일이 바뀔 때만 변한다.
+# ※근본 해결은 datetime64 로 바꾸는 것이다(같은 min/max 가 0.15초 · 이 열만
+#   282MB→56MB). 다만 pandas 2.x 는 `datetime64 >= datetime.date` 를
+#   **TypeError 로 거절**해서, 이 파일의 기간 비교를 전부 pd.Timestamp 로 감싸고
+#   첫거래일·마지막거래일 표시(구좌별 상세·내려받기)도 손봐야 한다. 별건으로 미뤘다.
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)
+def _date_bounds(agg_mtime, cfg_mtime):
+    d = _load_data(agg_mtime, cfg_mtime)["날짜"]
+    return d.min(), d.max()
+
+
 @st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # mtime 키 → 최신 1개만 유효
 def _sidebar_options(agg_mtime):
     """필터 드롭다운 옵션을 데이터 버전당 한 번만 계산(캐시)."""
@@ -1646,8 +1660,7 @@ if df_all.empty:
     st.code("python build_photoism_agg.py")
     st.stop()
 
-last_date  = df_all["날짜"].dropna().max()
-first_date = df_all["날짜"].dropna().min()
+first_date, last_date = _date_bounds(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
 cfg        = load_config()
 ex         = load_exchange_rates()
 
