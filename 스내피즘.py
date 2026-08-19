@@ -13,6 +13,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",   # 왼쪽 사이드바 상시 노출(토스 형태) — 사용자 선호
 )
 
+# ★dev 모드인데 외부 주소에 열려 있으면 **여기서 멈춘다.** dev 는 로그인을
+#   건너뛰므로 한 줄이라도 더 그리면 매출이 새 나간다 — 로그인보다 먼저 본다.
+import dev_mode as _dm
+_bad_addr = _dm.assert_local_only()
+if _bad_addr:
+    st.error(f"개발 모드(SNAPISM_ENV=dev)인데 **{_bad_addr}** 에 열려 있어요. "
+             "dev 는 로그인을 건너뛰기 때문에 외부에 열면 안 돼요. "
+             "127.0.0.1 로 다시 띄우거나 SNAPISM_ENV 를 지워 주세요.")
+    st.stop()
+
 # ── Google 로그인 + 승인제 접근 통제 ──
 # 통과하지 못하면 로그인/승인대기 화면을 그리고 여기서 멈춘다.
 import auth

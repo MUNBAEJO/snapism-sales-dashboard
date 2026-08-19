@@ -2006,6 +2006,42 @@ SHOW_TAB_DETAIL = False
 # [숨김] '국가별 분석' 탭의 '🏆 국가별 타이틀 TOP 10' 카드 — UI 에서만 뺌(요청).
 #         계산 코드는 그대로 남겨 뒀으니 True 로만 바꾸면 되살아난다.
 SHOW_NAT_TITLE = False
+
+# 세그먼트 컨트롤을 **기존 언더라인 탭과 같은 모양**으로. 기능만 바뀌고 눈에는
+# 그대로 보이게 한다(첫 칸 연한 배경 · 선택 시 브랜드색 + 2.5px 밑줄 · 상단 고정).
+_LAZYTAB_CSS = """
+<style>
+/* ★선택 상태는 aria-checked 가 아니라 **kind="segmented_controlActive"** 다.
+   묶음 컨테이너도 stSegmentedControl 이 아니라 stButtonGroup 이다(스트림릿 1.45). */
+.st-key-ph-maintab{ position:sticky; top:0; z-index:50; background:var(--bg);
+  padding-top:8px; margin-bottom:2px;
+  box-shadow:0 6px 10px -7px rgba(20,28,45,.18); }
+.st-key-ph-maintab [data-testid="stButtonGroup"] > div{
+  gap:2px !important; border-bottom:1px solid var(--border) !important;
+  border-radius:0 !important; background:transparent !important; }
+.st-key-ph-maintab [data-testid="stButtonGroup"] button{
+  background:transparent !important; border:none !important;
+  border-radius:0 !important; padding:9px 15px !important;
+  min-height:0 !important; box-shadow:none !important;
+  border-bottom:2.5px solid transparent !important; }
+.st-key-ph-maintab [data-testid="stButtonGroup"] button p{
+  font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
+/* ★특이도 주의 — 위 일반 규칙에 요소선택자 `button` 이 있어 더 세다.
+   둘 다 !important 라 특이도로 갈린다. 그래서 여기도 `button` 을 붙인다. */
+.st-key-ph-maintab button[data-testid="stBaseButton-segmented_controlActive"]{
+  border-bottom-color:var(--brand) !important; }
+.st-key-ph-maintab button[data-testid="stBaseButton-segmented_controlActive"] p{
+  color:var(--brand) !important; }
+.st-key-ph-maintab [data-testid="stButtonGroup"] button:first-child{
+  background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
+.st-key-ph-maintab [data-testid="stButtonGroup"] button:first-child p{
+  color:var(--brand) !important; }
+/* 이모지와 글자가 두 줄로 갈리는 걸 한 줄로 */
+.st-key-ph-maintab [data-testid="stButtonGroup"] button > div{
+  display:flex !important; flex-direction:row !important;
+  align-items:center !important; gap:6px !important; }
+</style>
+"""
 # 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. st.tabs 는 안 열어도 매 rerun 마다
 #      모든 탭을 실행(런 빌드가 무겁다)하므로, 탭엔 무거운 연산 대신 전용 페이지 링크만 둔다.
 _tab_labels = ["📊 매출 한눈에", "🎫 구좌타입 분석", "🌏 국가별 분석", "🏬 매장별 분석",
@@ -2014,16 +2050,26 @@ if SHOW_TAB_DETAIL:
     _tab_labels.append("🔎 세부 항목")
 if SHOW_TAB_ETC:
     _tab_labels.append("⏰ 시간대 · 데이터")
-_tabs = st.tabs(_tab_labels)
-tab_home, tab_ip, tab_nat, tab_store, tab_runs = (_tabs[0], _tabs[1], _tabs[2],
-                                                  _tabs[3], _tabs[4])
-_ti = 5
-tab_detail = _tabs[_ti] if SHOW_TAB_DETAIL else None
-_ti += 1 if SHOW_TAB_DETAIL else 0
-tab_etc = _tabs[_ti] if SHOW_TAB_ETC else None
+# ★★st.tabs 를 쓰면 **안 열린 탭의 본문도 매 rerun 전부 실행된다**(화면에서만 숨김).
+#   실측하면 한 번 그릴 때 groupby/sort/merge 가 51회 도는데 그중 사용자가 보는 건
+#   한 탭 분량뿐이었다(한눈에 13 · 구좌타입 22 · 국가별 14 · 매장별 2).
+#   그래서 **고른 탭만 그린다.** 탭처럼 보이게 CSS 로 맞춰 뒀다(_LAZYTAB_CSS).
+# ★부수 효과 — 안 그려진 탭의 위젯은 스트림릿이 세션에서 지운다. 탭을 왕복하면
+#   검색어·묶기·프리셋이 초기화되므로 아래에서 **값을 한 번 다시 써서** 살려 둔다.
+#   (버튼 키는 절대 넣지 말 것 — st.button 은 session_state 대입이 예외다.)
+for _k in ("ph_trend", "ph_home_store_country", "ph_slot_grp", "ph_slot_q",
+           "ph_ip_nat_sel"):
+    if _k in st.session_state:
+        st.session_state[_k] = st.session_state[_k]
+
+st.markdown(_LAZYTAB_CSS, unsafe_allow_html=True)
+with st.container(key="ph-maintab"):
+    _sel = st.segmented_control("보기", _tab_labels, default=_tab_labels[0],
+                                key="ph_maintab", label_visibility="collapsed")
+_sel = _sel or _tab_labels[0]
 
 # ════════════ 탭: 런 비교 (별도 페이지 링크 — 성능 위해 탭엔 링크만) ════════════
-with tab_runs:
+if _sel == "🆚 런 비교":
     with card("🆚 타이틀 런 비교"):
         st.markdown(
             '<div style="padding:4px 2px 14px;color:var(--text-2);font-size:13.5px;line-height:1.75">'
@@ -2037,7 +2083,7 @@ with tab_runs:
                             denied="이 기능은 권한이 필요해요. 필요하면 관리자에게 요청해 주세요.")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
-with tab_home:
+if _sel == "📊 매출 한눈에":
     sec("1", "매출 동향",
         "잘 가고 있나? — <b>조회 기간과 무관하게 항상 최근 1년</b>이에요 "
         "(국가·매장·상품·IP 필터는 그대로 적용돼요)")
@@ -2207,7 +2253,7 @@ with tab_home:
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '국가별 분석'·'매장별 분석' 탭에서 봐요.")
 
 # ════════════ 탭 2: 구좌타입 분석 (IP구분 = 구좌 세분) ════════════
-with tab_ip:
+if _sel == "🎫 구좌타입 분석":
     with card("🎭 IP 구분 (비중 · 매출) <span class='muted'>(아티스트·캐릭터·PICK·오리지널·렌탈)</span>"):
         if not gub.empty:
             _g1, _g2 = st.columns([5, 5])
@@ -2633,7 +2679,7 @@ with tab_ip:
     #        안내 문구도 뺐다(없는 필터를 가리키게 된다). 필터를 되살리면 그대로 부활.
 
 # ════════════ 탭 3: 국가별 분석 ════════════
-with tab_nat:
+if _sel == "🌏 국가별 분석":
     if "국가" not in sales.columns or sales.empty:
         st.info("국가 데이터가 없어요. 필터를 넓혀 보세요.")
     else:
@@ -2963,11 +3009,11 @@ def _store_tab(sales, date_range, sel_countries):
 """)
 
 
-with tab_store:
+if _sel == "🏬 매장별 분석":
     _store_tab(sales, date_range, sel_countries)
 
 # ════════════ [제거] 세부 항목 검색 — SHOW_TAB_DETAIL=True 로 부활 ════════════
-#   (부활 시 탭에 그리려면 아래 블록을 `with tab_detail:` 로 감싸 주세요.)
+#   (부활 시 탭에 그리려면 `if _sel == "🔎 세부 항목":` 로 감싸 주세요.)
 if SHOW_TAB_DETAIL:
     @st.fragment
     def _detail_search(date_range, selected_ips, sel_countries,
@@ -3005,7 +3051,8 @@ if SHOW_TAB_DETAIL:
                 return
             if search_kw.strip():
                 detail_df = detail_df[
-                    detail_df["항목"].astype(str).str.contains(search_kw.strip(), case=False, na=False)]
+                    detail_df["항목"].astype(str).str.contains(
+                        search_kw.strip(), case=False, na=False, regex=False)]
             if detail_df.empty:
                 st.warning(f"'{search_kw}'에 대한 검색 결과가 없어요. 다른 검색어로 다시 찾아보세요.")
                 return
@@ -3038,8 +3085,8 @@ if SHOW_TAB_DETAIL:
                    sel_stores, sel_brands, sel_gubuns)
 
 # ════════════ 탭 6: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
-if SHOW_TAB_ETC:
-    with tab_etc:
+if SHOW_TAB_ETC and _sel == "⏰ 시간대 · 데이터":
+    if True:                       # 들여쓰기 유지(예전 `with tab_etc:` 자리)
         with card("⏰ 시간대별 매출 분포"):
             df_hourly = load_hourly()
             if not df_hourly.empty and len(date_range) == 2:

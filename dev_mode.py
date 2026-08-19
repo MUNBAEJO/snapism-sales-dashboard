@@ -30,6 +30,27 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 
 IS_DEV = os.environ.get("SNAPISM_ENV", "").strip().lower() == "dev"
+
+
+def assert_local_only() -> str:
+    """dev 인데 외부 주소에 바인딩돼 있으면 그 사실을 돌려준다(빈 문자열이면 정상).
+
+    ★dev 는 구글 로그인을 **건너뛴다**(auth._DevUser). 그래서 외부에 열리면
+      인증 없이 매출이 보인다. 지금은 run_dashboard_dev.py 가 127.0.0.1 로만
+      띄워서 막고 있지만, 켜지는 조건이 **환경변수 하나**뿐이다 —
+      실서버 세션에 SNAPISM_ENV=dev 가 실수로 남으면 그대로 사고다.
+      그래서 주소를 직접 확인한다(2026-08-19 외부 점검 지적).
+    """
+    if not IS_DEV:
+        return ""
+    try:
+        from streamlit import config as _cfg
+        addr = str(_cfg.get_option("server.address") or "").strip()
+    except Exception:
+        return ""     # 주소를 못 읽으면 판단하지 않는다 — 오탐으로 실서버를 막지 않게
+    if addr in ("127.0.0.1", "localhost", "::1"):
+        return ""
+    return addr or "(전체 주소 0.0.0.0)"
 # dev 로 접속한 사람의 신분. allowed-users.dev.json 의 역할을 그대로 탄다.
 DEV_EMAIL = (os.environ.get("SNAPISM_DEV_EMAIL") or "dev@local").strip().lower()
 

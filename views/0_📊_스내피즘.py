@@ -534,10 +534,13 @@ def _load_data(v):
     df["총원화금액"] = df["최종 결제 금액"] + df["쿠폰 할인 금액"]
     # 프레임 이름의 한/영 통합 + 글자깨짐 교정. **캐시에 넣기 전** 한 번만 태운다 —
     # 필터·순위·내려받기가 전부 이 열을 보므로 여기서 통일해야 다 같이 맞는다.
-    df["프레임 이름"] = df["프레임 이름"].astype(str).map(name_alias.fold)
+    # ★행마다 부르면 안 된다. fold() 는 NFKC 정규화 + 글자별 치환 + split/join 이라
+    #   45만 행에 태우면 콜드 로드가 눈에 띄게 늘어난다. 프레임 이름 고유값은
+    #   수천 개뿐이니 **고유값에서 한 번 만들고 map 으로 붙인다**(결과 동일).
+    _s = df["프레임 이름"].astype(str)
     _fm = name_alias.mapping("스내피즘", "프레임")
-    if _fm:
-        df["프레임 이름"] = df["프레임 이름"].map(lambda x: _fm.get(x, x))
+    _fold = {v: _fm.get(name_alias.fold(v), name_alias.fold(v)) for v in _s.unique()}
+    df["프레임 이름"] = _s.map(_fold)
     return df
 
 
@@ -990,14 +993,28 @@ def _uniq(col):
     return sorted([v for v in s.unique() if v and v != "nan"])
 
 
-_country_opts = sorted(set(_uniq("국가")) | set(KNOWN_COUNTRIES)) if "국가" in df_all.columns else []
-_store_all = _uniq("매장 이름")
-_prod_opts = _uniq("상품 카테고리")
-_ip_opts = _uniq("프레임 이름")
+@st.cache_data(ttl=1800, show_spinner=False, max_entries=1)   # 파일 버전 키 → 최신 1개만
+def _filter_options(ver):
+    """필터 목록을 **데이터 버전당 한 번만** 만든다.
+
+    ★전엔 모듈 최상위에서 `_uniq` 를 5번 불렀다 — rerun 마다 45만 행에
+      `.astype(str).str.strip()` 을 다섯 번 돌린 셈이다. 포토이즘은 같은 걸
+      `_sidebar_options` 로 캐시해 두었는데 여기만 빠져 있었다(2026-08-19).
+    """
+    return {c: _uniq(c) for c in ("국가", "매장 이름", "상품 카테고리",
+                                  "프레임 이름", "카테고리")}
+
+
+_opts_all = _filter_options(data_io.file_version(MASTER_FILE))
+_country_opts = (sorted(set(_opts_all["국가"]) | set(KNOWN_COUNTRIES))
+                 if "국가" in df_all.columns else [])
+_store_all = _opts_all["매장 이름"]
+_prod_opts = _opts_all["상품 카테고리"]
+_ip_opts = _opts_all["프레임 이름"]
 # ★'상품 카테고리'(미니스티커·포토카드 = 무엇을 샀나)와 '카테고리'(아티스트·캐릭터·
 #   반팔입고나와 = 어떤 IP 기획인가)는 **다른 열**이다. 이름이 비슷해 자주 헷갈린다.
 #   화면 라벨을 각각 '상품' / 'IP구분' 으로 갈라 놓은 이유다.
-_cat_opts = _uniq("카테고리")
+_cat_opts = _opts_all["카테고리"]
 
 
 @st.cache_data(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
