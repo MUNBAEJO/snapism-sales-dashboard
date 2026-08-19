@@ -536,7 +536,7 @@ def _load_data(v):
     # 필터·순위·내려받기가 전부 이 열을 보므로 여기서 통일해야 다 같이 맞는다.
     # ★행마다 부르면 안 된다. fold() 는 NFKC 정규화 + 글자별 치환 + split/join 이라
     #   45만 행에 태우면 콜드 로드가 눈에 띄게 늘어난다. 프레임 이름 고유값은
-    #   수천 개뿐이니 **고유값에서 한 번 만들고 map 으로 붙인다**(결과 동일).
+    #   264개뿐이니 **고유값에서 한 번 만들고 map 으로 붙인다**(결과 동일 · 0.53s→0.04s).
     _s = df["프레임 이름"].astype(str)
     _fm = name_alias.mapping("스내피즘", "프레임")
     _fold = {v: _fm.get(name_alias.fold(v), name_alias.fold(v)) for v in _s.unique()}
@@ -998,7 +998,7 @@ def _filter_options(ver):
     """필터 목록을 **데이터 버전당 한 번만** 만든다.
 
     ★전엔 모듈 최상위에서 `_uniq` 를 5번 불렀다 — rerun 마다 45만 행에
-      `.astype(str).str.strip()` 을 다섯 번 돌린 셈이다. 포토이즘은 같은 걸
+      `.astype(str).str.strip()` 을 다섯 번 돌린 셈이다(0.50s). 포토이즘은 같은 걸
       `_sidebar_options` 로 캐시해 두었는데 여기만 빠져 있었다(2026-08-19).
     """
     return {c: _uniq(c) for c in ("국가", "매장 이름", "상품 카테고리",
@@ -1336,66 +1336,17 @@ if _is_owner:
 # [보류] '시간대 · 데이터' 탭 — 숨김 처리(코드·데이터는 그대로 보존).
 #         다시 살리려면 SHOW_TAB_ETC = True 로만 바꾸면 됨.
 SHOW_TAB_ETC = False
-
-# 세그먼트 컨트롤을 기존 언더라인 탭과 같은 모양으로(포토이즘과 동일).
-# ★선택 상태는 aria-checked 가 아니라 kind="segmented_controlActive" 이고,
-#   묶음은 stButtonGroup 이다. 일반 규칙에 요소선택자 `button` 이 있어 더 세므로
-#   선택 규칙에도 `button` 을 붙여야 밑줄이 먹는다.
-_LAZYTAB_CSS = """
-<style>
-.st-key-sn-maintab{ position:sticky; top:0; z-index:50; background:var(--bg);
-  padding-top:8px; margin-bottom:2px;
-  box-shadow:0 6px 10px -7px rgba(20,28,45,.18); }
-.st-key-sn-maintab [data-testid="stButtonGroup"] > div{
-  gap:2px !important; border-bottom:1px solid var(--border) !important;
-  border-radius:0 !important; background:transparent !important; }
-.st-key-sn-maintab [data-testid="stButtonGroup"] button{
-  background:transparent !important; border:none !important;
-  border-radius:0 !important; padding:9px 15px !important;
-  min-height:0 !important; box-shadow:none !important;
-  border-bottom:2.5px solid transparent !important; }
-.st-key-sn-maintab [data-testid="stButtonGroup"] button p{
-  font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
-.st-key-sn-maintab button[data-testid="stBaseButton-segmented_controlActive"]{
-  border-bottom-color:var(--brand) !important; }
-.st-key-sn-maintab button[data-testid="stBaseButton-segmented_controlActive"] p{
-  color:var(--brand) !important; }
-.st-key-sn-maintab [data-testid="stButtonGroup"] button:first-child{
-  background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
-.st-key-sn-maintab [data-testid="stButtonGroup"] button:first-child p{
-  color:var(--brand) !important; }
-.st-key-sn-maintab [data-testid="stButtonGroup"] button > div{
-  display:flex !important; flex-direction:row !important;
-  align-items:center !important; gap:6px !important; }
-</style>
-"""
 # 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. 단, st.tabs 는 안 열어도 매 rerun
 #      마다 모든 탭을 실행해 무거워지므로(런 빌드), 탭엔 무거운 연산 대신 별도 페이지 링크만 둔다.
 _tab_labels = ["📊 매출 한눈에", "🧩 상품 카테고리 분석", "🌏 국가별 분석", "🏬 매장별 분석", "🆚 런 비교"]
 if SHOW_TAB_ETC:
     _tab_labels.append("⏰ 시간대 · 데이터")
-# ★★st.tabs 는 **안 열린 탭의 본문도 매 rerun 전부 실행한다**(화면에서만 숨김).
-#   그래서 고른 탭만 그린다 — 모양은 CSS 로 기존 언더라인 탭과 같게 맞췄다.
-#   자세한 배경과 함정은 포토이즘 쪽 같은 자리 주석에 적어 뒀다.
-# ★안 그려진 탭의 위젯은 스트림릿이 세션에서 지운다 → 탭을 왕복하면 선택이
-#   초기화되므로 값을 한 번 다시 써서 살린다. **버튼 키는 절대 넣지 말 것**
-#   (st.button / st.download_button 은 session_state 대입이 예외다).
-#   ※`default=`/`index=` 를 받는 위젯은 여기 넣으면 안 된다 — 스트림릿이
-#     "기본값과 세션값이 둘 다 있다" 며 경고한다. 그런 위젯은 각자 자리에서
-#     `_keep_*`(위젯 키가 아닌 평범한 키)로 살린다.
-for _k in ("home_store_country", "nat_frame_sel"):
-    if _k in st.session_state:
-        st.session_state[_k] = st.session_state[_k]
-
-st.markdown(_LAZYTAB_CSS, unsafe_allow_html=True)
-with st.container(key="sn-maintab"):
-    _TABSEL = st.segmented_control("보기", _tab_labels, default=_tab_labels[0],
-                                   key="sn_maintab", label_visibility="collapsed")
-# ★`_sel` 로 두면 안 된다 — 국가별 탭 안에 같은 이름의 selectbox 가 있어 덮인다.
-_TABSEL = _TABSEL or _tab_labels[0]
+_tabs = st.tabs(_tab_labels)
+tab_home, tab_cat, tab_nat, tab_store, tab_runs = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
+tab_etc = _tabs[5] if SHOW_TAB_ETC else None
 
 # ════════════ 탭 5: 런 비교 (별도 페이지 링크 — 성능 위해 탭엔 링크만) ════════════
-if _TABSEL == "🆚 런 비교":
+with tab_runs:
     with card("🆚 타이틀 런 비교"):
         st.markdown(
             '<div style="padding:4px 2px 14px;color:var(--text-2);font-size:13.5px;line-height:1.75">'
@@ -1409,14 +1360,14 @@ if _TABSEL == "🆚 런 비교":
                             denied="이 기능은 권한이 필요해요. 필요하면 관리자에게 요청해 주세요.")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
-if _TABSEL == "📊 매출 한눈에":
+with tab_home:
     sec("1", "매출 동향",
         "잘 가고 있나? — <b>조회 기간과 무관하게 항상 최근 1년</b>이에요 "
         "(국가·매장·카테고리 필터는 그대로 적용돼요)")
     with card():
         # @st.fragment — 기간(월·주·일) 토글을 눌러도 이 조각만 다시 그린다.
         # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
-        # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
+        @st.fragment
         def _trend():  # 프리셋 토글 → 매출 추이 차트
             # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07).
             #   흐름은 길게 봐야 읽히는데, 기간을 좁히면 막대 서너 개만 남아 추이가 안 보였다.
@@ -1561,7 +1512,7 @@ if _TABSEL == "📊 매출 한눈에":
         with card("🏬 국가별 매출 TOP 5 매장", key="scard-hstore"):
             # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
             # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
-            # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
+            @st.fragment
             def _home_store():  # 국가 선택 → TOP5 매장
                 _opts = (rev.groupby("국가")["정산금액"].sum().sort_values(ascending=False).index.tolist()
                          if "국가" in rev.columns else [])
@@ -1589,7 +1540,7 @@ if _TABSEL == "📊 매출 한눈에":
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '상품 카테고리 분석'·'매장별 분석' 탭에서 봐요.")
 
 # ════════════ 탭 2: 상품 카테고리 분석 (상세, 전체) ════════════
-if _TABSEL == "🧩 상품 카테고리 분석":
+with tab_cat:
     with card("🎨 아티스트/캐릭터 비중 · 🖼 프레임(IP) 전체 순위"):
         _s = rev.assign(_c=cat3(rev["카테고리"]))
         # 시안: 도넛(아티스트/캐릭터) 상단 전체폭
@@ -1602,7 +1553,7 @@ if _TABSEL == "🧩 상품 카테고리 분석":
             css_donut(list(zip(ac2["_c"], ac2["매출"])), ["var(--brand-2)", "var(--teal)"], sub=_sub)
         # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
         # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
-        # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
+        @st.fragment
         def _frame_rank():  # 구분·상태 토글 → 프레임 순위
             # 구분선 + 프레임 전체 순위(토글 + 전체폭 표)
             st.markdown('<div style="border-top:1px solid var(--border);margin-top:16px"></div>',
@@ -1617,16 +1568,8 @@ if _TABSEL == "🧩 상품 카테고리 분석":
                 st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
                             '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
             with _tt:
-                # ★`default=` 를 넘기면 세션값과 싸운다(눌렀다가 되돌아온다).
-                #   없을 때만 세션을 채우고, 그 뒤론 세션값 하나만 쓴다.
-                _to = ["전체", "아티스트", "캐릭터"]
-                if "cat_frame_tog" not in st.session_state:
-                    _td = st.session_state.get("_keep_cat_frame_tog", "전체")
-                    st.session_state["cat_frame_tog"] = _td if _td in _to else "전체"
-                _tog = st.segmented_control(
-                    "구분", _to, key="cat_frame_tog",
-                    label_visibility="collapsed") or "전체"
-                st.session_state["_keep_cat_frame_tog"] = _tog
+                _tog = st.segmented_control("구분", ["전체", "아티스트", "캐릭터"], default="전체",
+                                            key="cat_frame_tog", label_visibility="collapsed") or "전체"
             _fs = _s if _tog == "전체" else _s[_s["_c"] == _tog]
             fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
                       .groupby("프레임 이름").agg(매출=("정산금액", "sum"), 건수=("정산금액", "count")).reset_index())
@@ -1769,7 +1712,7 @@ if _TABSEL == "🧩 상품 카테고리 분석":
 - 왼쪽 도넛 = 비중(상위 3 + 기타 묶음), 오른쪽 막대 = 카테고리별 매출액 전체.
 """)
 
-    # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
+    @st.fragment
     def _prod_rank():
         with card("📦 카테고리별 상품 순위", key="scard-prodsel"):
             cats = [c for c in sorted(rev["상품 카테고리"].dropna().astype(str).unique().tolist())
@@ -1779,24 +1722,15 @@ if _TABSEL == "🧩 상품 카테고리 분석":
                 return
             _d = "미니스티커" if "미니스티커" in cats else cats[0]
             _c1, _c2 = st.columns([3, 2])
-            if st.session_state.get("prod_rank_pick") not in cats:
-                _pk = st.session_state.get("_keep_prod_rank_pick")
-                st.session_state["prod_rank_pick"] = _pk if _pk in cats else _d
-            pick = _c1.selectbox("카테고리", cats, key="prod_rank_pick",
-                                 label_visibility="collapsed")
-            st.session_state["_keep_prod_rank_pick"] = pick
+            pick = _c1.selectbox("카테고리", cats, index=cats.index(_d),
+                                 key="prod_rank_pick", label_visibility="collapsed")
             # ★어느 타이틀에서 팔린 건지 안 보였다(2026-08-11). 상품 이름만으로는
             #   '센'·'마사토' 가 어느 IP 것인지 알 수 없다 → 타이틀(프레임 이름)을 앞에 붙인다.
             #   ※'테마' 는 거래 원장에 없다 — CMS 촬영수 리포트에만 있는 값이라
             #     타이틀 → 상품 2단이 데이터로 가능한 최대다.
-            _lo = ["타이틀 · 상품", "타이틀"]
-            if "prod_rank_lvl" not in st.session_state:
-                _ld = st.session_state.get("_keep_prod_rank_lvl", _lo[0])
-                st.session_state["prod_rank_lvl"] = _ld if _ld in _lo else _lo[0]
             _lvl = _c2.segmented_control(
-                "묶기", _lo, key="prod_rank_lvl",
-                label_visibility="collapsed") or _lo[0]
-            st.session_state["_keep_prod_rank_lvl"] = _lvl
+                "묶기", ["타이틀 · 상품", "타이틀"], default="타이틀 · 상품",
+                key="prod_rank_lvl", label_visibility="collapsed") or "타이틀 · 상품"
             _src = rev[rev["상품 카테고리"] == pick]
             _fr = _src["프레임 이름"].astype(str).str.strip().replace("nan", "")
             if _lvl == "타이틀":
@@ -1826,7 +1760,7 @@ if _TABSEL == "🧩 상품 카테고리 분석":
     _prod_rank()
 
 # ════════════ 탭 3: 국가별 분석 (상세, 전체) ════════════
-if _TABSEL == "🌏 국가별 분석":
+with tab_nat:
     if "국가" not in sales.columns or sales.empty:
         st.info("국가 데이터가 없어요.")
     else:
@@ -2032,7 +1966,7 @@ if _TABSEL == "🌏 국가별 분석":
 
         # 포5: 포토이즘의 '🏆 국가별 타이틀 TOP 10' 과 짝을 맞춘 카드.
         #      스내피즘엔 '타이틀(날짜+IP)' 개념이 없어 같은 자리를 **프레임(IP)** 로 채운다.
-        # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
+        @st.fragment
         def _nat_frame():
             with card("🏆 국가별 TOP 프레임(IP)", key="scard-natframe"):
                 _fsrc = rev[rev["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
@@ -2105,12 +2039,12 @@ def _store_tab():
 """)
 
 
-if _TABSEL == "🏬 매장별 분석":
+with tab_store:
     _store_tab()
 
 # ════════════ 탭 5: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
-if SHOW_TAB_ETC and _TABSEL == "⏰ 시간대 · 데이터":
-    if True:                       # 들여쓰기 유지(예전 `with tab_etc:` 자리)
+if SHOW_TAB_ETC:
+    with tab_etc:
         with card("⏰ 시간대별 매출 분포"):
             _hv = (rev.assign(시간대=rev["결제일시"].dt.hour).groupby("시간대")["정산금액"].sum()
                    .reindex(range(24), fill_value=0))

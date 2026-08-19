@@ -141,16 +141,9 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         st.markdown(f'<div class="ct" style="margin-bottom:0">{title}{badge}</div>',
                     unsafe_allow_html=True)
     with tog:
-        # ★`default=` 를 넘기지 않는다. 탭 지연 렌더 때문에 안 그려진 탭의 위젯
-        #   값이 지워지는데, 그걸 되살리려고 default 를 같이 주면 **세션값과 싸운다**
-        #   (눌렀다가 이전 값으로 되돌아온다). 세션 키를 없을 때만 채우고 끝낸다.
-        _wk, _kk = f"{key}_preset", f"_keep_{key}_preset"
-        if _wk not in st.session_state:
-            _pd = st.session_state.get(_kk, PRESETS[0])
-            st.session_state[_wk] = _pd if _pd in PRESETS else PRESETS[0]
-        preset = st.segmented_control("보기", PRESETS, key=_wk,
+        preset = st.segmented_control("보기", PRESETS, default=PRESETS[0],
+                                      key=f"{key}_preset",
                                       label_visibility="collapsed") or PRESETS[0]
-        st.session_state[_kk] = preset
 
     d = daily
     end = d.index.max()

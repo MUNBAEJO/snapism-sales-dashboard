@@ -966,9 +966,9 @@ def _short_theme(names):
     """표시용으로 테마 앞 날짜접두어를 뗀다(`260624_라이즈(RIIZE)` → `라이즈(RIIZE)`).
 
     ★떼서 **겹치는 이름은 그대로 둔다.** `260727_izna` 와 `260811_izna` 는 다른 회차인데
-      둘 다 'izna' 가 되면 화면에서 구분이 안 된다. 이런 게 6개 IP · 14줄 있다
+      둘 다 'izna' 가 되면 화면에서 구분이 안 된다. 6개 IP · 14줄이 여기 해당한다
       (&TEAM · LE SSERAFIM · izna · 보넥도 · 이즈나 · 큐티 스트리트).
-    ★**표시만 바꾼다.** 집계·통합은 원래 이름 그대로다.
+    ★**표시만 바꾼다.** 집계·이름통합은 원래 이름 그대로다.
     """
     byshort = {}
     for n in names:
@@ -1006,7 +1006,6 @@ def _theme_portion(one, key_label=""):
         hbar_list(_th, "테마", top=8, show_pct=True)
     # ★예전엔 여기서 프레임을 **테마 구분 없이 통째로** 순위 매겼다. 그러면
     #   "이 테마 안에서 누가 팔렸나" 를 볼 방법이 아예 없었다(2026-08-19 요청).
-    #   theme_tree 는 만들어만 두고 안 쓰이고 있었다 — 계층으로 바꾼다.
     st.markdown('<div class="ct" style="margin-top:10px">🎨 테마 → 🖼 프레임 '
                 '<span class="muted">테마 안에서 어느 프레임이 팔렸는지 · '
                 '아티스트는 멤버 단위예요</span></div>',
@@ -2039,42 +2038,6 @@ SHOW_TAB_DETAIL = False
 # [숨김] '국가별 분석' 탭의 '🏆 국가별 타이틀 TOP 10' 카드 — UI 에서만 뺌(요청).
 #         계산 코드는 그대로 남겨 뒀으니 True 로만 바꾸면 되살아난다.
 SHOW_NAT_TITLE = False
-
-# 세그먼트 컨트롤을 **기존 언더라인 탭과 같은 모양**으로. 기능만 바뀌고 눈에는
-# 그대로 보이게 한다(첫 칸 연한 배경 · 선택 시 브랜드색 + 2.5px 밑줄 · 상단 고정).
-_LAZYTAB_CSS = """
-<style>
-/* ★선택 상태는 aria-checked 가 아니라 **kind="segmented_controlActive"** 다.
-   묶음 컨테이너도 stSegmentedControl 이 아니라 stButtonGroup 이다(스트림릿 1.45). */
-.st-key-ph-maintab{ position:sticky; top:0; z-index:50; background:var(--bg);
-  padding-top:8px; margin-bottom:2px;
-  box-shadow:0 6px 10px -7px rgba(20,28,45,.18); }
-.st-key-ph-maintab [data-testid="stButtonGroup"] > div{
-  gap:2px !important; border-bottom:1px solid var(--border) !important;
-  border-radius:0 !important; background:transparent !important; }
-.st-key-ph-maintab [data-testid="stButtonGroup"] button{
-  background:transparent !important; border:none !important;
-  border-radius:0 !important; padding:9px 15px !important;
-  min-height:0 !important; box-shadow:none !important;
-  border-bottom:2.5px solid transparent !important; }
-.st-key-ph-maintab [data-testid="stButtonGroup"] button p{
-  font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
-/* ★특이도 주의 — 위 일반 규칙에 요소선택자 `button` 이 있어 더 세다.
-   둘 다 !important 라 특이도로 갈린다. 그래서 여기도 `button` 을 붙인다. */
-.st-key-ph-maintab button[data-testid="stBaseButton-segmented_controlActive"]{
-  border-bottom-color:var(--brand) !important; }
-.st-key-ph-maintab button[data-testid="stBaseButton-segmented_controlActive"] p{
-  color:var(--brand) !important; }
-.st-key-ph-maintab [data-testid="stButtonGroup"] button:first-child{
-  background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
-.st-key-ph-maintab [data-testid="stButtonGroup"] button:first-child p{
-  color:var(--brand) !important; }
-/* 이모지와 글자가 두 줄로 갈리는 걸 한 줄로 */
-.st-key-ph-maintab [data-testid="stButtonGroup"] button > div{
-  display:flex !important; flex-direction:row !important;
-  align-items:center !important; gap:6px !important; }
-</style>
-"""
 # 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. st.tabs 는 안 열어도 매 rerun 마다
 #      모든 탭을 실행(런 빌드가 무겁다)하므로, 탭엔 무거운 연산 대신 전용 페이지 링크만 둔다.
 _tab_labels = ["📊 매출 한눈에", "🎫 구좌타입 분석", "🌏 국가별 분석", "🏬 매장별 분석",
@@ -2083,28 +2046,16 @@ if SHOW_TAB_DETAIL:
     _tab_labels.append("🔎 세부 항목")
 if SHOW_TAB_ETC:
     _tab_labels.append("⏰ 시간대 · 데이터")
-# ★★st.tabs 를 쓰면 **안 열린 탭의 본문도 매 rerun 전부 실행된다**(화면에서만 숨김).
-#   실측하면 한 번 그릴 때 groupby/sort/merge 가 51회 도는데 그중 사용자가 보는 건
-#   한 탭 분량뿐이었다(한눈에 13 · 구좌타입 22 · 국가별 14 · 매장별 2).
-#   그래서 **고른 탭만 그린다.** 탭처럼 보이게 CSS 로 맞춰 뒀다(_LAZYTAB_CSS).
-# ★부수 효과 — 안 그려진 탭의 위젯은 스트림릿이 세션에서 지운다. 탭을 왕복하면
-#   검색어·묶기·프리셋이 초기화되므로 아래에서 **값을 한 번 다시 써서** 살려 둔다.
-#   (버튼 키는 절대 넣지 말 것 — st.button 은 session_state 대입이 예외다.)
-#   ※`default=` 를 받는 위젯은 여기 넣으면 안 된다 — "기본값과 세션값이 둘 다
-#     있다" 는 경고가 뜬다. 그런 위젯은 각자 자리에서 `_keep_*` 로 살린다.
-for _k in ("ph_home_store_country", "ph_slot_q", "ph_ip_nat_sel"):
-    if _k in st.session_state:
-        st.session_state[_k] = st.session_state[_k]
-
-st.markdown(_LAZYTAB_CSS, unsafe_allow_html=True)
-with st.container(key="ph-maintab"):
-    _TABSEL = st.segmented_control("보기", _tab_labels, default=_tab_labels[0],
-                                   key="ph_maintab", label_visibility="collapsed")
-# ★이름을 `_sel` 로 두면 안 된다 — 탭 본문 안에서 같은 이름을 쓰면 조용히 덮인다.
-_TABSEL = _TABSEL or _tab_labels[0]
+_tabs = st.tabs(_tab_labels)
+tab_home, tab_ip, tab_nat, tab_store, tab_runs = (_tabs[0], _tabs[1], _tabs[2],
+                                                  _tabs[3], _tabs[4])
+_ti = 5
+tab_detail = _tabs[_ti] if SHOW_TAB_DETAIL else None
+_ti += 1 if SHOW_TAB_DETAIL else 0
+tab_etc = _tabs[_ti] if SHOW_TAB_ETC else None
 
 # ════════════ 탭: 런 비교 (별도 페이지 링크 — 성능 위해 탭엔 링크만) ════════════
-if _TABSEL == "🆚 런 비교":
+with tab_runs:
     with card("🆚 타이틀 런 비교"):
         st.markdown(
             '<div style="padding:4px 2px 14px;color:var(--text-2);font-size:13.5px;line-height:1.75">'
@@ -2118,7 +2069,7 @@ if _TABSEL == "🆚 런 비교":
                             denied="이 기능은 권한이 필요해요. 필요하면 관리자에게 요청해 주세요.")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
-if _TABSEL == "📊 매출 한눈에":
+with tab_home:
     sec("1", "매출 동향",
         "잘 가고 있나? — <b>조회 기간과 무관하게 항상 최근 1년</b>이에요 "
         "(국가·매장·상품·IP 필터는 그대로 적용돼요)")
@@ -2288,7 +2239,7 @@ if _TABSEL == "📊 매출 한눈에":
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '국가별 분석'·'매장별 분석' 탭에서 봐요.")
 
 # ════════════ 탭 2: 구좌타입 분석 (IP구분 = 구좌 세분) ════════════
-if _TABSEL == "🎫 구좌타입 분석":
+with tab_ip:
     with card("🎭 IP 구분 (비중 · 매출) <span class='muted'>(아티스트·캐릭터·PICK·오리지널·렌탈)</span>"):
         if not gub.empty:
             _g1, _g2 = st.columns([5, 5])
@@ -2317,7 +2268,7 @@ if _TABSEL == "🎫 구좌타입 분석":
     _detail_gubuns = [g for g in present if g not in _ORIG_GUBUNS]
     # ★위젯(묶기·검색·프레임)을 탭 안에 두므로 **프래그먼트로 격리**한다.
     #   안 그러면 조작할 때마다 전체가 재실행돼 st.tabs 선택이 첫 탭으로 튕긴다.
-    # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
+    @st.fragment
     def _slot_detail():
       if _detail_gubuns or _orig_gubuns:
         with card("🎬 구좌별 상세 <span class='muted'>(전체·구좌별 → 타이틀/프레임별 매출)</span>"):
@@ -2329,15 +2280,9 @@ if _TABSEL == "🎫 구좌타입 분석":
             _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.74, 0.66])
             #   ★기본을 'IP명(회차 합산)' 으로 뒀다(요청) — 평소 보고 싶은 건 IP 규모지
             #     회차별로 쪼개진 줄이 아니다. 회차를 봐야 할 때만 '타이틀' 로 바꾼다.
-            # ★`default=` 를 넘기면 세션값과 싸운다(눌렀다가 되돌아온다).
-            _gopt = ["IP명(회차 합산)", "타이틀"]
-            if "ph_slot_grp" not in st.session_state:
-                _gd = st.session_state.get("_keep_ph_slot_grp", _gopt[0])
-                st.session_state["ph_slot_grp"] = _gd if _gd in _gopt else _gopt[0]
             _grp = (_q1.segmented_control(
-                "묶기", _gopt, key="ph_slot_grp",
-                label_visibility="collapsed") or _gopt[0])
-            st.session_state["_keep_ph_slot_grp"] = _grp
+                "묶기", ["IP명(회차 합산)", "타이틀"], default="IP명(회차 합산)",
+                key="ph_slot_grp", label_visibility="collapsed") or "IP명(회차 합산)")
             _kw = _q2.text_input("검색", key="ph_slot_q", label_visibility="collapsed",
                                  placeholder="🔍 타이틀·IP 이름으로 찾기").strip()
             _KEY = "타이틀" if _grp == "타이틀" else "IP명"
@@ -2720,7 +2665,7 @@ if _TABSEL == "🎫 구좌타입 분석":
     #        안내 문구도 뺐다(없는 필터를 가리키게 된다). 필터를 되살리면 그대로 부활.
 
 # ════════════ 탭 3: 국가별 분석 ════════════
-if _TABSEL == "🌏 국가별 분석":
+with tab_nat:
     if "국가" not in sales.columns or sales.empty:
         st.info("국가 데이터가 없어요. 필터를 넓혀 보세요.")
     else:
@@ -3050,11 +2995,11 @@ def _store_tab(sales, date_range, sel_countries):
 """)
 
 
-if _TABSEL == "🏬 매장별 분석":
+with tab_store:
     _store_tab(sales, date_range, sel_countries)
 
 # ════════════ [제거] 세부 항목 검색 — SHOW_TAB_DETAIL=True 로 부활 ════════════
-#   (부활 시 탭에 그리려면 `if _TABSEL == "🔎 세부 항목":` 로 감싸 주세요.)
+#   (부활 시 탭에 그리려면 아래 블록을 `with tab_detail:` 로 감싸 주세요.)
 if SHOW_TAB_DETAIL:
     @st.fragment
     def _detail_search(date_range, selected_ips, sel_countries,
@@ -3126,8 +3071,8 @@ if SHOW_TAB_DETAIL:
                    sel_stores, sel_brands, sel_gubuns)
 
 # ════════════ 탭 6: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
-if SHOW_TAB_ETC and _TABSEL == "⏰ 시간대 · 데이터":
-    if True:                       # 들여쓰기 유지(예전 `with tab_etc:` 자리)
+if SHOW_TAB_ETC:
+    with tab_etc:
         with card("⏰ 시간대별 매출 분포"):
             df_hourly = load_hourly()
             if not df_hourly.empty and len(date_range) == 2:
