@@ -243,26 +243,10 @@ def _round_half_up(x) -> int:
         return 0
 
 
-def _settle_by_price(g: pd.DataFrame) -> tuple[int, int, float | None]:
-    """한 나라의 (단가, 현지분자) 묶음 → (건수, 정산 현지액, 대표단가).
-
-    단가마다 따로 절사한 뒤 합친다. 뭉쳐서 한 번만 나누면 단가 비율이 뭉개져
-    KBO 한국에서 47건이 사라진다.
-
-    ★단가가 0/없는 행은 그냥 버리면 돈이 사라진다(전 기간 1,585행, 태국
-      '250627 sm' 715행 등). 같은 나라에서 제일 큰 단가 묶음에 얹어 한 번만
-      절사한다 — 담당자가 나라당 단가 하나로 계산하던 방식과 같은 취급이다.
-      나라 전체에 단가가 하나도 없으면 절사하지 않고 금액만 살린다(건수 0).
-    """
-    ok = g[pd.to_numeric(g["up"], errors="coerce").fillna(0) > 0]
-    orphan = int(g.loc[~g.index.isin(ok.index), "현지"].sum())
-    if ok.empty:
-        return 0, orphan, None
-    ok = ok.copy()
-    top = ok["현지"].abs().idxmax()
-    ok.loc[top, "현지"] = ok.loc[top, "현지"] + orphan
-    q = (ok["현지"] / ok["up"]).map(_trunc)
-    return int(q.sum()), int((q * ok["up"]).sum()), float(ok.loc[top, "up"])
+# [삭제 2026-08-19] `_settle_by_price` — **국가 × 단가** 로 절사하던 옛 함수.
+#   절사 단위가 **국가 × 멤버**로 확정되면서(2026-08-07) `_fold_prices` 로 대체됐고
+#   그 뒤로 아무 데서도 안 불렸다. 남겨 두면 나중에 "이미 있네" 하고 잘못 쓸 수 있어
+#   지운다. 되살릴 일이 있으면 `git show 7604496`.
 
 
 def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
@@ -905,12 +889,9 @@ def store_versions() -> tuple[float, float, float]:
     return (_rates_store.version(), _mg_store.version(), smap.mapping_version())
 
 
-# ── 정산액 ────────────────────────────────────────────────────────────────
-def settle(detail: pd.DataFrame, rs: float | None) -> pd.DataFrame:
-    """국가별 정산액. 요율이 없으면 열을 만들지 않는다(0원으로 오해하면 안 된다)."""
-    out = detail.copy()
-    out["정산액"] = (out["매출액"] * rs).round().astype("int64") if rs else pd.NA
-    return out
+# [삭제 2026-08-19] `settle()` — 국가별 정산액을 한 줄로 내던 옛 함수. 지금은
+#   `settlement_pdf._alloc_settle`(최대잔여법 + half-up)이 문서와 화면 양쪽을 맡고,
+#   이건 아무 데서도 안 불렸다. 내장 round(은행식)를 쓰고 있어 되살리면 1원이 어긋난다.
 
 
 def build_context(picks: dict, start: str, end: str, ip_name: str,
@@ -982,8 +963,11 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
         ctx["prices"][brand] = {
             nat: dict(zip(g["형태"], g["단가"])) for nat, g in pt.groupby("국가")
         }
-        ctx.setdefault("cancel", {})[brand] = cancel_amount(
-            brand, titles, start, end, rates)
+        # [중단 2026-08-19] `cancel_amount(...)` — 441MB 원본을 한 번 더 풀스캔하는데
+        #   **결과가 문서 어디에도 안 들어간다**(settlement_pdf 가 `cancel` 로 받아
+        #   놓고 HTML 에 안 쓴다 — grep 확인). 표지에 '취소 금액'을 되살릴 일이 생기면
+        #   이 두 줄만 풀면 된다. 함수 자체는 그대로 둔다.
+        ctx.setdefault("cancel", {})[brand] = 0
     ctx["issuer"] = issuer()
     ctx["rates"] = {k: v for k, v in rates.items()
                     if isinstance(v, (int, float)) and v > 0}

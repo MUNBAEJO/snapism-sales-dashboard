@@ -129,7 +129,12 @@ if not _official:
                 if st.button("💾 이 환율로 저장", disabled=not CAN_EDIT):
                     fx.save(EFF, parsed, _email, memo=up.name)
                     auth.log_event(_email, f"settlefx:{EFF}")
-                    st.cache_data.clear()
+                    # ★전역 `st.cache_data.clear()` 를 부르고 있었다 — **앱 전체**
+                    #   캐시라 접속 중인 다른 사람의 무거운 매출 캐시(포토이즘 agg·
+                    #   스내피즘 master)까지 날려 동시 재로딩을 유발한다. 다른 페이지
+                    #   둘은 이미 안 쓰기로 해 뒀다(views/0:291 · views/2:354).
+                    #   여기 캐시는 전부 `fx.version()` 을 키로 받는데 fx.save 가
+                    #   그 값을 올리므로 **알아서 무효화된다.** 부를 이유가 없다.
                     st.rerun()
             except Exception as e:                          # noqa: BLE001
                 st.error(f"읽지 못했어요 — {e}")
@@ -187,8 +192,13 @@ def _ticket_box(brand: str):
     #   그래서 이름으로 찾아 해제해 둔 타이틀이, 나중에 티켓번호를 직접 넣어도
     #   (그때는 기본 선택인데) 해제된 채로 남았다. 고른 게 없으면 만들기 구역이
     #   통째로 사라져 화면에서는 '눌러도 반응이 없다'로 보인다.
-    if st.session_state.get(f"_q_{brand}") != q:
-        st.session_state[f"_q_{brand}"] = q
+    # ★기간도 축에 넣는다 (2026-08-19). 전엔 검색어(q)만 봤다 — 7월에 특정 타이틀을
+    #   일부러 해제해 두고 **기간만 8월로 바꾸면** 그 해제가 그대로 살아남아
+    #   8월 매출이 조용히 빠진다. 타이틀 목록 자체가 기간마다 달라지므로
+    #   '다른 건을 보는 중'으로 봐야 한다.
+    _qsig = f"{q}‖{S}‖{E}"
+    if st.session_state.get(f"_q_{brand}") != _qsig:
+        st.session_state[f"_q_{brand}"] = _qsig
         for _k in [k for k in st.session_state
                    if k.startswith((f"ck_{brand}_", f"tkpick_{brand}_"))]:
             del st.session_state[_k]
@@ -364,7 +374,14 @@ def make_panel():
     #   다음 IP 로 넘어가도 이름 칸이 앞 IP 그대로였다(문서 제목·발행 이력이 어긋난다).
     # 축을 둘로 나눈다 — 타이틀 체크를 하나 더 넣었다고 **손으로 적은 IP명까지
     # 되돌리면** 그것도 사고다. 이름은 '다른 건으로 옮겼을 때'만 다시 잡는다.
-    _tsig = "‖".join(f"{b}:{','.join(tks)}" for b, (tks, _) in sorted(picks.items()))
+    # ★★축은 **찾는 대상**이지 '지금 체크된 티켓' 이 아니다 (2026-08-19 수정).
+    #   전엔 `tks`(= 체크된 타이틀의 티켓)를 썼는데, 이름 검색으로 티켓 여러 장을
+    #   펼쳐 놓고 타이틀을 하나씩 체크해 나가면 **새 티켓이 붙는 순간 _tsig 가 바뀌어
+    #   방금 손으로 고쳐 쓴 IP명이 자동값으로 되돌아갔다.** 바로 아래 주석이
+    #   "타이틀 체크를 하나 더 넣었다고 손으로 적은 IP명까지 되돌리면 사고"라고
+    #   적어 둔 그 경우다 — 의도는 맞았는데 축을 잘못 골랐다.
+    #   검색창 내용이 바뀌었을 때만 = 정말 '다른 건으로 옮겼을 때'만 다시 잡는다.
+    _tsig = "‖".join(f"{b}:{st.session_state.get(f'tk_{b}', '')}" for b in sm.BRANDS)
     _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}"
                     for b, (tks, titles) in sorted(picks.items())) + f"‖{S}‖{E}"
     if st.session_state.get("_sig") != _sig:
@@ -372,10 +389,20 @@ def make_panel():
         for _k in ("_pdfs", "_meta", "reason",
                    "mail_to", "mail_cc", "mail_note", "mail_files"):
             st.session_state.pop(_k, None)      # mail_files 는 남으면 예외까지 난다
-    if st.session_state.get("_tsig") != _tsig or "ipname" not in st.session_state:
-        st.session_state["_tsig"] = _tsig
-        _t0 = next((t[0] for _, t in picks.values() if t), "")
-        st.session_state["ipname"] = re.sub(r"^\s*\d{5,8}\s*", "", str(_t0)).strip()
+    _t0 = next((t[0] for _, t in picks.values() if t), "")
+    _auto = re.sub(r"^\s*\d{5,8}\s*", "", str(_t0)).strip()
+    if st.session_state.get("_tsig") != _tsig:
+        st.session_state["_tsig"] = _tsig          # 다른 건 → 자동값으로 다시 잡는다
+        st.session_state["_ipname_keep"] = _auto
+        st.session_state["ipname"] = _auto
+    elif "ipname" not in st.session_state:
+        # ★★`or "ipname" not in st.session_state` 였다 — 그런데 이 조건은
+        #   '다른 건으로 옮겼다'가 아니라 **위젯이 잠깐 안 그려졌다**는 뜻이다.
+        #   타이틀 체크를 다 뺐다가 되돌리면 '④ 정산서 만들기' 구역이 통째로
+        #   사라졌다 생기고, 스트림릿은 **안 그려진 위젯의 값을 지운다** →
+        #   손으로 적어 둔 IP명이 자동값으로 되돌아갔다(2026-08-19 실측).
+        #   같은 건이면 **적어 둔 이름을 되살린다**(위젯 밖 `_ipname_keep` 에 보관).
+        st.session_state["ipname"] = st.session_state.get("_ipname_keep") or _auto
 
     # ── 확정 저장 ─────────────────────────────────────────────────────
     # ★확정 매핑은 **타이틀 하나에 티켓 하나**다. 티켓을 여러 장 담아도 저장은
@@ -609,6 +636,8 @@ def make_panel():
     # 세션 값과 부딪혀 스트림릿이 무시하고, 앞 IP 이름이 그대로 남는다.
     ip = st.text_input("정산서에 표기할 IP명", key="ipname")
     ipn = ip.strip()
+    # 위젯 값이 GC 되어도 되살릴 수 있게 위젯 **밖** 키에 함께 적어 둔다(위 주석 참고).
+    st.session_state["_ipname_keep"] = ipn
 
     nextv = sc.issue_version(ipn, S, E) if ipn else 1
     reason = ""
@@ -662,12 +691,31 @@ def make_panel():
             #   실제로 대한축구협회가 v1~v4 까지 쌓이는 동안 PDF 는 0부였다.
             ctx["version"], ctx["reason"] = nextv, reason.strip()
             made = {}
+            _leaks = []
             for kind, lab in (("agency", "소속사"), ("mgmt", "대행사")):
                 fld = "agency" if kind == "agency" else "mgmt"
                 if not any((ctx["rs"].get(b) or {}).get(fld) for b in ctx["details"]):
                     continue        # 요율 없는 수취처는 문서를 만들지 않는다
-                made[lab] = sp.render_pdf(sp.build_html(ctx, kind),
+                _html = sp.build_html(ctx, kind)
+                # ★스펙 절대 규칙 2번 — **상대방 요율이 문서에 남으면 안 된다.**
+                #   `verify_secrecy` 는 정의만 있고 아무 데서도 안 불리고 있었다
+                #   (2026-08-19 연결). 만드는 쪽은 자기 rs_key 만 읽으므로 실제로
+                #   샐 경로는 안 보이지만, 대외 문서라 확인은 붙여 둔다.
+                _o = "mgmt" if kind == "agency" else "agency"
+                for _r in {(ctx["rs"].get(b) or {}).get(_o) for b in ctx["details"]}:
+                    if _r:
+                        for _hit in sp.verify_secrecy(_html, _r):
+                            _leaks.append((lab, _hit))
+                made[lab] = sp.render_pdf(_html,
                                           f"IP 정산서({lab}) · {ipn} · {S}~{E}")
+            if _leaks:
+                # ★막지는 않는다 — 비중 칸 숫자가 우연히 같은 값일 수 있다
+                #   (요율 10% ↔ 어느 나라 비중 10.0%). 사람이 확인할 몫이다.
+                ui_theme.nbox("warn", "🔍 <b>상대 요율과 같은 숫자가 문서에 있어요</b> — "
+                              + " · ".join(f"{l} 문서에 <code>{h}</code>"
+                                           for l, h in _leaks)
+                              + "<div class='sub'>비중 칸 숫자와 우연히 같을 수 있어요. "
+                                "보내기 전에 해당 문서를 한 번 확인해 주세요.</div>")
         if not made:
             # ★조용히 0부로 끝나면 '발행됐는데 문서가 없다'가 된다. 원인을 짚어 준다.
             _none = [sm.BRAND_LABEL[b] for b, v in saved_rs.items()

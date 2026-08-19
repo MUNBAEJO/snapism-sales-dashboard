@@ -73,9 +73,9 @@ def _f(n) -> str:
         return "—"
 
 
-def rhe(x) -> int:
-    """원 미만 은행가 반올림. 파이썬 round() 가 half-to-even 이라 그대로 쓴다."""
-    return int(round(float(x)))
+# [삭제 2026-08-19] `rhe()` — 은행가 반올림 헬퍼. 문서 규칙이 **엑셀 half-up**
+#   (`settlement_calc._round_half_up`)으로 통일되면서 쓰이지 않게 됐다. 이름이 짧아
+#   무심코 쓰기 쉬운데 쓰면 1원이 어긋난다.
 
 
 def vat3(amount: int, use_vat: bool) -> tuple[int, int]:
