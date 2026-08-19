@@ -116,6 +116,25 @@ def _blocklist() -> set:
     return out
 
 
+def _json_list(key: str) -> list:
+    try:
+        return json.loads(OUT.read_text(encoding="utf-8")).get(key, [])
+    except Exception:
+        return []
+
+
+def _skip_ips() -> list:
+    """`_표기통합_제외IP` — 표기만 달라 보여도 손대지 않을 IP.
+    T1 매장 프레임은 FAKER/Faker 가 넉 달을 나란히 팔려 디자인이 둘인지 알 수 없다."""
+    return _json_list("_표기통합_제외IP")
+
+
+def _write_csv(rows, name, cols) -> None:
+    p = BASE_DIR / "reports"
+    p.mkdir(exist_ok=True)
+    pd.DataFrame(rows, columns=cols).to_csv(p / name, index=False, encoding="utf-8-sig")
+
+
 def _pair(name: str):
     """'리쿠(RIKU)' → ('리쿠', 'RIKU'). 한/영 짝일 때만."""
     m = COMBO.match(name)
@@ -225,6 +244,144 @@ def _guess(cc, dc, axis, ip, rev, settled, block):
     return pairs, held, same
 
 
+# ── ④ 같은 글자끼리 갈린 것 — 대소문자·띄어쓰기·날짜접두어만 다른 표기 ──────────
+#
+# ③(로마자)이 못 잡는 갈래다. `260420_REDRED`(26.2억) 와 `REDRED`(9.9억) 는
+# 같은 테마인데 회차가 넘어가며 이름에 날짜를 붙인 것이다.
+#
+# ★`$` `%` 는 지우면 안 된다 — 잡음이 아니라 **구분 표식**이다.
+#   타이틀 `260227 BOYNEXTDOOR` 안에 BOYNEXTDOOR / $ / $$ / $$$$ / $$$$$ 가
+#   같은 기간에 프레임 12개씩 나란히 팔린다. 지웠으면 5개가 한 줄로 뭉갰다.
+#
+# 그래서 근거는 **한 타이틀 안에서 하루라도 겹치는가**로 잡는다.
+#   겹친다   → 나란히 팔린 다른 것. 손대지 않는다.
+#   안 겹친다 → 도중에 표기만 바꾼 것. 합친다.
+_VDATE = re.compile(r"^(\d{5,8})[_\s-]*")
+
+
+def _vkey(n: str) -> str:
+    """★글자 종류로 거르면 안 된다. 처음에 `[^0-9a-z가-힣$%]` 로 지웠더니
+    가타카나가 통째로 날아가 `モンチッチ VER1`·`チムたん VER1`·`ベビチッチ VER1`
+    셋이 전부 `ver1` 이 돼 한 묶음이 됐다. **글자냐 아니냐**로만 가른다."""
+    t = _VDATE.sub("", str(n).strip().lower())
+    return "".join(c for c in t if c.isalnum() or c in "$%")
+
+
+def _variants(d, axis, ip_col, amt_col, skip_ips, block):
+    """{IP: {이름: 대표}} 와 기록용 목록. 대표는 매출이 가장 큰 표기."""
+    a = d[~d[axis].astype(str).isin(["", "None", "nan", "<NA>"])]
+    amt = a.groupby([ip_col, axis], observed=True)[amt_col].sum()
+    td = {}
+    for ip, nm, ti, dt in zip(a[ip_col], a[axis], a["타이틀"], a["날짜"]):
+        td.setdefault((ip, str(nm)), {}).setdefault(ti, set()).add(dt)
+
+    buckets = {}
+    for (ip, nm), v in amt.items():
+        k = _vkey(nm)
+        if len(k) >= 2:
+            buckets.setdefault((ip, k), []).append((str(nm), float(v)))
+
+    out, log, held = {}, [], []
+    for (ip, _k), mem in buckets.items():
+        if len(mem) < 2:
+            continue
+        mem.sort(key=lambda x: -x[1])
+        names = [n for n, _ in mem]
+        if ip in skip_ips:
+            held.append((axis, ip, " + ".join(names), "손대지 않기로 한 IP"))
+            continue
+        if any((ip, x, y) in block or (ip, y, x) in block
+               for x in names for y in names if x != y):
+            held.append((axis, ip, " + ".join(names), "손으로 뺀 짝(_제외)"))
+            continue
+        ov = 0
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                A, B = td.get((ip, names[i]), {}), td.get((ip, names[j]), {})
+                for ti in set(A) & set(B):
+                    ov = max(ov, len(A[ti] & B[ti]))
+        if ov:
+            held.append((axis, ip, " + ".join(names),
+                         f"한 타이틀 안에서 {ov}일 겹쳐요 — 나란히 팔린 다른 것"))
+            continue
+        rep_name = names[0]
+        for n in names[1:]:
+            out.setdefault(ip, {})[n] = rep_name
+        log.append((axis, ip, " → ".join(names[1:]) + f" → {rep_name}",
+                    int(sum(v for _, v in mem))))
+    return out, log, held
+
+
+# ── ⑤ 통합이름 잔여 — `한글(ENG)` 와 그 한쪽만 적힌 이름 ───────────────────────
+#
+# ②③ 이 `코르티스 ver 2` + `CORTIS ver 2` 를 `코르티스 ver 2(CORTIS ver 2)` 로
+# 합쳐 놓으면, 같은 것을 영문으로만 적은 `CORTIS ver2` 가 글자가 달라져 ④에도
+# 안 걸린다. 그래서 괄호 **양쪽**을 각각 열쇠로 한 번 더 본다.
+#
+# ★괄호 안이 늘 번역인 건 아니다(`브레드이발소 B ver (포토카드)`). 그래서
+#   **우리가 ②③ 으로 만든 이름**에만 적용한다 — 그건 괄호 안이 영문 이름인 게 확실하다.
+# ★대표는 매출이 큰 쪽이 아니라 **통합 이름** 쪽으로 둔다. 한글·영문이 다 보이는 게 낫다.
+# 기존 COMBO 는 `)` 로 끝나야 해서 `아사히(ASAHI) A` 같은 표식 붙은 걸 못 잡는다.
+_RCOMBO = re.compile(r"^(?P<a>[^()]+)\((?P<b>[^()]+)\)\s*(?P<s>[A-Za-z])?$")
+_GENERIC = re.compile(
+    r"(^|[\s_(])(ver\.?\s*\d*|[a-z]\s*ver\.?|v\d|버전\s*\d*|타입\s*\d*|type\s*\d*)([\s_)]|$)",
+    re.I)
+
+
+def _residual(d, axis, t, skip_ips, block, ok_generic):
+    """★`ver 1` `A ver` 같은 **자리표**는 회차마다 다시 쓰인다.
+    2025년 회차의 `CORTIS ver2` 와 2026년 회차의 `코르티스 ver 2` 는 다른 작품이다.
+    그래서 자리표는 기본으로 막고, 사용자가 확인한 IP 만 `_자리표_허용IP` 로 연다."""
+    a = d[~d[axis].astype(str).isin(["", "None", "nan", "<NA>"])]
+    made = {(ip, v) for ip, m in t.items() for v in m.values()}
+    amt = a.groupby(["_ip", axis], observed=True)["최종결제금액"].sum()
+    td = {}
+    for ip, nm, ti, dt in zip(a["_ip"], a[axis], a["타이틀"], a["날짜"]):
+        td.setdefault((ip, str(nm)), {}).setdefault(ti, set()).add(dt)
+    byip = {}
+    for (ip, nm), v in amt.items():
+        byip.setdefault(ip, {})[str(nm)] = float(v)
+
+    out, log, held, seen = {}, [], [], set()
+    for ip, names in byip.items():
+        if ip in skip_ips:
+            continue
+        idx = {}
+        for n in names:
+            idx.setdefault(_vkey(n), []).append(n)
+        for n in sorted(names, key=lambda x: -names[x]):
+            if (ip, n) not in made:
+                continue
+            m = _RCOMBO.match(n)
+            if not m:
+                continue
+            sfx = m.group("s") or ""
+            for side in (m.group("a"), m.group("b")):
+                for other in idx.get(_vkey(side + sfx), []):
+                    if other == n or (ip, n, other) in seen:
+                        continue
+                    seen.add((ip, n, other))
+                    seen.add((ip, other, n))
+                    if (ip, n, other) in block or (ip, other, n) in block:
+                        held.append((axis, ip, f"{n} + {other}", "손으로 뺀 짝(_제외)"))
+                        continue
+                    A, B = td.get((ip, n), {}), td.get((ip, other), {})
+                    ov = max([len(A[ti] & B[ti]) for ti in set(A) & set(B)] or [0])
+                    if ov:
+                        held.append((axis, ip, f"{n} + {other}",
+                                     f"한 타이틀 안에서 {ov}일 겹쳐요 — 나란히 팔린 다른 것"))
+                        continue
+                    if (_GENERIC.search(n) or _GENERIC.search(other)) \
+                            and ip not in ok_generic:
+                        held.append((axis, ip, f"{n} + {other}",
+                                     "자리표 이름(ver·타입) — 회차마다 다시 써요"))
+                        continue
+                    out.setdefault(ip, {})[other] = n
+                    log.append((axis, ip, f"{other} → {n}",
+                                int(names[n] + names[other])))
+    return out, log, held
+
+
 def photoism() -> tuple[dict, list, list, list]:
     f = DATA_DIR / "theme_daily.parquet"
     if not f.exists():
@@ -233,7 +390,9 @@ def photoism() -> tuple[dict, list, list, list]:
                                     "테마", "프레임", "최종결제금액"])
     d["_ip"] = d["타이틀"].map(ip_name_of)
     block = _blocklist()
-    out, took, skipped, cmerged = {}, [], [], []
+    _skip = set(_skip_ips())
+    _okgen = set(_json_list("_자리표_허용IP"))
+    out, took, skipped, cmerged, vtook = {}, [], [], [], []
     for axis in ("테마", "프레임"):
         d[axis] = d[axis].astype(str).map(name_alias.fold)
         g = d[~d[axis].isin(["", "None", "nan", "<NA>"])]
@@ -260,9 +419,34 @@ def photoism() -> tuple[dict, list, list, list]:
                 t.setdefault(ip, {}).update(gp)
                 tk += [(ip, k, v, rev2.get(k, 0)) for k, v in gp.items()]
             sk += [(x[1], x[2], x[3]) for x in hd]
+        # ④ ②③ 을 태운 이름 위에서 표기 차이를 마저 합친다.
+        d[axis] = [t.get(i, {}).get(n, n) for i, n in zip(d["_ip"], d[axis])]
+        vm, vlog, vheld = _variants(d, axis, "_ip", "최종결제금액", _skip, block)
+        for ip, mm in vm.items():
+            cur = t.setdefault(ip, {})
+            for k, v in list(cur.items()):     # 이미 ②③ 으로 옮긴 이름도 따라 옮긴다
+                if v in mm:
+                    cur[k] = mm[v]
+            for k, v in mm.items():
+                cur.setdefault(k, v)
+        vtook += vlog          # vlog 는 이미 (축, IP, …) 로 온다
+        sk += [(x[1], x[2], x[3]) for x in vheld]
+        # ⑤ 통합이름과 그 한쪽만 적힌 이름
+        d[axis] = [t.get(i, {}).get(n, n) for i, n in zip(d["_ip"], d[axis])]
+        rm, rlog, rheld = _residual(d, axis, t, _skip, block, _okgen)
+        for ip, mm in rm.items():
+            cur = t.setdefault(ip, {})
+            for k, v in list(cur.items()):
+                if v in mm:
+                    cur[k] = mm[v]
+            for k, v in mm.items():
+                cur.setdefault(k, v)
+        vtook += rlog
+        sk += [(x[1], x[2], x[3]) for x in rheld]
         out[axis] = {k: dict(sorted(v.items())) for k, v in t.items() if v}
         took += [(axis, *x) for x in tk]
         skipped += [(axis, *x) for x in sk]
+    _write_csv(vtook, '표기통합_합침.csv', ['축', 'IP', '합친것', '합계'])
     return out, took, skipped, cmerged
 
 
@@ -300,6 +484,8 @@ def main() -> None:
             "보류": len(ph_s) + len(sn_s),
         },
         "_제외": _cur.get("_제외", []),
+        "_표기통합_제외IP": _cur.get("_표기통합_제외IP", []),
+        "_자리표_허용IP": _cur.get("_자리표_허용IP", []),
         "포토이즘": ph,
         "스내피즘": sn,
     }

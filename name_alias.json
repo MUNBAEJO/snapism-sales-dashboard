@@ -7,7 +7,7 @@
    "포토이즘": 3256,
    "스내피즘": 1
   },
-  "보류": 4
+  "보류": 98
  },
  "_제외": [
   [
@@ -17,17 +17,29 @@
    "렌탈은 판매 채널이 달라 매출을 따로 봐야 해요(2026-08-19 사용자 확정)"
   ]
  ],
+ "_표기통합_제외IP": [
+  "T1 베이스캠프 부산 해운대점",
+  "T1 베이스캠프 홍대점",
+  "슈퍼플레이 T1 pc방 2503",
+  "슈퍼플레이 T1 pc방 부산",
+  "슈퍼플레이 동대문 단독"
+ ],
+ "_자리표_허용IP": [
+  "코르티스"
+ ],
  "포토이즘": {
   "테마": {
    "ATEEZ": {
     "260710_SAN": "260710_산(SAN)",
     "260710_산": "260710_산(SAN)",
-    "260809_MINGI": "260809_민기(MINGI)",
-    "260809_민기": "260809_민기(MINGI)",
+    "260809_MINGI": "민기(MINGI)",
+    "260809_민기": "민기(MINGI)",
+    "260809_민기(MINGI)": "민기(MINGI)",
     "Seonghwa": "성화(Seonghwa)",
     "YEOSANG": "여상(YEOSANG)",
     "YUNHO": "윤호(YUNHO)",
     "민기": "민기(MINGI)",
+    "산(SAN)": "260710_산(SAN)",
     "성화": "성화(Seonghwa)",
     "여상": "여상(YEOSANG)",
     "윤호": "윤호(YUNHO)"
@@ -42,6 +54,8 @@
     "NOWZ": "NOWZ (나우즈)"
    },
    "TREASURE": {
+    "260801_LAST NIGHT": "LAST NIGHT",
+    "260801_YELLOW": "YELLOW",
     "박정우": "박정우(PARK JEONG WOO)",
     "아사히": "아사히(ASAHI)",
     "윤재혁": "윤재혁(YOON JAE HYUK)",
@@ -92,6 +106,7 @@
     "리오": "리오(LEO)"
    },
    "몬스타엑스": {
+    "260514_MONSTA X": "MONSTA X",
     "민혁": "민혁(MINHYUK)",
     "셔누": "셔누(SHOWNU)",
     "주헌": "주헌(JOOHONEY)"
@@ -104,6 +119,7 @@
     "미야오": "미야오(MEOVV)"
    },
    "박규리": {
+    "260515_박규리": "박규리(Park Gyuri)",
     "박규리": "박규리(Park Gyuri)"
    },
    "박재범": {
@@ -116,7 +132,8 @@
     "백호": "백호(BAEKHO)"
    },
    "브레드이발소": {
-    "브레드이발소": "브레드이발소(photo card)"
+    "브레드이발소": "브레드이발소(photo card)",
+    "브레드이발소 B ver(포토카드)": "브레드이발소 B ver (포토카드)"
    },
    "비투비 컴퍼니": {
     "서은광": "서은광 (SEO EUNKWANG)"
@@ -143,7 +160,8 @@
     "아크": "ARrC (아크)"
    },
    "엔믹스": {
-    "NMIXX": "NMIXX(콘서트)"
+    "NMIXX": "NMIXX(콘서트)",
+    "엔믹스": "260512_엔믹스"
    },
    "엔플라잉": {
     "엔플라잉": "엔플라잉(N.Flying)"
@@ -169,6 +187,7 @@
     "260714_수빈": "260714_수빈(Soobin)",
     "WJSN": "우주소녀(WJSN)",
     "YEONJUNG": "연정(YEONJUNG)",
+    "다영(DAYOUNG)": "260514_다영(DAYOUNG)",
     "설아": "설아(SEOLA)",
     "연정": "연정(YEONJUNG)",
     "우주소녀": "우주소녀(WJSN)"
@@ -196,6 +215,7 @@
     "이호정": "이호정(Lee Hojung)"
    },
    "저스트비": {
+    "JUST B": "저스트비(JUSTB)",
     "저스트비": "저스트비(JUSTB)"
    },
    "정용화": {
@@ -246,6 +266,7 @@
     "Lee Woogon": "이우곤(Lee Woogon)",
     "Maeng Chaeyeon": "맹채연(Maeng Chaeyeon)",
     "맹채연": "맹채연(Maeng Chaeyeon)",
+    "아이뽀": "260706_아이뽀(i4)",
     "이우곤": "이우곤(Lee Woogon)",
     "조이서": "조이서(Joyseo)"
    },
@@ -272,6 +293,7 @@
     "260809_카즈하": "260809_카즈하(KAZUHA)"
    },
    "P1Harmony": {
+    "P1Harmony": "wide_피원하모니(P1Harmony)",
     "wide_P1Harmony": "wide_피원하모니(P1Harmony)",
     "wide_피원하모니": "wide_피원하모니(P1Harmony)"
    },
@@ -284,6 +306,7 @@
     "260605_샤이니": "260605_샤이니(SHINee)",
     "260624_RIIZE": "260624_라이즈(RIIZE)",
     "260624_라이즈": "260624_라이즈(RIIZE)",
+    "260627_NCT JNJM": "NCT 제노재민(NCT JNJM)",
     "260703_RYEOWOOK": "260703_려욱(RYEOWOOK)",
     "260703_려욱": "260703_려욱(RYEOWOOK)",
     "260711_JAEHYUN": "260711_재현(JAEHYUN)",
@@ -292,12 +315,16 @@
     "260721_유노윤호": "260721_유노윤호(U-KNOW)",
     "260804_Red Velvet": "260804_레드벨벳(Red Velvet)",
     "260804_레드벨벳": "260804_레드벨벳(Red Velvet)",
+    "260811_WayV": "WayV",
     "COVER JOB ver": "슈퍼주니어 COVER JOB ver(COVER JOB ver)",
     "HYOYEON": "효연(HYOYEON)",
     "JUNGWOO": "정우(JUNGWOO)",
     "NCT JNJM": "NCT 제노재민(NCT JNJM)",
     "NCT 제노재민": "NCT 제노재민(NCT JNJM)",
+    "Way V": "WayV",
+    "aespa": "260530_에스파(aespa)",
     "슈퍼주니어 COVER JOB ver": "슈퍼주니어 COVER JOB ver(COVER JOB ver)",
+    "유노윤호": "260721_유노윤호(U-KNOW)",
     "정우": "정우(JUNGWOO)",
     "효연": "효연(HYOYEON)"
    },
@@ -313,7 +340,9 @@
     "260721_U-KNOW": "260721_유노윤호(U-KNOW)",
     "260721_유노윤호": "260721_유노윤호(U-KNOW)",
     "NCT JNJM": "NCT 제노재민(NCT JNJM)",
-    "NCT 제노재민": "NCT 제노재민(NCT JNJM)"
+    "NCT 제노재민": "NCT 제노재민(NCT JNJM)",
+    "aespa": "260530_에스파(aespa)",
+    "유노윤호": "260721_유노윤호(U-KNOW)"
    },
    "강승식": {
     "Kang Seungsik": "강승식(Kang Seungsik)",
@@ -354,13 +383,15 @@
    "변우석": {
     "260518_Byeon Wooseok": "260518_변우석(Byeon Wooseok)",
     "260518_변우석": "260518_변우석(Byeon Wooseok)",
-    "BYEON WOOSEOK": "변우석(BYEON WOOSEOK)",
-    "변우석": "변우석(BYEON WOOSEOK)"
+    "BYEON WOOSEOK": "260518_변우석(Byeon Wooseok)",
+    "변우석": "260518_변우석(Byeon Wooseok)",
+    "변우석(BYEON WOOSEOK)": "260518_변우석(Byeon Wooseok)"
    },
    "세븐틴": {
     "260804_DINO": "260804_디노(DINO)",
     "260804_디노": "260804_디노(DINO)",
     "DK X SEUNGKWAN": "도겸X승관(DK X SEUNGKWAN)",
+    "HAPPY BURSTDAY_blacklut": "HAPPY BURSTDAY blacklut",
     "도겸X승관": "도겸X승관(DK X SEUNGKWAN)"
    },
    "쇼미더머니12": {
@@ -374,6 +405,7 @@
     "아이덴티티": "아이덴티티(idntt)"
    },
    "아일릿": {
+    "260728_ILLIT": "아일릿(ILLIT)",
     "ILLIT": "아일릿(ILLIT)",
     "ILLIT NOT CUTE ANYMORE": "아일릿 NOT CUTE ANYMORE(ILLIT NOT CUTE ANYMORE)",
     "WONHEE": "원희(WONHEE)",
@@ -398,6 +430,7 @@
     "잔망루피": "잔망루피(ZANMANG LOOPY)"
    },
    "제로베이스원": {
+    "ZEROBASEONE": "wide_제로베이스원(ZEROBASEONE)",
     "wide_ZEROBASEONE": "wide_제로베이스원(ZEROBASEONE)",
     "wide_제로베이스원": "wide_제로베이스원(ZEROBASEONE)"
    },
@@ -418,6 +451,10 @@
     "CORTIS ver 1": "코르티스 ver 1(CORTIS ver 1)",
     "CORTIS ver 2": "코르티스 ver 2(CORTIS ver 2)",
     "CORTIS ver 3": "코르티스 ver 3(CORTIS ver 3)",
+    "CORTIS ver1": "코르티스 ver 1(CORTIS ver 1)",
+    "CORTIS ver2": "코르티스 ver 2(CORTIS ver 2)",
+    "REDRED": "260420_REDRED",
+    "cortis": "코르티스(CORTIS)",
     "코르티스": "코르티스(CORTIS)",
     "코르티스 ver 1": "코르티스 ver 1(CORTIS ver 1)",
     "코르티스 ver 2": "코르티스 ver 2(CORTIS ver 2)",
@@ -430,6 +467,79 @@
    "탬오리": {
     "TAEMori": "탬오리(TAEMori)",
     "탬오리": "탬오리(TAEMori)"
+   },
+   "AB6IX": {
+    "260511_AB6IX": "AB6IX"
+   },
+   "AB6IX(에이비식스)": {
+    "AB6IX(에이비식스)": "260511_AB6IX(에이비식스)"
+   },
+   "ENHYPEN": {
+    "2023 ENniverasry": "2023ENniverasry",
+    "ENHYPEN": "260501_ENHYPEN"
+   },
+   "NEXZ": {
+    "NEXZ A": "260428_NEXZ A",
+    "NEXZ B": "260428_NEXZ B"
+   },
+   "NMIXX": {
+    "NMIXX": "260512_NMIXX"
+   },
+   "SHUGO CHARA !": {
+    "SHUGO CHARA !": "SHUGO CHARA"
+   },
+   "Stray Kids": {
+    "스트레이 키즈": "스트레이키즈"
+   },
+   "YG": {
+    "260603_BABYMONSTER": "BABYMONSTER"
+   },
+   "ZICO": {
+    "260518_ZICO": "ZICO"
+   },
+   "fromis_9": {
+    "fromis9": "fromis 9"
+   },
+   "더보이즈": {
+    "260806_영훈": "영훈"
+   },
+   "라잇썸": {
+    "240807 라잇썸": "라잇썸"
+   },
+   "루시": {
+    "6TH ANNIVERSARY": "6th Anniversary",
+    "LUCY 9TH CONCERT": "LUCY 9th CONCERT"
+   },
+   "메이드인코리아": {
+    "메이드인코리아": "메이드 인 코리아"
+   },
+   "박보검팬미팅": {
+    "B ver@": "B ver"
+   },
+   "알레프": {
+    "260518_알레프": "알레프"
+   },
+   "울산현대FC": {
+    "울산현대 FC": "울산현대FC"
+   },
+   "캐릭캐릭체인지": {
+    "캐릭캐릭 체인지": "캐릭캐릭체인지"
+   },
+   "키스오브라이프": {
+    "260804_키스오브라이프": "키스오브라이프"
+   },
+   "테스트 전용": {
+    "테스트 도영4개": "테스트 도영 4개",
+    "테스트 박경진2": "테스트 박경진 2",
+    "테스트 이예림2": "테스트 이예림 2",
+    "테스트 진격의거인": "테스트 진격의 거인"
+   },
+   "패트와매트": {
+    "패트와 매트": "패트와매트"
+   },
+   "프로축구구단": {
+    "부천FC1995": "부천 FC 1995",
+    "포항 스틸러스": "포항스틸러스"
    }
   },
   "프레임": {
@@ -1127,6 +1237,7 @@
     "Eunseo": "은서(Eunseo)",
     "Kim Ji Yeon": "김지연(Kim Ji Yeon)",
     "Son Ju Yeon": "손주연(Son Ju Yeon)",
+    "Son Juyeon": "손주연(Son Ju Yeon)",
     "Soo Bin": "수빈(Soo Bin)",
     "Yeon Jung": "연정(Yeon Jung)",
     "Yeoreum": "여름(Yeoreum)",
@@ -1539,10 +1650,16 @@
    },
    "AtHeart": {
     "ARIN": "아린(ARIN)",
+    "Arin": "아린(ARIN)",
     "BOME": "봄(BOME)",
+    "Bome": "봄(BOME)",
+    "KATELYN": "Katelyn",
     "MICHI": "미치(MICHI)",
+    "Michi": "미치(MICHI)",
     "NAHYUN": "나현(NAHYUN)",
+    "Nahyun": "나현(NAHYUN)",
     "SEOHYEON": "서현(SEOHYEON)",
+    "Seohyeon": "서현(SEOHYEON)",
     "나현": "나현(NAHYUN)",
     "미치": "미치(MICHI)",
     "봄": "봄(BOME)",
@@ -1841,10 +1958,14 @@
    },
    "ONEWE": {
     "DONG MYEONG": "동명(DONG MYEONG)",
+    "DONGMYEONG": "동명(DONG MYEONG)",
     "GIUK": "기욱(GIUK)",
     "HA RIN": "하린(HA RIN)",
+    "HARIN": "하린(HA RIN)",
     "KANG HYUN": "강현(KANG HYUN)",
+    "KANGHYUN": "강현(KANG HYUN)",
     "YONG HOON": "용훈(YONG HOON)",
+    "YONGHOON": "용훈(YONG HOON)",
     "강현": "강현(KANG HYUN)",
     "기욱": "기욱(GIUK)",
     "동명": "동명(DONG MYEONG)",
@@ -2421,9 +2542,12 @@
    },
    "루시": {
     "CHO WON SANG": "조원상(CHO WON SANG)",
+    "CHO WONSANG": "조원상(CHO WON SANG)",
     "CHOI SANG YEOP": "최상엽(CHOI SANG YEOP)",
+    "CHOI SANGYEOP": "최상엽(CHOI SANG YEOP)",
     "SHIN GWANGIL": "신광일(SHIN GWANGIL)",
     "SHIN YE CHAN": "신예찬(SHIN YE CHAN)",
+    "SHIN YECHAN": "신예찬(SHIN YE CHAN)",
     "신광일": "신광일(SHIN GWANGIL)",
     "신예찬": "신예찬(SHIN YE CHAN)",
     "조원상": "조원상(CHO WON SANG)",
@@ -2743,13 +2867,16 @@
    },
    "성우특별관": {
     "JEONG JAE HEON": "정재헌(JEONG JAE HEON)",
+    "Jeong Jae Heon": "Jeong Jae heon",
     "KANG SOO JIN": "강수진(KANG SOO JIN)",
     "KIM HYUNJI": "김현지(KIM HYUNJI)",
+    "Kang Soo jin": "Kang Soo Jin",
     "Kim Seon Hye": "김선혜(Kim Seon Hye)",
     "LEE YONG SHIN": "이용신(LEE YONG SHIN)",
     "Lee Ju Seung": "이주승(Lee Ju Seung)",
     "Min Seungwoo": "민승우(Min Seungwoo)",
     "NAM DOH HYEONG": "남도형(NAM DOH HYEONG)",
+    "Nam Doh Hyeong": "Nam Doh hyeong",
     "SHIM KYU HYUCK": "심규혁(SHIM KYU HYUCK)",
     "SOYEON": "소연(SOYEON)",
     "강수진": "강수진(KANG SOO JIN)",
@@ -4162,6 +4289,87 @@
     "하나비": "하나비(HANABI)",
     "한희연": "한희연(HAN HEE YEON)",
     "히나": "히나(HINA)"
+   },
+   "BOYZ BREAK": {
+    "Rennosuke": "RENNOSUKE"
+   },
+   "BTS THE CITY ARIRANG": {
+    "★숭례문 SUNGNYEMUN": "숭례문 Sungnyemun"
+   },
+   "FC서울": {
+    "강현무 고필관/구성윤": "강현무 고필관 구성윤",
+    "고필관 구성윤 문선민 강현무": "고필관 구성윤/문선민 강현무",
+    "바베츠 정승원 이승모 클리말라": "바베츠 정승원/이승모 클리말라",
+    "손정범 송민규 안데르손": "손정범 송민규/안데르손",
+    "송민규 김지원 로스 박성훈": "송민규 김지원/로스 박성훈",
+    "안데르손 후이즈 최준 안재민": "안데르손 후이즈/최준 안재민",
+    "윤기욱 박장한결 바또": "윤기욱 박장한결/바또",
+    "임준섭 정승원 조영욱 천성훈": "임준섭 정승원/조영욱 천성훈",
+    "조영욱 천성훈 이한도 김진수": "조영욱 천성훈/이한도 김진수",
+    "최준 클리말라 황도윤 후이즈": "최준 클리말라/황도윤 후이즈",
+    "황도윤 손정범 박수일": "황도윤 손정범/박수일"
+   },
+   "K리그 X 산리오캐릭터즈": {
+    "FC 서울": "FC서울"
+   },
+   "SM사내 단독": {
+    "NCT dream": "NCT DREAM",
+    "Xnghan&Xoul": "XngHan&Xoul"
+   },
+   "idntt": {
+    "choi gyeongbeen": "choigyeongbeen",
+    "choi taein": "choitaein",
+    "han yejoon": "hanyejoon",
+    "hwang eunsoo": "hwangeunsoo",
+    "kim dohun": "kimdohun",
+    "kim heeju": "kimheeju",
+    "kim juho": "kimjuho",
+    "kim seongjun": "kimseongjun",
+    "lee cheongmyeong": "leecheongmyeong",
+    "lee hwanhee": "leehwanhee",
+    "lee jaeyoung": "leejaeyoung",
+    "lee kyuhyuk": "leekyuhyuk",
+    "nam jiwoon": "namjiwoon",
+    "park nuri": "parknuri"
+   },
+   "千葉ロッテマリーンズ": {
+    "和田康士朗": "和田 康士朗"
+   },
+   "東京ヤクルトスワローズ": {
+    "内山 壮真": "内山壮真",
+    "山田 哲人": "山田哲人",
+    "石川 雅規": "石川雅規",
+    "荘司 宏太": "荘司宏太"
+   },
+   "맨체스터 시티 FC": {
+    "베르나르두 스톤스 그바르디올 아케": "베르나르두 스톤스/그바르디올 아케",
+    "홀란드 로드리고 포든 후벵": "홀란드 로드리고/포든 후벵"
+   },
+   "박보검팬미팅": {
+    "A ver": "A ver.",
+    "B ver": "B ver."
+   },
+   "비비큐": {
+    "BBQ 황올20살 생파": "BBQ 황올 20살 생파"
+   },
+   "세이부라이온즈": {
+    "炭谷 銀仁朗": "炭谷銀仁朗"
+   },
+   "수원FC 축구 구단 단독": {
+    "수원 FC": "수원FC"
+   },
+   "울산현대FC": {
+    "울산 HD FC": "울산HD FC"
+   },
+   "치바롯데 마린즈 코리안나이트 단독": {
+    "小島和哉": "小島 和哉"
+   },
+   "치바롯데마린스": {
+    "藤岡裕大": "藤岡 裕大"
+   },
+   "틱톡 단독": {
+    "TikTok 1": "Tik Tok 1",
+    "TikTok 2": "Tik Tok 2"
    }
   }
  },

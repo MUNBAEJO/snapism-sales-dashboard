@@ -2254,6 +2254,10 @@ with tab_ip:
             _kw = _q2.text_input("검색", key="ph_slot_q", label_visibility="collapsed",
                                  placeholder="🔍 타이틀·IP 이름으로 찾기").strip()
             _KEY = "타이틀" if _grp == "타이틀" else "IP명"
+            # 검색은 Enter(또는 칸 밖 클릭)에 걸린다 — 스트림릿 text_input 의 기본이다.
+            # 안내가 없어 "검색이 안 된다" 는 얘기가 나왔다(2026-08-19).
+            st.caption("🔍 검색어를 넣고 **Enter** 를 눌러야 걸려요 · "
+                       "이름 일부만 넣어도 돼요(`아이들` → `i-dle (아이들)`).")
             _gall = ["전체"] + _detail_gubuns + _orig_gubuns
 
             # ── 테마 표는 여기서 **한 번만** 읽는다 ────────────────────
@@ -2357,7 +2361,7 @@ with tab_ip:
                     return pd.DataFrame(columns=["구분", "이름", "국가", "매출", "건수"])
                 _out = pd.concat(_rs, ignore_index=True)
                 if _kw:
-                    _out = _out[_out["이름"].astype(str).str.contains(_kw, case=False, na=False)]
+                    _out = _out[_out["이름"].astype(str).str.contains(_kw, case=False, na=False, regex=False)]
                 if _out.empty:
                     return _out
                 # 판매기간(지라)은 타이틀에만 붙는다 — IP명으로 합치면 회차가 여럿이라 못 적는다
@@ -2406,7 +2410,7 @@ with tab_ip:
                     return pd.DataFrame(columns=["이름", "테마", "프레임", "매출(원)"])
                 _t = _thall.rename(columns={"_ip": "이름"})
                 if _kw:
-                    _t = _t[_t["이름"].astype(str).str.contains(_kw, case=False, na=False)]
+                    _t = _t[_t["이름"].astype(str).str.contains(_kw, case=False, na=False, regex=False)]
                 if _t.empty:
                     return pd.DataFrame(columns=["이름", "테마", "프레임", "매출(원)"])
                 _t = (_t.groupby(["이름", "테마", "프레임"], observed=True, as_index=False)
@@ -2519,7 +2523,9 @@ with tab_ip:
                               .agg(매출=("매출액", "sum"), 건수=("건수", "sum")).reset_index())
                         _t = _t[_t["매출"] > 0]
                         if _kw:
-                            _t = _t[_t[_KEY].astype(str).str.contains(_kw, case=False, na=False)]
+                            _t = _t[_t[_KEY].astype(str).str.contains(_kw, case=False, na=False, regex=False)]
+                            # ★카드도 같이 좁힌다. 안 그러면 '0개인데 매출 140억' 이 찍힌다.
+                            _sub = _sub[_sub[_KEY].astype(str).isin(set(_t[_KEY].astype(str)))]
                         statrow([("매출", fmt_krw(int(_sub["매출액"].sum()))),
                                  ("건수", f"{tx_count(_sub):,}건"),
                                  (f"{_KEY} 수", f"{len(_t):,}개")])
