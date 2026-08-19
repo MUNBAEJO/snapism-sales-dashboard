@@ -2064,12 +2064,13 @@ for _k in ("ph_trend", "ph_home_store_country", "ph_slot_grp", "ph_slot_q",
 
 st.markdown(_LAZYTAB_CSS, unsafe_allow_html=True)
 with st.container(key="ph-maintab"):
-    _sel = st.segmented_control("보기", _tab_labels, default=_tab_labels[0],
-                                key="ph_maintab", label_visibility="collapsed")
-_sel = _sel or _tab_labels[0]
+    _TABSEL = st.segmented_control("보기", _tab_labels, default=_tab_labels[0],
+                                   key="ph_maintab", label_visibility="collapsed")
+# ★이름을 `_sel` 로 두면 안 된다 — 탭 본문 안에서 같은 이름을 쓰면 조용히 덮인다.
+_TABSEL = _TABSEL or _tab_labels[0]
 
 # ════════════ 탭: 런 비교 (별도 페이지 링크 — 성능 위해 탭엔 링크만) ════════════
-if _sel == "🆚 런 비교":
+if _TABSEL == "🆚 런 비교":
     with card("🆚 타이틀 런 비교"):
         st.markdown(
             '<div style="padding:4px 2px 14px;color:var(--text-2);font-size:13.5px;line-height:1.75">'
@@ -2083,7 +2084,7 @@ if _sel == "🆚 런 비교":
                             denied="이 기능은 권한이 필요해요. 필요하면 관리자에게 요청해 주세요.")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
-if _sel == "📊 매출 한눈에":
+if _TABSEL == "📊 매출 한눈에":
     sec("1", "매출 동향",
         "잘 가고 있나? — <b>조회 기간과 무관하게 항상 최근 1년</b>이에요 "
         "(국가·매장·상품·IP 필터는 그대로 적용돼요)")
@@ -2253,7 +2254,7 @@ if _sel == "📊 매출 한눈에":
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '국가별 분석'·'매장별 분석' 탭에서 봐요.")
 
 # ════════════ 탭 2: 구좌타입 분석 (IP구분 = 구좌 세분) ════════════
-if _sel == "🎫 구좌타입 분석":
+if _TABSEL == "🎫 구좌타입 분석":
     with card("🎭 IP 구분 (비중 · 매출) <span class='muted'>(아티스트·캐릭터·PICK·오리지널·렌탈)</span>"):
         if not gub.empty:
             _g1, _g2 = st.columns([5, 5])
@@ -2679,7 +2680,7 @@ if _sel == "🎫 구좌타입 분석":
     #        안내 문구도 뺐다(없는 필터를 가리키게 된다). 필터를 되살리면 그대로 부활.
 
 # ════════════ 탭 3: 국가별 분석 ════════════
-if _sel == "🌏 국가별 분석":
+if _TABSEL == "🌏 국가별 분석":
     if "국가" not in sales.columns or sales.empty:
         st.info("국가 데이터가 없어요. 필터를 넓혀 보세요.")
     else:
@@ -3009,11 +3010,11 @@ def _store_tab(sales, date_range, sel_countries):
 """)
 
 
-if _sel == "🏬 매장별 분석":
+if _TABSEL == "🏬 매장별 분석":
     _store_tab(sales, date_range, sel_countries)
 
 # ════════════ [제거] 세부 항목 검색 — SHOW_TAB_DETAIL=True 로 부활 ════════════
-#   (부활 시 탭에 그리려면 `if _sel == "🔎 세부 항목":` 로 감싸 주세요.)
+#   (부활 시 탭에 그리려면 `if _TABSEL == "🔎 세부 항목":` 로 감싸 주세요.)
 if SHOW_TAB_DETAIL:
     @st.fragment
     def _detail_search(date_range, selected_ips, sel_countries,
@@ -3085,7 +3086,7 @@ if SHOW_TAB_DETAIL:
                    sel_stores, sel_brands, sel_gubuns)
 
 # ════════════ 탭 6: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
-if SHOW_TAB_ETC and _sel == "⏰ 시간대 · 데이터":
+if SHOW_TAB_ETC and _TABSEL == "⏰ 시간대 · 데이터":
     if True:                       # 들여쓰기 유지(예전 `with tab_etc:` 자리)
         with card("⏰ 시간대별 매출 분포"):
             df_hourly = load_hourly()

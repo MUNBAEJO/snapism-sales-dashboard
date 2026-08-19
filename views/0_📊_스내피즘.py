@@ -1336,17 +1336,64 @@ if _is_owner:
 # [보류] '시간대 · 데이터' 탭 — 숨김 처리(코드·데이터는 그대로 보존).
 #         다시 살리려면 SHOW_TAB_ETC = True 로만 바꾸면 됨.
 SHOW_TAB_ETC = False
+
+# 세그먼트 컨트롤을 기존 언더라인 탭과 같은 모양으로(포토이즘과 동일).
+# ★선택 상태는 aria-checked 가 아니라 kind="segmented_controlActive" 이고,
+#   묶음은 stButtonGroup 이다. 일반 규칙에 요소선택자 `button` 이 있어 더 세므로
+#   선택 규칙에도 `button` 을 붙여야 밑줄이 먹는다.
+_LAZYTAB_CSS = """
+<style>
+.st-key-sn-maintab{ position:sticky; top:0; z-index:50; background:var(--bg);
+  padding-top:8px; margin-bottom:2px;
+  box-shadow:0 6px 10px -7px rgba(20,28,45,.18); }
+.st-key-sn-maintab [data-testid="stButtonGroup"] > div{
+  gap:2px !important; border-bottom:1px solid var(--border) !important;
+  border-radius:0 !important; background:transparent !important; }
+.st-key-sn-maintab [data-testid="stButtonGroup"] button{
+  background:transparent !important; border:none !important;
+  border-radius:0 !important; padding:9px 15px !important;
+  min-height:0 !important; box-shadow:none !important;
+  border-bottom:2.5px solid transparent !important; }
+.st-key-sn-maintab [data-testid="stButtonGroup"] button p{
+  font-size:14px !important; font-weight:700 !important; color:var(--text-2) !important; }
+.st-key-sn-maintab button[data-testid="stBaseButton-segmented_controlActive"]{
+  border-bottom-color:var(--brand) !important; }
+.st-key-sn-maintab button[data-testid="stBaseButton-segmented_controlActive"] p{
+  color:var(--brand) !important; }
+.st-key-sn-maintab [data-testid="stButtonGroup"] button:first-child{
+  background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
+.st-key-sn-maintab [data-testid="stButtonGroup"] button:first-child p{
+  color:var(--brand) !important; }
+.st-key-sn-maintab [data-testid="stButtonGroup"] button > div{
+  display:flex !important; flex-direction:row !important;
+  align-items:center !important; gap:6px !important; }
+</style>
+"""
 # 포7: 런 비교를 사이드바에서 빼고 대시보드 탭으로. 단, st.tabs 는 안 열어도 매 rerun
 #      마다 모든 탭을 실행해 무거워지므로(런 빌드), 탭엔 무거운 연산 대신 별도 페이지 링크만 둔다.
 _tab_labels = ["📊 매출 한눈에", "🧩 상품 카테고리 분석", "🌏 국가별 분석", "🏬 매장별 분석", "🆚 런 비교"]
 if SHOW_TAB_ETC:
     _tab_labels.append("⏰ 시간대 · 데이터")
-_tabs = st.tabs(_tab_labels)
-tab_home, tab_cat, tab_nat, tab_store, tab_runs = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
-tab_etc = _tabs[5] if SHOW_TAB_ETC else None
+# ★★st.tabs 는 **안 열린 탭의 본문도 매 rerun 전부 실행한다**(화면에서만 숨김).
+#   그래서 고른 탭만 그린다 — 모양은 CSS 로 기존 언더라인 탭과 같게 맞췄다.
+#   자세한 배경과 함정은 포토이즘 쪽 같은 자리 주석에 적어 뒀다.
+# ★안 그려진 탭의 위젯은 스트림릿이 세션에서 지운다 → 탭을 왕복하면 선택이
+#   초기화되므로 값을 한 번 다시 써서 살린다. **버튼 키는 절대 넣지 말 것**
+#   (st.button / st.download_button 은 session_state 대입이 예외다).
+for _k in ("sn_trend", "home_store_country", "cat_frame_tog",
+           "prod_rank_pick", "prod_rank_lvl", "nat_frame_sel"):
+    if _k in st.session_state:
+        st.session_state[_k] = st.session_state[_k]
+
+st.markdown(_LAZYTAB_CSS, unsafe_allow_html=True)
+with st.container(key="sn-maintab"):
+    _TABSEL = st.segmented_control("보기", _tab_labels, default=_tab_labels[0],
+                                   key="sn_maintab", label_visibility="collapsed")
+# ★`_sel` 로 두면 안 된다 — 국가별 탭 안에 같은 이름의 selectbox 가 있어 덮인다.
+_TABSEL = _TABSEL or _tab_labels[0]
 
 # ════════════ 탭 5: 런 비교 (별도 페이지 링크 — 성능 위해 탭엔 링크만) ════════════
-with tab_runs:
+if _TABSEL == "🆚 런 비교":
     with card("🆚 타이틀 런 비교"):
         st.markdown(
             '<div style="padding:4px 2px 14px;color:var(--text-2);font-size:13.5px;line-height:1.75">'
@@ -1360,7 +1407,7 @@ with tab_runs:
                             denied="이 기능은 권한이 필요해요. 필요하면 관리자에게 요청해 주세요.")
 
 # ════════════ 탭 1: 매출 한눈에 ════════════
-with tab_home:
+if _TABSEL == "📊 매출 한눈에":
     sec("1", "매출 동향",
         "잘 가고 있나? — <b>조회 기간과 무관하게 항상 최근 1년</b>이에요 "
         "(국가·매장·카테고리 필터는 그대로 적용돼요)")
@@ -1540,7 +1587,7 @@ with tab_home:
     st.caption("※ 여긴 요약(TOP)이에요. 전체 순위는 '상품 카테고리 분석'·'매장별 분석' 탭에서 봐요.")
 
 # ════════════ 탭 2: 상품 카테고리 분석 (상세, 전체) ════════════
-with tab_cat:
+if _TABSEL == "🧩 상품 카테고리 분석":
     with card("🎨 아티스트/캐릭터 비중 · 🖼 프레임(IP) 전체 순위"):
         _s = rev.assign(_c=cat3(rev["카테고리"]))
         # 시안: 도넛(아티스트/캐릭터) 상단 전체폭
@@ -1760,7 +1807,7 @@ with tab_cat:
     _prod_rank()
 
 # ════════════ 탭 3: 국가별 분석 (상세, 전체) ════════════
-with tab_nat:
+if _TABSEL == "🌏 국가별 분석":
     if "국가" not in sales.columns or sales.empty:
         st.info("국가 데이터가 없어요.")
     else:
@@ -2039,12 +2086,12 @@ def _store_tab():
 """)
 
 
-with tab_store:
+if _TABSEL == "🏬 매장별 분석":
     _store_tab()
 
 # ════════════ 탭 5: 시간대 · 데이터 ════════════ [보류: SHOW_TAB_ETC 로 부활]
-if SHOW_TAB_ETC:
-    with tab_etc:
+if SHOW_TAB_ETC and _TABSEL == "⏰ 시간대 · 데이터":
+    if True:                       # 들여쓰기 유지(예전 `with tab_etc:` 자리)
         with card("⏰ 시간대별 매출 분포"):
             _hv = (rev.assign(시간대=rev["결제일시"].dt.hour).groupby("시간대")["정산금액"].sum()
                    .reindex(range(24), fill_value=0))
