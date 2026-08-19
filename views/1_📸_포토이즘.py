@@ -2377,16 +2377,18 @@ with tab_ip:
                 _out["국가 비중(%)"] = (_out["매출"] / _tot.replace(0, 1) * 100).round(1)
                 _out["건당 평균"] = (_out["매출"] / _out["건수"].replace(0, 1)).round(0).astype("int64")
                 _out["판매 국가 수"] = _g["국가"].transform("nunique")
+                # ★'IP 매출 합계' 는 **정렬에만 쓰고 열로는 안 낸다**(요청). 줄마다 같은
+                #   금액이 수십 번 반복돼 눈에 거슬린다 — 크기는 '국가 비중(%)' 로 읽는다.
                 _cols = [c for c in ["구분", "이름", "회차수", "판매기간", "판매 국가 수",
-                                     "IP 매출 합계", "국가", "매출", "국가 비중(%)", "건수",
+                                     "국가", "매출", "국가 비중(%)", "건수",
                                      "건당 평균", "매장수", "첫거래일", "마지막거래일"]
                          if c in _out.columns]
-                _out = (_out[_cols]
-                        .sort_values(["IP 매출 합계", "이름", "매출"], ascending=[False, True, False])
+                _out = (_out.sort_values(["IP 매출 합계", "이름", "매출"],
+                                         ascending=[False, True, False])[_cols]
                         .reset_index(drop=True))
                 # 머리줄에 단위를 박는다 — 받은 파일만 보고도 원인지 건인지 알게.
                 return _out.rename(columns={
-                    "IP 매출 합계": "IP 매출 합계(원)", "매출": "매출(원)",
+                    "매출": "매출(원)",
                     "건당 평균": "건당 평균(원)", "건수": "건수(건)",
                     "매장수": "매장수(개)", "회차수": "회차수(회)",
                     "판매 국가 수": "판매 국가 수(개국)"})
@@ -2422,13 +2424,14 @@ with tab_ip:
                 _t["IP 내 비중(%)"] = (_t["매출"] / _ig.replace(0, 1) * 100).round(1)
                 _t["테마 내 비중(%)"] = (_t["매출"] / _tg.replace(0, 1) * 100).round(1)
                 _t["건당 평균"] = (_t["매출"] / _t["건수"].replace(0, 1)).round(0).astype("int64")
-                _t = (_t[["이름", "IP 매출 합계", "테마", "테마 매출 합계", "프레임",
-                          "매출", "IP 내 비중(%)", "테마 내 비중(%)", "건수", "건당 평균"]]
-                      .sort_values(["IP 매출 합계", "이름", "테마 매출 합계", "매출"],
-                                   ascending=[False, True, False, False])
+                # 'IP 매출 합계' 는 1번 시트와 같은 이유로 정렬에만 쓴다.
+                _t = (_t.sort_values(["IP 매출 합계", "이름", "테마 매출 합계", "매출"],
+                                     ascending=[False, True, False, False])
+                      [["이름", "테마", "테마 매출 합계", "프레임",
+                        "매출", "IP 내 비중(%)", "테마 내 비중(%)", "건수", "건당 평균"]]
                       .reset_index(drop=True))
                 return _t.rename(columns={
-                    "IP 매출 합계": "IP 매출 합계(원)", "테마 매출 합계": "테마 매출 합계(원)",
+                    "테마 매출 합계": "테마 매출 합계(원)",
                     "매출": "매출(원)", "건수": "건수(건)", "건당 평균": "건당 평균(원)"})
 
             with _q3, st.container(key="dlbtn"):
