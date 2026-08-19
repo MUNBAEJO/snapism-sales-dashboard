@@ -1416,7 +1416,7 @@ if _TABSEL == "📊 매출 한눈에":
     with card():
         # @st.fragment — 기간(월·주·일) 토글을 눌러도 이 조각만 다시 그린다.
         # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
-        @st.fragment
+        # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
         def _trend():  # 프리셋 토글 → 매출 추이 차트
             # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07).
             #   흐름은 길게 봐야 읽히는데, 기간을 좁히면 막대 서너 개만 남아 추이가 안 보였다.
@@ -1561,7 +1561,7 @@ if _TABSEL == "📊 매출 한눈에":
         with card("🏬 국가별 매출 TOP 5 매장", key="scard-hstore"):
             # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
             # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
-            @st.fragment
+            # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
             def _home_store():  # 국가 선택 → TOP5 매장
                 _opts = (rev.groupby("국가")["정산금액"].sum().sort_values(ascending=False).index.tolist()
                          if "국가" in rev.columns else [])
@@ -1602,7 +1602,7 @@ if _TABSEL == "🧩 상품 카테고리 분석":
             css_donut(list(zip(ac2["_c"], ac2["매출"])), ["var(--brand-2)", "var(--teal)"], sub=_sub)
         # @st.fragment — 안의 위젯을 조작해도 이 조각만 다시 그린다.
         # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
-        @st.fragment
+        # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
         def _frame_rank():  # 구분·상태 토글 → 프레임 순위
             # 구분선 + 프레임 전체 순위(토글 + 전체폭 표)
             st.markdown('<div style="border-top:1px solid var(--border);margin-top:16px"></div>',
@@ -1765,7 +1765,7 @@ if _TABSEL == "🧩 상품 카테고리 분석":
 - 왼쪽 도넛 = 비중(상위 3 + 기타 묶음), 오른쪽 막대 = 카테고리별 매출액 전체.
 """)
 
-    @st.fragment
+    # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
     def _prod_rank():
         with card("📦 카테고리별 상품 순위", key="scard-prodsel"):
             cats = [c for c in sorted(rev["상품 카테고리"].dropna().astype(str).unique().tolist())
@@ -2025,7 +2025,7 @@ if _TABSEL == "🌏 국가별 분석":
 
         # 포5: 포토이즘의 '🏆 국가별 타이틀 TOP 10' 과 짝을 맞춘 카드.
         #      스내피즘엔 '타이틀(날짜+IP)' 개념이 없어 같은 자리를 **프레임(IP)** 로 채운다.
-        @st.fragment
+        # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
         def _nat_frame():
             with card("🏆 국가별 TOP 프레임(IP)", key="scard-natframe"):
                 _fsrc = rev[rev["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]

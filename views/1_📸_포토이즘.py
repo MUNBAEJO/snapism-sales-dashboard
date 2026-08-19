@@ -2284,7 +2284,7 @@ if _TABSEL == "🎫 구좌타입 분석":
     _detail_gubuns = [g for g in present if g not in _ORIG_GUBUNS]
     # ★위젯(묶기·검색·프레임)을 탭 안에 두므로 **프래그먼트로 격리**한다.
     #   안 그러면 조작할 때마다 전체가 재실행돼 st.tabs 선택이 첫 탭으로 튕긴다.
-    @st.fragment
+    # [뗌 2026-08-19] @st.fragment — 탭을 옮길 때마다 조각이 사라졌다 생겨서, 옛 조각 id 로 온 재실행을 스트림릿이 조용히 버린다(눌러도 반응이 없다). 지금은 탭 선택이 segmented_control 이라 전체 재실행에도 안 튕긴다 → 조각이 필요 없다.
     def _slot_detail():
       if _detail_gubuns or _orig_gubuns:
         with card("🎬 구좌별 상세 <span class='muted'>(전체·구좌별 → 타이틀/프레임별 매출)</span>"):
