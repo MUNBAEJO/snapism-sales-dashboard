@@ -1617,11 +1617,15 @@ if _TABSEL == "🧩 상품 카테고리 분석":
                 st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
                             '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
             with _tt:
-                _td = st.session_state.get("_keep_cat_frame_tog", "전체")
+                # ★`default=` 를 넘기면 세션값과 싸운다(눌렀다가 되돌아온다).
+                #   없을 때만 세션을 채우고, 그 뒤론 세션값 하나만 쓴다.
+                _to = ["전체", "아티스트", "캐릭터"]
+                if "cat_frame_tog" not in st.session_state:
+                    _td = st.session_state.get("_keep_cat_frame_tog", "전체")
+                    st.session_state["cat_frame_tog"] = _td if _td in _to else "전체"
                 _tog = st.segmented_control(
-                    "구분", ["전체", "아티스트", "캐릭터"],
-                    default=_td if _td in ("전체", "아티스트", "캐릭터") else "전체",
-                    key="cat_frame_tog", label_visibility="collapsed") or "전체"
+                    "구분", _to, key="cat_frame_tog",
+                    label_visibility="collapsed") or "전체"
                 st.session_state["_keep_cat_frame_tog"] = _tog
             _fs = _s if _tog == "전체" else _s[_s["_c"] == _tog]
             fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
@@ -1775,20 +1779,23 @@ if _TABSEL == "🧩 상품 카테고리 분석":
                 return
             _d = "미니스티커" if "미니스티커" in cats else cats[0]
             _c1, _c2 = st.columns([3, 2])
-            _pk = st.session_state.get("_keep_prod_rank_pick")
-            pick = _c1.selectbox("카테고리", cats,
-                                 index=cats.index(_pk) if _pk in cats else cats.index(_d),
-                                 key="prod_rank_pick", label_visibility="collapsed")
+            if st.session_state.get("prod_rank_pick") not in cats:
+                _pk = st.session_state.get("_keep_prod_rank_pick")
+                st.session_state["prod_rank_pick"] = _pk if _pk in cats else _d
+            pick = _c1.selectbox("카테고리", cats, key="prod_rank_pick",
+                                 label_visibility="collapsed")
             st.session_state["_keep_prod_rank_pick"] = pick
             # ★어느 타이틀에서 팔린 건지 안 보였다(2026-08-11). 상품 이름만으로는
             #   '센'·'마사토' 가 어느 IP 것인지 알 수 없다 → 타이틀(프레임 이름)을 앞에 붙인다.
             #   ※'테마' 는 거래 원장에 없다 — CMS 촬영수 리포트에만 있는 값이라
             #     타이틀 → 상품 2단이 데이터로 가능한 최대다.
-            _ld = st.session_state.get("_keep_prod_rank_lvl", "타이틀 · 상품")
+            _lo = ["타이틀 · 상품", "타이틀"]
+            if "prod_rank_lvl" not in st.session_state:
+                _ld = st.session_state.get("_keep_prod_rank_lvl", _lo[0])
+                st.session_state["prod_rank_lvl"] = _ld if _ld in _lo else _lo[0]
             _lvl = _c2.segmented_control(
-                "묶기", ["타이틀 · 상품", "타이틀"],
-                default=_ld if _ld in ("타이틀 · 상품", "타이틀") else "타이틀 · 상품",
-                key="prod_rank_lvl", label_visibility="collapsed") or "타이틀 · 상품"
+                "묶기", _lo, key="prod_rank_lvl",
+                label_visibility="collapsed") or _lo[0]
             st.session_state["_keep_prod_rank_lvl"] = _lvl
             _src = rev[rev["상품 카테고리"] == pick]
             _fr = _src["프레임 이름"].astype(str).str.strip().replace("nan", "")

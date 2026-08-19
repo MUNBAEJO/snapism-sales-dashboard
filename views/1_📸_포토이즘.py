@@ -2296,11 +2296,14 @@ if _TABSEL == "🎫 구좌타입 분석":
             _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.74, 0.66])
             #   ★기본을 'IP명(회차 합산)' 으로 뒀다(요청) — 평소 보고 싶은 건 IP 규모지
             #     회차별로 쪼개진 줄이 아니다. 회차를 봐야 할 때만 '타이틀' 로 바꾼다.
+            # ★`default=` 를 넘기면 세션값과 싸운다(눌렀다가 되돌아온다).
             _gopt = ["IP명(회차 합산)", "타이틀"]
-            _gd = st.session_state.get("_keep_ph_slot_grp", _gopt[0])
+            if "ph_slot_grp" not in st.session_state:
+                _gd = st.session_state.get("_keep_ph_slot_grp", _gopt[0])
+                st.session_state["ph_slot_grp"] = _gd if _gd in _gopt else _gopt[0]
             _grp = (_q1.segmented_control(
-                "묶기", _gopt, default=_gd if _gd in _gopt else _gopt[0],
-                key="ph_slot_grp", label_visibility="collapsed") or _gopt[0])
+                "묶기", _gopt, key="ph_slot_grp",
+                label_visibility="collapsed") or _gopt[0])
             st.session_state["_keep_ph_slot_grp"] = _grp
             _kw = _q2.text_input("검색", key="ph_slot_q", label_visibility="collapsed",
                                  placeholder="🔍 타이틀·IP 이름으로 찾기").strip()
