@@ -983,10 +983,14 @@ def _theme_portion(one, key_label=""):
     with c2:
         st.markdown('<div class="ct">🎨 테마별 매출</div>', unsafe_allow_html=True)
         hbar_list(_th, "테마", top=8, show_pct=True)
-    st.markdown('<div class="ct" style="margin-top:10px">🖼 프레임별 매출 '
-                '<span class="muted">아티스트는 멤버 단위예요</span></div>',
+    # ★예전엔 여기서 프레임을 **테마 구분 없이 통째로** 순위 매겼다. 그러면
+    #   "이 테마 안에서 누가 팔렸나" 를 볼 방법이 아예 없었다(2026-08-19 요청).
+    #   theme_tree 는 만들어만 두고 안 쓰이고 있었다 — 계층으로 바꾼다.
+    st.markdown('<div class="ct" style="margin-top:10px">🎨 테마 → 🖼 프레임 '
+                '<span class="muted">테마 안에서 어느 프레임이 팔렸는지 · '
+                '아티스트는 멤버 단위예요</span></div>',
                 unsafe_allow_html=True)
-    hbar_list(_fr, "프레임", top=10, show_pct=True)
+    theme_tree(one, top_themes=6, top_frames=6)
 
 def theme_tree(dframe, top_themes=8, top_frames=6):
     """타이틀 → 테마 → 프레임 계층을 한 덩어리로 그린다.
@@ -1008,7 +1012,13 @@ def theme_tree(dframe, top_themes=8, top_frames=6):
             f'<span class="r num">{fmt_krw(t["매출"])}</span>'
             f'<span class="r num" style="color:var(--text-2)">{int(t["건수"]):,}</span>'
             f'{pct_bar(_tf, 1.0)}</div>')
-        fr = dframe[dframe["테마"] == t["테마"]].sort_values("매출", ascending=False)
+        # ★프레임으로 **합쳐야** 한다. 원본 한 줄이 (타이틀명 × 테마 × 프레임)이라
+        #   같은 IP 안에 타이틀이 여럿이면(260624 SM ent · 260624 라이즈 · PW …)
+        #   한 테마 밑에 `앤톤(ANTON)` 이 세 줄로 나온다(2026-08-19 발견).
+        fr = (dframe[dframe["테마"] == t["테마"]]
+              .groupby("프레임", as_index=False)
+              .agg(매출=("매출", "sum"), 건수=("건수", "sum"))
+              .sort_values("매출", ascending=False))
         fmx = (fr["매출"] / t["매출"]).max() if t["매출"] else 1.0
         for _, f in fr.head(top_frames).iterrows():
             html.append(
@@ -1463,12 +1473,14 @@ def css_hours(vals):
 def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False):
     """시안 TOP 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
+    # ★분모는 **자르기 전 전체 합**이다. 예전엔 head(top) 뒤에 합을 냈다 —
+    #   테마 13개 중 8개만 그리면서 그 8개 합을 분모로 써서, 같은 값이 도넛에선
+    #   43.5%, 막대에선 45.1% 로 **다르게 나왔다**(2026-08-19). 프레임은 42개 중
+    #   10개만 보여 16.8% 로 나왔는데 실제는 11.5% 였다.
+    _tot = d["매출"].sum() if show_pct else 0
     if top:
         d = d.head(top)
     mx = d["매출"].max() or 1
-    # show_pct: 전체 대비 비중을 오른쪽에 덧붙인다. **전체 목록일 때만 켤 것** —
-    # TOP 5 같은 부분집합에 켜면 분모가 5개가 돼 "1위 60%" 같은 오해를 부른다.
-    _tot = d["매출"].sum() if show_pct else 0
 
     def _rows(sub):
         h = '<div class="hb-wrap">'
