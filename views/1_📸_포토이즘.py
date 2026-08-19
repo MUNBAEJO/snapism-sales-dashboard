@@ -2057,8 +2057,9 @@ if SHOW_TAB_ETC:
 # ★부수 효과 — 안 그려진 탭의 위젯은 스트림릿이 세션에서 지운다. 탭을 왕복하면
 #   검색어·묶기·프리셋이 초기화되므로 아래에서 **값을 한 번 다시 써서** 살려 둔다.
 #   (버튼 키는 절대 넣지 말 것 — st.button 은 session_state 대입이 예외다.)
-for _k in ("ph_trend", "ph_home_store_country", "ph_slot_grp", "ph_slot_q",
-           "ph_ip_nat_sel"):
+#   ※`default=` 를 받는 위젯은 여기 넣으면 안 된다 — "기본값과 세션값이 둘 다
+#     있다" 는 경고가 뜬다. 그런 위젯은 각자 자리에서 `_keep_*` 로 살린다.
+for _k in ("ph_home_store_country", "ph_slot_q", "ph_ip_nat_sel"):
     if _k in st.session_state:
         st.session_state[_k] = st.session_state[_k]
 
@@ -2295,9 +2296,12 @@ if _TABSEL == "🎫 구좌타입 분석":
             _q1, _q2, _sp, _q3 = st.columns([1.5, 2.5, 1.74, 0.66])
             #   ★기본을 'IP명(회차 합산)' 으로 뒀다(요청) — 평소 보고 싶은 건 IP 규모지
             #     회차별로 쪼개진 줄이 아니다. 회차를 봐야 할 때만 '타이틀' 로 바꾼다.
+            _gopt = ["IP명(회차 합산)", "타이틀"]
+            _gd = st.session_state.get("_keep_ph_slot_grp", _gopt[0])
             _grp = (_q1.segmented_control(
-                "묶기", ["IP명(회차 합산)", "타이틀"], default="IP명(회차 합산)",
-                key="ph_slot_grp", label_visibility="collapsed") or "IP명(회차 합산)")
+                "묶기", _gopt, default=_gd if _gd in _gopt else _gopt[0],
+                key="ph_slot_grp", label_visibility="collapsed") or _gopt[0])
+            st.session_state["_keep_ph_slot_grp"] = _grp
             _kw = _q2.text_input("검색", key="ph_slot_q", label_visibility="collapsed",
                                  placeholder="🔍 타이틀·IP 이름으로 찾기").strip()
             _KEY = "타이틀" if _grp == "타이틀" else "IP명"

@@ -1380,8 +1380,10 @@ if SHOW_TAB_ETC:
 # ★안 그려진 탭의 위젯은 스트림릿이 세션에서 지운다 → 탭을 왕복하면 선택이
 #   초기화되므로 값을 한 번 다시 써서 살린다. **버튼 키는 절대 넣지 말 것**
 #   (st.button / st.download_button 은 session_state 대입이 예외다).
-for _k in ("sn_trend", "home_store_country", "cat_frame_tog",
-           "prod_rank_pick", "prod_rank_lvl", "nat_frame_sel"):
+#   ※`default=`/`index=` 를 받는 위젯은 여기 넣으면 안 된다 — 스트림릿이
+#     "기본값과 세션값이 둘 다 있다" 며 경고한다. 그런 위젯은 각자 자리에서
+#     `_keep_*`(위젯 키가 아닌 평범한 키)로 살린다.
+for _k in ("home_store_country", "nat_frame_sel"):
     if _k in st.session_state:
         st.session_state[_k] = st.session_state[_k]
 
@@ -1615,8 +1617,12 @@ if _TABSEL == "🧩 상품 카테고리 분석":
                 st.markdown('<div class="ct" style="margin:0;transform:translateY(-8px)">'
                             '🖼 프레임(IP) 전체 순위</div>', unsafe_allow_html=True)
             with _tt:
-                _tog = st.segmented_control("구분", ["전체", "아티스트", "캐릭터"], default="전체",
-                                            key="cat_frame_tog", label_visibility="collapsed") or "전체"
+                _td = st.session_state.get("_keep_cat_frame_tog", "전체")
+                _tog = st.segmented_control(
+                    "구분", ["전체", "아티스트", "캐릭터"],
+                    default=_td if _td in ("전체", "아티스트", "캐릭터") else "전체",
+                    key="cat_frame_tog", label_visibility="collapsed") or "전체"
+                st.session_state["_keep_cat_frame_tog"] = _tog
             _fs = _s if _tog == "전체" else _s[_s["_c"] == _tog]
             fr_all = (_fs[_fs["프레임 이름"].astype(str).str.strip().replace("nan", "").ne("")]
                       .groupby("프레임 이름").agg(매출=("정산금액", "sum"), 건수=("정산금액", "count")).reset_index())
@@ -1769,15 +1775,21 @@ if _TABSEL == "🧩 상품 카테고리 분석":
                 return
             _d = "미니스티커" if "미니스티커" in cats else cats[0]
             _c1, _c2 = st.columns([3, 2])
-            pick = _c1.selectbox("카테고리", cats, index=cats.index(_d),
+            _pk = st.session_state.get("_keep_prod_rank_pick")
+            pick = _c1.selectbox("카테고리", cats,
+                                 index=cats.index(_pk) if _pk in cats else cats.index(_d),
                                  key="prod_rank_pick", label_visibility="collapsed")
+            st.session_state["_keep_prod_rank_pick"] = pick
             # ★어느 타이틀에서 팔린 건지 안 보였다(2026-08-11). 상품 이름만으로는
             #   '센'·'마사토' 가 어느 IP 것인지 알 수 없다 → 타이틀(프레임 이름)을 앞에 붙인다.
             #   ※'테마' 는 거래 원장에 없다 — CMS 촬영수 리포트에만 있는 값이라
             #     타이틀 → 상품 2단이 데이터로 가능한 최대다.
+            _ld = st.session_state.get("_keep_prod_rank_lvl", "타이틀 · 상품")
             _lvl = _c2.segmented_control(
-                "묶기", ["타이틀 · 상품", "타이틀"], default="타이틀 · 상품",
+                "묶기", ["타이틀 · 상품", "타이틀"],
+                default=_ld if _ld in ("타이틀 · 상품", "타이틀") else "타이틀 · 상품",
                 key="prod_rank_lvl", label_visibility="collapsed") or "타이틀 · 상품"
+            st.session_state["_keep_prod_rank_lvl"] = _lvl
             _src = rev[rev["상품 카테고리"] == pick]
             _fr = _src["프레임 이름"].astype(str).str.strip().replace("nan", "")
             if _lvl == "타이틀":
