@@ -7,6 +7,7 @@
 기존 그대로 보존(비파괴). 표현 계층만 스내피즘 시안형(CSS 차트·카드key·컴팩트 위젯)으로 교체.
 """
 import json
+import re
 import sys
 import os
 from contextlib import contextmanager
@@ -958,6 +959,24 @@ def theme_all(start_date, end_date, ccodes=(), unit_map=None):
     return g[g["매출"] > 0]
 
 
+_TDATE = re.compile(r"^\d{5,8}_")
+
+
+def _short_theme(names):
+    """표시용으로 테마 앞 날짜접두어를 뗀다(`260624_라이즈(RIIZE)` → `라이즈(RIIZE)`).
+
+    ★떼서 **겹치는 이름은 그대로 둔다.** `260727_izna` 와 `260811_izna` 는 다른 회차인데
+      둘 다 'izna' 가 되면 화면에서 구분이 안 된다. 이런 게 6개 IP · 14줄 있다
+      (&TEAM · LE SSERAFIM · izna · 보넥도 · 이즈나 · 큐티 스트리트).
+    ★**표시만 바꾼다.** 집계·통합은 원래 이름 그대로다.
+    """
+    byshort = {}
+    for n in names:
+        byshort.setdefault(_TDATE.sub("", str(n)), []).append(n)
+    return {n: (sh if len(orig) == 1 else n)
+            for sh, orig in byshort.items() for n in orig}
+
+
 def _theme_portion(one, key_label=""):
     """한 IP/타이틀의 **테마 · 프레임 구성**을 '매출 한눈에' 처럼 그린다.
     one = theme_all 결과에서 그 대상만 잘라 온 표(타이틀명·테마·프레임·매출·건수)."""
@@ -965,6 +984,8 @@ def _theme_portion(one, key_label=""):
         st.caption("이 조건에선 테마 데이터가 없어요.")
         return
     _tot = int(one["매출"].sum())
+    # 화면에서만 날짜접두어를 뗀다 — 겹치는 것은 남긴다(위 _short_theme 주석 참고)
+    one = one.assign(테마=one["테마"].astype(str).map(_short_theme(one["테마"].unique())))
     _th = (one.groupby("테마", as_index=False).agg(매출=("매출", "sum"), 건수=("건수", "sum"))
            .sort_values("매출", ascending=False))
     _fr = (one.groupby("프레임", as_index=False).agg(매출=("매출", "sum"), 건수=("건수", "sum"))
