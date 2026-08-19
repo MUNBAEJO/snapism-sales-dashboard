@@ -35,6 +35,22 @@ def _base(col: str) -> str:
 
 
 def _fmt_of(col: str, series: pd.Series) -> str | None:
+    """열 이름으로 표시 형식을 고른다.
+
+    ★**머리줄에 박은 단위가 첫 번째 규칙이다.** `…(원)` 이면 돈, `…(%)` 면 비율,
+      `…(건/개/회/개국)` 이면 개수. 전엔 이름을 통째로 대조해서, 새 열을 만들면
+      (`테마 매출 합계(원)`) 목록에 없다고 **쉼표가 안 찍혔다.** 단위를 헤더에
+      넣기로 한 이상 그게 가장 확실한 신호다.
+    이름만 있고 단위가 없는 옛 열은 아래 목록으로 계속 받는다.
+    """
+    u = col[col.rfind("("):] if "(" in col else ""
+    if u == "(%)":
+        return _FMT_RATE
+    if u == "(원)":
+        return _FMT_MONEY
+    if u in ("(건)", "(개)", "(회)", "(개국)", "(곳)", "(명)"):
+        return _FMT_COUNT
+
     c = _base(col)
     if c in (_base(x) for x in _RATE):
         return _FMT_RATE
