@@ -81,13 +81,16 @@ def _rates(rate_date, fx_key):
 
 
 @st.cache_data(ttl=900, max_entries=8, show_spinner="매출을 집계하는 중이에요…")
-def _titles(brand, start, end, rate_key, fx_key):
+def _titles(brand, start, end, rate_key, fx_key, dataver=0.0):
     rates, eff, src = _rates(end, fx_key)        # 위 캐시를 그대로 탄다
     return sm.title_revenue(brand, start, end, rates), eff, src
 
 
 def load_titles(brand, start, end):
-    return _titles(brand, start, end, end, fx.version())
+    # ★dataver — 이 페이지의 캐시엔 **데이터 버전 키가 없었다**. ttl 900 뿐이라
+    #   수집이 막 끝난 직후에 뽑으면 최대 15분 전 매출로 대외 문서가 나갔다.
+    #   다른 페이지는 전부 file_version 을 키로 넘긴다(2026-08-19 맞춤).
+    return _titles(brand, start, end, end, fx.version(), sc.data_version())
 
 
 # ── 기간 ─────────────────────────────────────────────────────────────────
@@ -143,13 +146,13 @@ _TK_RE = re.compile(r"[A-Za-z]{2,}-\d+")
 
 
 @st.cache_data(ttl=900, max_entries=8, show_spinner=False)
-def _title_tickets(brand, start, end, rate_key, fx_key, mapver):
+def _title_tickets(brand, start, end, rate_key, fx_key, mapver, dataver=0.0):
     """{타이틀: (확정티켓|None, [후보티켓...])} — 전 타이틀을 **한 번만** 훑는다.
 
     ★티켓마다 `suggest_titles` 를 부르면 그때마다 매출을 다시 집계한다.
       티켓 4장이면 4번이라 화면이 눈에 띄게 느려진다. 한 번 훑어 캐시한다.
     """
-    df, _, _ = _titles(brand, start, end, rate_key, fx_key)
+    df, _, _ = _titles(brand, start, end, rate_key, fx_key, dataver)
     mp = sm.load_mapping()["mappings"].get(brand, {})
     out = {}
     for t in df["타이틀"]:
@@ -211,7 +214,8 @@ def _ticket_box(brand: str):
     if not tickets:
         return [], [], {}, []
 
-    tt = _title_tickets(brand, S, E, E, fx.version(), sm.mapping_version())
+    tt = _title_tickets(brand, S, E, E, fx.version(), sm.mapping_version(),
+                        sc.data_version())
     rev = dict(zip(*_rev_index(brand)))          # 타이틀 → (매출액, 국가수)
 
     # ★★목록의 축은 **타이틀**이다(티켓이 아니라).
@@ -275,7 +279,7 @@ def _ticket_box(brand: str):
 
 
 @st.cache_data(ttl=900, max_entries=4, show_spinner=False)
-def _cat_breakdown_cached(brand, start, end):
+def _cat_breakdown_cached(brand, start, end, dataver=0.0):
     """{타이틀: [(판매항목, 현지합), ...]} — 스내피즘만. 어느 티켓에 담을지 고를 때
     한 타이틀 안에 무엇이 들어 있는지 보이게 한다(와이드 스티커·포토카드·폴라릿).
 
@@ -305,18 +309,37 @@ def _cat_breakdown_cached(brand, start, end):
 
 
 def _cat_breakdown(brand):
-    return _cat_breakdown_cached(brand, S, E)
+    return _cat_breakdown_cached(brand, S, E, sc.data_version())
 
 
 @st.cache_data(ttl=900, max_entries=8, show_spinner=False)
-def _rev_index_cached(brand, start, end, rate_key, fx_key):
-    df, _, _ = _titles(brand, start, end, rate_key, fx_key)
+def _rev_index_cached(brand, start, end, rate_key, fx_key, dataver=0.0):
+    df, _, _ = _titles(brand, start, end, rate_key, fx_key, dataver)
     return (list(df["타이틀"]),
             list(zip(df["매출액"].astype(int), df["국가수"].astype(int))))
 
 
 def _rev_index(brand):
-    return _rev_index_cached(brand, S, E, E, fx.version())
+    return _rev_index_cached(brand, S, E, E, fx.version(), sc.data_version())
+
+
+# ★★미리보기의 국가별 상세를 캐시한다 (2026-08-19). 이 블록은 `make_panel`
+#   프래그먼트 안이라, 체크박스·요율 칸(국가 수만큼 최대 30개) **아무거나 건드릴
+#   때마다** 통째로 다시 돌았다. 한 번이 `master_photoism.parquet`(441MB) 풀스캔 +
+#   집계본 스캔이고 브랜드가 둘이면 두 배다 — 국가별 요율을 한 칸 채울 때마다
+#   1GB 가까이 다시 읽고 있었다.
+# ★키에 dataver 를 반드시 넣는다. 대외 문서를 만드는 화면이라 캐시가 옛 매출을
+#   물고 있으면 slow 보다 훨씬 나쁘다.
+@st.cache_data(ttl=900, max_entries=16, show_spinner=False)
+def _detail_cached(brand, titles_key, start, end, fx_key, dataver):
+    rates, _, _ = _rates(end, fx_key)
+    return sc.fill_open(sc.country_detail(brand, list(titles_key), start, end, rates),
+                        sc.open_countries(brand, start, end))
+
+
+@st.cache_data(ttl=900, max_entries=16, show_spinner=False)
+def _rev_nats_cached(brand, titles_key, start, end, dataver):
+    return sc.revenue_countries(brand, list(titles_key), start, end)
 
 
 @st.fragment
@@ -445,7 +468,7 @@ def make_panel():
         #   전 세계 30칸을 매번 채우게 하면 안 쓰므로 **그 기간에 매출이 난 나라만**
         #   줄 세우고, 기본 요율로 미리 채워 둔다. 다른 나라만 고치면 된다.
         _saved_cc = dict(cur.get("agency_cc") or {})
-        _nats = sc.revenue_countries(b, titles, S, E)
+        _nats = _rev_nats_cached(b, tuple(titles), S, E, sc.data_version())
         _cc_new = {}
         with st.expander(f"🌏 국가별 소속사 요율 "
                          + (f"— {len(_saved_cc)}개국 지정됨" if _saved_cc else "— 기본 요율 일괄"),
@@ -517,8 +540,7 @@ def make_panel():
     for b, (tks, titles) in picks.items():
         if not tks or not titles:
             continue
-        d = sc.fill_open(sc.country_detail(b, titles, S, E, RATES),
-                         sc.open_countries(b, S, E))
+        d = _detail_cached(b, tuple(titles), S, E, fx.version(), sc.data_version())
         if d.empty:                 # 그 기간 매출 행이 없으면 문서에도 안 들어간다
             continue
         shown.append(b)

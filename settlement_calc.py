@@ -32,6 +32,23 @@ PH_AGG = BASE_DIR / "data" / "master_photoism_agg.parquet"
 PH_RAW = BASE_DIR / "data" / "master_photoism.parquet"
 SN_MASTER = BASE_DIR / "data" / "master.parquet"
 
+
+def data_version() -> float:
+    """계산이 읽는 parquet 3종 중 **가장 최근 변경시각**.
+
+    ★@st.cache_data 키에 넣으라고 만든 값이다. 정산서 화면의 캐시는 ttl 만 있고
+      데이터 버전이 없어서, 수집이 막 끝난 직후에 뽑으면 **최대 15분 전 매출로
+      대외 문서가 나갈 수 있었다**(2026-08-19). 다른 페이지는 전부
+      `data_io.file_version(...)` 을 키로 넘기는데 이 페이지만 빠져 있었다.
+    """
+    v = 0.0
+    for p in (PH_AGG, PH_RAW, SN_MASTER):
+        try:
+            v = max(v, p.stat().st_mtime)
+        except OSError:
+            pass
+    return v
+
 # 국가명이 브랜드마다 다르다 — 한 문서에 같이 실리므로 통일한다.
 NAT_KO = {"대한민국": "한국", "KOREA": "한국", "Korea": "한국"}
 
