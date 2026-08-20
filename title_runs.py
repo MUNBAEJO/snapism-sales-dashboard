@@ -35,12 +35,18 @@ _SUFFIX_RE = re.compile(
 
 def _load_aliases():
     """ip_aliases.json + title_aliases.json → {별칭(정규화): 대표명(정규화)}"""
+    # ★파일이 **있는데** 못 읽으면 알린다 (2026-08-20). 별칭표가 비면 같은 IP 가
+    #   표기별로 다른 IP 로 갈려 런이 통째로 어긋나는데, 화면엔 그냥 런이 여러 개
+    #   있는 것처럼 보인다. 파일이 없는 건 정상(별칭 미사용)이라 건너뛴다.
     out = {}
     for path in (ALIAS_FILE, TITLE_ALIAS_FILE):
+        if not path.exists():
+            continue
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+        except Exception as e:
+            raise RuntimeError(f"{path.name} 을 읽지 못했어요 — 별칭이 비면 "
+                               f"런이 잘못 갈립니다. ({e})") from e
         for canon, variants in raw.items():
             if canon.startswith("_"):      # _comment 등 메타 키 제외
                 continue

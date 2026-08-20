@@ -102,13 +102,28 @@ def _key(s) -> str:
     return "".join(c for c in str(s).lower() if c.isalnum())
 
 
+def _cur_doc() -> dict:
+    """지금 name_alias.json. ★**있는데 못 읽으면 예외를 던진다** (2026-08-20).
+
+    이 파일의 `_meta.주의` 가 "영영 빼려면 _제외 에 적으세요 — 그건 다시 돌려도
+    남아요" 라고 약속하고 있다. 그런데 읽기 실패를 빈 값으로 넘기면 아래 main() 이
+    `_제외`·`_표기통합_제외IP`·`_자리표_허용IP` 를 **빈 배열로 덮어써 저장**한다 —
+    손으로 관리해 온 목록이 한 번에 사라지고, 다음 생성 때 빠졌던 짝들이 되살아난다.
+    """
+    if not OUT.exists():
+        return {}
+    try:
+        return json.loads(OUT.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise RuntimeError(
+            f"{OUT.name} 을 읽지 못해 생성을 멈춥니다 — 그대로 진행하면 손으로 적어 둔 "
+            f"_제외 목록이 지워집니다. 파일을 고친 뒤 다시 돌려 주세요. ({e})") from e
+
+
 def _blocklist() -> set:
     """`_제외` — 손으로 "이 둘은 다른 사람이다" 라고 적어 둔 짝. 다시 돌려도 살아남는다.
     형식: [[IP, 이름1, 이름2, "왜"], …]"""
-    try:
-        cur = json.loads(OUT.read_text(encoding="utf-8"))
-    except Exception:
-        return set()
+    cur = _cur_doc()
     out = set()
     for row in cur.get("_제외", []):
         if len(row) >= 3:
@@ -117,10 +132,7 @@ def _blocklist() -> set:
 
 
 def _json_list(key: str) -> list:
-    try:
-        return json.loads(OUT.read_text(encoding="utf-8")).get(key, [])
-    except Exception:
-        return []
+    return _cur_doc().get(key, [])
 
 
 def _skip_ips() -> list:
@@ -469,10 +481,7 @@ def main() -> None:
     dry = "--dry" in sys.argv
     ph, ph_t, ph_s, ph_c = photoism()
     sn, sn_t, sn_s = snapism()
-    try:
-        _cur = json.loads(OUT.read_text(encoding="utf-8"))
-    except Exception:
-        _cur = {}
+    _cur = _cur_doc()          # 못 읽으면 여기서 멈춘다(_cur_doc 주석 참고)
     doc = {
         "_meta": {
             "만든날": str(date.today()),

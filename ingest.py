@@ -125,11 +125,19 @@ def clean_amount(val):
 
 
 def load_csv(filepath):
+    """★못 읽으면 **이유를 남긴다** (2026-08-20). 전엔 네 인코딩이 다 실패하면
+    조용히 None 을 돌려줬고, 호출부가 `if df is not None:` 이라 **그 파일이 통째로
+    빠진 채 master 가 만들어졌다** — 그 나라 그 기간 매출이 사라지는데 로그 한 줄
+    안 남았다. 건너뛰는 동작 자체는 유지하되(한 장 때문에 전체 적재를 멈추면
+    그날 수집이 통째로 날아간다), 어떤 파일이 왜 빠졌는지는 반드시 찍는다."""
+    errs = []
     for enc in ["utf-8-sig", "cp949", "euc-kr", "utf-8"]:
         try:
             return pd.read_csv(filepath, encoding=enc, dtype=str)
-        except Exception:
-            continue
+        except Exception as e:
+            errs.append(f"{enc}: {type(e).__name__}")
+    print(f"[적재 제외] {filepath} — 네 인코딩 모두 실패 ({' · '.join(errs)}). "
+          f"이 파일의 매출은 이번 적재에서 빠집니다.")
     return None
 
 

@@ -52,10 +52,22 @@ def _path() -> Path:
 
 @lru_cache(maxsize=1)
 def _table(mtime: float) -> dict:
-    try:
-        return json.loads(_path().read_text(encoding="utf-8"))
-    except Exception:
+    """짝표를 읽는다. ★**파일이 있는데 못 읽으면 예외를 던진다** (2026-08-20).
+
+    전엔 무조건 `{}` 였다. 그러면 이름 통합이 통째로 꺼지는데 합계는 그대로라
+    아무 데도 티가 안 난다 — 같은 테마·프레임이 표기별로 쪼개져 순위만 조용히
+    뒤바뀐다("왜 이게 안 보이지" 로만 드러난다). 이 파일은 git 에 들어 있어서
+    깨질 일이 거의 없고, 깨졌다면 손으로 잘못 고친 것이라 바로 알아야 한다.
+    파일이 아예 없는 것(첫 설치·별칭 미사용)은 정상이라 `{}` 그대로 둔다.
+    """
+    p = _path()
+    if not p.exists():
         return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"{p.name} 을 읽지 못했어요 — 이름 통합이 통째로 "
+                           f"꺼지면 순위가 조용히 틀어집니다. ({e})") from e
 
 
 def load() -> dict:

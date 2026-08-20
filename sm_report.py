@@ -137,11 +137,12 @@ def _settled_cc() -> frozenset:
 
     그 밖의 국가는 쿠폰·코인을 정산하지 않으므로 촬영수 보정 대상도 아니다.
     """
-    try:
-        from photoism_rules import COIN_CC, COUPON_CC
-        return frozenset(COUPON_CC) | frozenset(COIN_CC)
-    except Exception:
-        return frozenset()
+    # ★임포트 실패를 빈 집합으로 넘기면 안 된다 (2026-08-20). SETTLED_CC 가 비면
+    #   `fill_zero_shoot` 의 `max(촬영수, 주문수)` 보정이 **전 국가에서 해제**되고,
+    #   쿠폰·코인 촬영이 다시 통째로 빠진다(영국이 석 달간 0 이던 그 증상).
+    #   같은 저장소 안 모듈이라 임포트가 실패하면 그건 진짜 고장이다.
+    from photoism_rules import COIN_CC, COUPON_CC
+    return frozenset(COUPON_CC) | frozenset(COIN_CC)
 
 
 SETTLED_CC = _settled_cc()

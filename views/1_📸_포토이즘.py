@@ -834,8 +834,14 @@ def load_frames(raw_titles, start_date, end_date, countries=(), stores=(), brand
             WHERE {" AND ".join(where)}
             GROUP BY 1 ORDER BY "매출" DESC
         """).df()
-    except Exception:
+    except Exception as _qe:                          # noqa: BLE001
+        # ★빈 표를 그냥 돌려주면 **"안 팔렸다" 와 구분이 안 된다** (2026-08-20).
+        #   메모리 한계나 parquet 잠금으로 쿼리가 죽어도 화면엔 정상적인
+        #   "데이터가 없어요" 가 뜨고, 담당자가 그대로 보고에 쓴다.
+        #   실패 사실을 표에 붙여 보내 화면이 다르게 말하게 한다.
+        print(f"[집계 실패] {_qe}", flush=True)
         d = pd.DataFrame()
+        d.attrs["query_error"] = str(_qe)[:300]
     finally:
         con.close()
     return d[d["매출"] > 0] if not d.empty else d
@@ -887,8 +893,14 @@ def _load_themes(raw_titles, start_date, end_date, ccodes=()):
             WHERE {" AND ".join(where)}
             GROUP BY 1, 2, 3
         """).df()
-    except Exception:
+    except Exception as _qe:                          # noqa: BLE001
+        # ★빈 표를 그냥 돌려주면 **"안 팔렸다" 와 구분이 안 된다** (2026-08-20).
+        #   메모리 한계나 parquet 잠금으로 쿼리가 죽어도 화면엔 정상적인
+        #   "데이터가 없어요" 가 뜨고, 담당자가 그대로 보고에 쓴다.
+        #   실패 사실을 표에 붙여 보내 화면이 다르게 말하게 한다.
+        print(f"[집계 실패] {_qe}", flush=True)
         d = pd.DataFrame()
+        d.attrs["query_error"] = str(_qe)[:300]
     finally:
         con.close()
     return d
@@ -960,8 +972,14 @@ def _load_theme_all(start_date, end_date, ccodes=()):
             WHERE {" AND ".join(where)}
             GROUP BY 1, 2, 3, 4
         """).df()
-    except Exception:
+    except Exception as _qe:                          # noqa: BLE001
+        # ★빈 표를 그냥 돌려주면 **"안 팔렸다" 와 구분이 안 된다** (2026-08-20).
+        #   메모리 한계나 parquet 잠금으로 쿼리가 죽어도 화면엔 정상적인
+        #   "데이터가 없어요" 가 뜨고, 담당자가 그대로 보고에 쓴다.
+        #   실패 사실을 표에 붙여 보내 화면이 다르게 말하게 한다.
+        print(f"[집계 실패] {_qe}", flush=True)
         d = pd.DataFrame()
+        d.attrs["query_error"] = str(_qe)[:300]
     finally:
         con.close()
     return d
@@ -2322,6 +2340,12 @@ with tab_ip:
                            if sel_countries else [])
             _thall = (theme_all(date_range[0], date_range[1], _sel_ccodes, _UNIT_MAP)
                       if len(date_range) == 2 else pd.DataFrame())
+            # ★집계가 **실패해서** 비었으면 "없어요" 라고 말하면 안 된다.
+            _qerr = getattr(_thall, "attrs", {}).get("query_error")
+            if _qerr:
+                st.error("🚫 테마 집계를 불러오지 못했어요 — 아래 표가 비어 있는 건 "
+                         "**매출이 없어서가 아니라 조회가 실패해서**예요.  \n"
+                         "잠시 뒤 다시 시도해 주세요. (" + _qerr + ")")
             if not _thall.empty:
                 # 테마 리포트엔 IP명이 없다 — 원장의 타이틀→IP 로 잇는다.
                 # 묶기가 '타이틀' 이면 타이틀명 자체가 키다.

@@ -28,7 +28,7 @@ def main():
     if not files:
         print("raw_theme에 파일이 없습니다.")
         return
-    parts = []
+    parts, _failed = [], []
     for f in files:
         m = _FN.search(Path(f).name)
         if not m:
@@ -37,7 +37,12 @@ def main():
         try:
             df = pd.read_excel(f)
         except Exception as ex:
-            print(f"[skip] {Path(f).name}: {ex}")
+            # ★★건너뛰고 끝내면 안 된다 (2026-08-20). 아래에서 팩트테이블을
+            #   **전량 재작성**하므로, 읽기 실패한 파일 몫이 테마 매출에서 빠진 채
+            #   덮어써진다. coverage_audit 의 테마 교차확인도 같이 눈이 먼다.
+            #   실패한 파일을 모아 두었다가 마지막에 **저장을 막는다.**
+            print(f"[읽기 실패] {Path(f).name}: {ex}")
+            _failed.append(Path(f).name)
             continue
         if df.empty:
             continue
@@ -51,6 +56,17 @@ def main():
         df["기간시작"] = pd.to_datetime(s, format="%Y%m%d").date()
         df["기간종료"] = pd.to_datetime(e, format="%Y%m%d").date()
         parts.append(df)
+
+    # ★★한 장이라도 못 읽었으면 **저장하지 않는다** (2026-08-20).
+    #   아래 `to_parquet` 은 팩트테이블을 통째로 다시 쓴다 — 빠진 파일 몫이
+    #   테마 매출에서 사라진 채 덮어써지고, 그 뒤로는 원본을 봐도 뭐가 빠졌는지
+    #   알 수 없다. 파일을 고쳐 다시 돌리는 게 맞다.
+    if _failed:
+        print(f"[중단] 읽지 못한 파일 {len(_failed)}개 — "
+              f"{' · '.join(_failed[:5])}{' 외' if len(_failed) > 5 else ''}")
+        print("       그대로 저장하면 이 파일들의 매출이 빠진 채 팩트테이블이 "
+              "덮어써집니다. 파일을 고친 뒤 다시 돌려 주세요.")
+        sys.exit(1)
 
     raw = pd.concat(parts, ignore_index=True)
     # 테스트 데이터 제외

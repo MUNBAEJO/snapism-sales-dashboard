@@ -457,8 +457,11 @@ def make_panel():
         tk = tks[0]                      # 대표 티켓 — 문서·저장의 기준
         cur = sc.get_rs(b, tk)
         saved_rs[b] = cur
+        # ★`[...]` 로 꺼내면 안 된다 — source 가 하나 늘 때마다 KeyError 로 죽는다.
         tag = {"화면 입력": "🖊 저장된 값", "지라": "🔗 지라",
-               "없음": "⚠️ 없음 — 직접 넣어 주세요"}[cur["source"]]
+               "없음": "⚠️ 없음 — 직접 넣어 주세요",
+               "조회실패": "🚫 지라 조회 실패 — <b>요율이 없는 게 아니라 못 물어봤어요</b>"
+               }.get(cur["source"], cur["source"])
         st.markdown(f"**{sm.BRAND_LABEL[b]}** `{tk}`"
                     + (f" <span class='muted'>외 {len(tks) - 1}장</span>"
                        if len(tks) > 1 else "")
@@ -466,8 +469,10 @@ def make_panel():
         # ★티켓마다 요율이 따로 저장돼 있다. 합쳐서 정산하면 대표 티켓 값만 쓰이므로
         #   다른 값이 들어 있으면 조용히 무시된다 — 그건 알려 줘야 한다.
         _others = {t: sc.get_rs(b, t) for t in tks[1:]}      # 티켓당 한 번만 조회
+        # ★'조회실패' 도 값이 없는 것이라 비교에서 뺀다 — 안 빼면 지라가 잠깐
+        #   죽었을 때 "티켓마다 요율이 달라요" 경고가 헛나온다.
         _diff = [t for t, o in _others.items()
-                 if o["source"] != "없음"
+                 if o["source"] not in ("없음", "조회실패")
                  and (o["agency"], o["mgmt"]) != (cur["agency"], cur["mgmt"])]
         if _diff:
             ui_theme.nbox("warn", "⚠️ <b>티켓마다 요율이 달라요</b> — "

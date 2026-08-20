@@ -722,9 +722,16 @@ def get_rs(brand: str, ticket: str) -> dict:
         for e in jira_client.fetch_rs_data(brand=brand).values():
             if str(e.get("ticket_key") or "").upper() == tk:
                 return {"agency": e.get("rs_agency"), "mgmt": e.get("rs_mgmt"),
-                        "source": "지라", "by": None, "at": None}
-    except Exception:
-        pass
+                        "agency_cc": {}, "source": "지라", "by": None, "at": None}
+    except Exception as _e:                       # noqa: BLE001
+        # ★jira_client 는 이 상황에서 **일부러** 예외를 던진다(:252 주석 —
+        #   "조회 실패로 '요율 없음'이 되면 정산액이 0원으로 뒤바뀐다").
+        #   그걸 여기서 삼켜 '없음' 으로 만들면 상류의 방어가 무력해진다 —
+        #   실무자는 "지라에 요율이 없구나" 로 읽고 직접 넣어 버리는데,
+        #   실제로는 **못 물어본 것**이라 계약과 다른 값을 넣을 수 있다.
+        #   (만료 캐시라도 있으면 jira_client 가 그걸 주므로 여기까지 안 온다)
+        return {"agency": None, "mgmt": None, "agency_cc": {},
+                "source": "조회실패", "by": None, "at": str(_e)[:200]}
     return {"agency": None, "mgmt": None, "agency_cc": {},
             "source": "없음", "by": None, "at": None}
 

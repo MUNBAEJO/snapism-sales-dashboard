@@ -597,8 +597,14 @@ def _load_devices(mtime):
         for c in ("시작일", "종료일"):
             d[c] = pd.to_datetime(d[c], errors="coerce")
         return d.reset_index(drop=True)
-    except Exception:
-        return pd.DataFrame()
+    except Exception as e:                            # noqa: BLE001
+        # ★빈 표를 조용히 돌려주면 안 된다 (2026-08-20). 이건 '1대당 매출' 의
+        #   **분모**다 — 비면 장비가 0대가 되어 카드가 사라지거나 값이 튄다.
+        #   "장비가 없다" 와 "파일을 못 읽었다" 는 완전히 다른 얘기다.
+        d = pd.DataFrame()
+        d.attrs["load_error"] = f"{type(e).__name__}: {e}"
+        print(f"[장비 목록 읽기 실패] {e}", flush=True)
+        return d
 
 
 def load_devices():
