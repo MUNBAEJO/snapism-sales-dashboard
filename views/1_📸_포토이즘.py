@@ -1015,6 +1015,28 @@ def _short_theme(names):
             for sh, orig in byshort.items() for n in orig}
 
 
+_TITLE_DATE = re.compile(r"(?:^|(?<=\s))\d{5,8}\s+")
+
+
+def _short_title(names):
+    """표시용으로 타이틀 앞 날짜코드를 뗀다(`PW 260727 가나디` → `PW 가나디`).
+
+    ★떼서 **겹치는 이름은 그대로 둔다.** `260721 SM ent` 와 `260804 SM ent` 는
+      다른 회차인데 둘 다 'SM ent' 가 되면 화면에서 같은 줄로 보인다.
+    ★**접두어(PW·L·SP·렌탈)는 남긴다.** 날짜와 달리 접두어는 다른 제품을 가르는
+      표식이라, 떼면 남의 상품과 한 줄로 보인다(ip_classify 주석 참고).
+    ★**표시만 바꾼다.** 집계·정렬·이름통합은 원래 타이틀 그대로다.
+    ★겹침 판정은 **화면에 실제로 나오는 것들끼리** 한다. 전체 수천 개로 재면
+      어딘가 겹치는 게 늘 있어서 아무것도 못 뗀다 — 자른 뒤에 부를 것.
+    """
+    byshort = {}
+    for n in names:
+        sh = _TITLE_DATE.sub("", str(n), count=1).strip() or str(n)
+        byshort.setdefault(sh, []).append(n)
+    return {n: (sh if len(orig) == 1 else n)
+            for sh, orig in byshort.items() for n in orig}
+
+
 def _theme_portion(one, key_label=""):
     """한 IP/타이틀의 **테마 · 프레임 구성**을 '매출 한눈에' 처럼 그린다.
     one = theme_all 결과에서 그 대상만 잘라 온 표(타이틀명·테마·프레임·매출·건수)."""
@@ -1528,7 +1550,8 @@ def css_hours(vals):
     st.markdown(f'<div class="hours">{cols}</div>', unsafe_allow_html=True)
 
 
-def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False):
+def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False,
+              tip_col=None):
     """시안 TOP 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     # ★분모는 **자르기 전 전체 합**이다. 예전엔 head(top) 뒤에 합을 냈다 —
@@ -1545,7 +1568,10 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False):
         for i, r in sub.iterrows():
             w = max(3, r["매출"] / mx * 100)
             col = BRAND if i == 0 else "#a9c7ef"
-            _t = f'{r[name_col]} · {fmt_krw(r["매출"])}'
+            # 이름을 줄여 그릴 때가 있다(_short_title) — 마우스를 올리면 원래
+            # 이름을 보여 준다. 줄인 쪽만 보이면 어느 회차인지 알 수가 없다.
+            _nm = r[tip_col] if tip_col else r[name_col]
+            _t = f'{_nm} · {fmt_krw(r["매출"])}'
             if "건수" in sub.columns:
                 _t += f' · {int(r["건수"]):,}건'
             _p = (f'<span class="hb-p">{r["매출"] / _tot * 100:.1f}%</span>'
@@ -2227,12 +2253,18 @@ with tab_home:
               .reset_index())
         tr = tr[tr["매출"] > 0]
         if not tr.empty:
-            hbar_list(tr, "타이틀", top=5)
+            # 화면에 나올 5개만 놓고 날짜코드를 뗀다(겹치면 남긴다 — _short_title).
+            tr = tr.sort_values("매출", ascending=False).head(5)
+            tr = tr.assign(표시=tr["타이틀"].astype(str).map(_short_title(tr["타이틀"])))
+            hbar_list(tr, "표시", top=5, tip_col="타이틀")
         else:
             st.info("타이틀 데이터가 없어요.")
         helpbox("""
 **타이틀 TOP 5**
 - `타이틀`(날짜+IP 기준, 한·영 통합)별 매출액 합 → 상위 5개.
+- 이름 앞 **날짜코드는 화면에서만 떼요**(`260505 코르티스` → `코르티스`).
+  떼면 같은 이름이 둘 이상 되는 회차는 날짜를 그대로 둬요. 마우스를 올리면 원래
+  이름이 보여요. 집계·순위는 원래 타이틀 기준 그대로예요.
 """)
 
     sec("3", "어디서 파나",
