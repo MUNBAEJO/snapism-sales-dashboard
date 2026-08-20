@@ -1021,20 +1021,17 @@ _TITLE_DATE = re.compile(r"(?:^|(?<=\s))\d{5,8}\s+")
 def _short_title(names):
     """표시용으로 타이틀 앞 날짜코드를 뗀다(`PW 260727 가나디` → `PW 가나디`).
 
-    ★떼서 **겹치는 이름은 그대로 둔다.** `260721 SM ent` 와 `260804 SM ent` 는
-      다른 회차인데 둘 다 'SM ent' 가 되면 화면에서 같은 줄로 보인다.
-    ★**접두어(PW·L·SP·렌탈)는 남긴다.** 날짜와 달리 접두어는 다른 제품을 가르는
-      표식이라, 떼면 남의 상품과 한 줄로 보인다(ip_classify 주석 참고).
+    ★**언제나 뗀다.** 떼면 `260721 SM ent` 와 `260811 SM ent` 가 둘 다 'SM ent' 라
+      같은 줄처럼 보이는데, 그건 **마우스를 올리면 원래 이름이 뜨는 것**으로 푼다
+      (hbar_list 의 tip_col). 날짜코드는 회차 번호일 뿐이라 늘 붙여 두면 이름이
+      안 읽힌다 — 사용자 결정, 2026-08-20.
+    ★**접두어(렌탈·PW·L7·L·P·B·SP)는 남긴다.** 날짜와 달리 접두어는 다른 상품을
+      가르는 표식이다. `PW 260701 피원하모니`(PICK)와 `260701 P1Harmony`(아티스트)는
+      다른 제품이라, 떼면 남의 상품과 한 줄로 보인다(ip_classify.IP_PREFIX_SQL 주석).
     ★**표시만 바꾼다.** 집계·정렬·이름통합은 원래 타이틀 그대로다.
-    ★겹침 판정은 **화면에 실제로 나오는 것들끼리** 한다. 전체 수천 개로 재면
-      어딘가 겹치는 게 늘 있어서 아무것도 못 뗀다 — 자른 뒤에 부를 것.
     """
-    byshort = {}
-    for n in names:
-        sh = _TITLE_DATE.sub("", str(n), count=1).strip() or str(n)
-        byshort.setdefault(sh, []).append(n)
-    return {n: (sh if len(orig) == 1 else n)
-            for sh, orig in byshort.items() for n in orig}
+    return {n: (_TITLE_DATE.sub("", str(n), count=1).strip() or str(n))
+            for n in names}
 
 
 def _theme_portion(one, key_label=""):
@@ -2253,7 +2250,7 @@ with tab_home:
               .reset_index())
         tr = tr[tr["매출"] > 0]
         if not tr.empty:
-            # 화면에 나올 5개만 놓고 날짜코드를 뗀다(겹치면 남긴다 — _short_title).
+            # 날짜코드는 화면에서만 뗀다(_short_title). 원래 이름은 툴팁에 있다.
             tr = tr.sort_values("매출", ascending=False).head(5)
             tr = tr.assign(표시=tr["타이틀"].astype(str).map(_short_title(tr["타이틀"])))
             hbar_list(tr, "표시", top=5, tip_col="타이틀")
@@ -2263,8 +2260,9 @@ with tab_home:
 **타이틀 TOP 5**
 - `타이틀`(날짜+IP 기준, 한·영 통합)별 매출액 합 → 상위 5개.
 - 이름 앞 **날짜코드는 화면에서만 떼요**(`260505 코르티스` → `코르티스`).
-  떼면 같은 이름이 둘 이상 되는 회차는 날짜를 그대로 둬요. 마우스를 올리면 원래
-  이름이 보여요. 집계·순위는 원래 타이틀 기준 그대로예요.
+  같은 이름이 둘 이상 보이면 **회차가 다른 것**이에요 — 마우스를 올리면 날짜까지
+  붙은 원래 이름이 보여요. `PW`·`렌탈` 같은 앞 표식은 **다른 상품**이라 남겨 둬요.
+  집계·순위는 원래 타이틀 기준 그대로예요.
 """)
 
     sec("3", "어디서 파나",
