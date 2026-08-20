@@ -620,18 +620,24 @@ def _load_data(agg_mtime, cfg_mtime):
     #   'SM ENTERTAINMENT'(26-02~03). 화면에선 서로 다른 IP 로 보였다.
     # ★코드(codes)만 바꿔 치운다 — 370만 행에 .map/.astype(str) 을 태우면
     #   그 한 줄이 로딩의 병목이 된다(같은 실수를 환율 계산에서 한 번 했다).
+    # ★★별칭표를 보기 **전에 fold() 를 태운다** (2026-08-20). 이름에 키릴
+    #   동형문자가 섞여 들어와서, `ONE PAСТ`(С·Т 가 키릴 · 138만원)가
+    #   `ONE PACT`(286만원)와 **다른 IP 로 갈려** 있었다. 별칭표로는 못 잡는다 —
+    #   눈에 안 보이는 차이라 아무도 별칭을 등록하지 않는다.
+    #   (같은 오염이 IP명 4건 · 테마 12건 · 프레임 81건에 있고, 테마·프레임은
+    #    이미 name_alias 가 fold 를 태우고 있어서 IP명만 빠져 있었다)
     if "IP명" in df.columns and hasattr(df["IP명"], "cat"):
         _amap = ip_classify.load_alias_map()
-        if _amap:
-            _cats = df["IP명"].cat.categories
-            _new = pd.Index([_amap.get(str(c).strip(), str(c).strip()) for c in _cats])
-            if not _new.equals(pd.Index([str(c) for c in _cats])):
-                _uniq = pd.Index(pd.unique(_new))
-                _remap = _uniq.get_indexer(_new)
-                _codes = df["IP명"].cat.codes.to_numpy()
-                df["IP명"] = pd.Categorical.from_codes(
-                    np.where(_codes >= 0, _remap[np.clip(_codes, 0, None)], -1),
-                    categories=_uniq)
+        _cats = df["IP명"].cat.categories
+        _new = pd.Index([_amap.get(_f, _f)
+                         for _f in (name_alias.fold(c) for c in _cats)])
+        if not _new.equals(pd.Index([str(c) for c in _cats])):
+            _uniq = pd.Index(pd.unique(_new))
+            _remap = _uniq.get_indexer(_new)
+            _codes = df["IP명"].cat.codes.to_numpy()
+            df["IP명"] = pd.Categorical.from_codes(
+                np.where(_codes >= 0, _remap[np.clip(_codes, 0, None)], -1),
+                categories=_uniq)
 
     ex = load_exchange_rates()
     # ⚡ 결제단위·국가코드는 categorical(고유값 24/30개)이라 3.5M행 문자열 변환(.astype(str).str.…)이

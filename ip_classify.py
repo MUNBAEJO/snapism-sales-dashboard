@@ -119,8 +119,16 @@ def load_alias_map():
 
 
 def _canon_name(name):
-    """IP명 토큰 → 대표명(별칭 통합)."""
-    return load_alias_map().get(str(name).strip(), str(name).strip())
+    """IP명 토큰 → 대표명(별칭 통합).
+
+    ★별칭표를 보기 전에 `name_alias.fold()` 로 **동형문자를 먼저 편다**
+      (2026-08-20). CMS 이름에 키릴 А·С·Т 같은 글자가 섞여 들어와
+      `ONE PAСТ` 가 `ONE PACT` 와 다른 IP 가 돼 있었다. 눈으로는 구분이
+      안 되니 별칭표로 잡기를 기대할 수 없다.
+    """
+    import name_alias                    # 순환 임포트 없음(name_alias 는 표준만 씀)
+    s = name_alias.fold(name)
+    return load_alias_map().get(s, s)
 
 
 def apply_alias(series):

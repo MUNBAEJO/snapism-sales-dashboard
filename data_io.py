@@ -83,3 +83,38 @@ if __name__ == "__main__":
     # 단독 실행 시 스내피즘 master.csv → master.parquet 재생성
     base = Path(__file__).parent / "data"
     print(rebuild_parquet(base / "master.csv"))
+
+
+# ── 환율표 ────────────────────────────────────────────────────────────────
+def load_exchange_rates(config_path, retries: int = 3) -> dict:
+    """`config.json` 의 환율표. **못 읽으면 예외를 던진다.**
+
+    ★★조용히 넘기면 안 되는 자리다 (2026-08-20). 예전엔 다섯 곳이 각자
+      `except Exception: return {"KRW": 1}` 이었다. 그런데 **KRW 하나뿐인 환율표**는
+      DuckDB `CASE … ELSE 1`(settlement_map._rate_case) 이나 `.map(rates).fillna(1)`
+      로 떨어져 **엔·달러·바트가 전부 1:1 원화**가 된다. 해외 매출이 수십 분의 1로
+      줄어드는데 화면엔 멀쩡한 숫자가 떠서 아무도 모른다.
+      → 실패는 **화면에 올린다.** 부르는 쪽에서 잡아 st.error + st.stop 한다.
+    ★수집기(`update_rates`)가 config.json 을 다시 쓰는 순간과 겹치면 읽기가 잠깐
+      실패한다(원자적 쓰기가 아니다). 그래서 바로 포기하지 않고 몇 번 다시 읽는다.
+    ★통화가 2개 미만이면 '읽었지만 쓸 수 없다'로 본다 — 원화만 있는 표는
+      위 ELSE 1 과 결과가 같아서 성공으로 치면 안 된다.
+    """
+    import json
+    import time
+
+    last = "원인 미상"
+    for i in range(max(1, retries)):
+        try:
+            cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            r = cfg.get("exchange_rates") or {}
+            ok = [k for k, v in r.items()
+                  if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
+            if len(ok) >= 2:
+                return r
+            last = f"환율표에 쓸 수 있는 통화가 {len(ok)}개뿐이에요"
+        except Exception as e:                       # noqa: BLE001
+            last = f"{type(e).__name__}: {e}"
+        if i + 1 < max(1, retries):
+            time.sleep(0.15 * (i + 1))
+    raise RuntimeError(f"환율표를 읽지 못했어요 — {last}")

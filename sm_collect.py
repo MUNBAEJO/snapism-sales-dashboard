@@ -313,11 +313,24 @@ def _upsert(path, new, sort_keys):
 def _upsert_locked(path, new, sort_keys):
     path.parent.mkdir(exist_ok=True)
     if path.exists():
-        try:
-            old = pd.read_parquet(path)
-        except Exception as ex:                       # noqa: BLE001
-            log(f"[경고] {path.name} 읽기 실패({ex}) — 이번 수집분만 저장한다")
-            old = pd.DataFrame(columns=new.columns)
+        # ★★읽기에 실패하면 **저장을 포기한다** (2026-08-20).
+        #   예전엔 `old = pd.DataFrame(columns=...)` 로 놓고 그대로 진행했다. 그러면
+        #   아래에서 `merged = new` 가 되어 `to_parquet(path)` 가 **파일 전체를 이번
+        #   수집분으로 덮어쓴다** — 파일이 잠깐 안 읽힌 것뿐인데 전 기간 촬영수 이력이
+        #   그 자리에서 날아간다. 로그는 경고 한 줄뿐이라 아무도 모른다.
+        #   덮어쓰느니 이번 회차를 건너뛰는 게 낫다(다음 수집이 같은 구간을 다시 담는다).
+        old = None
+        for _i in range(3):
+            try:
+                old = pd.read_parquet(path)
+                break
+            except Exception as ex:                   # noqa: BLE001
+                log(f"[경고] {path.name} 읽기 실패({_i + 1}/3) — {ex}")
+                time.sleep(1.0 * (_i + 1))
+        if old is None:
+            raise RuntimeError(
+                f"{path.name} 을 읽지 못해 저장을 건너뜁니다 — 덮어쓰면 기존 이력이 "
+                f"사라집니다. 파일 상태를 확인해 주세요.")
         if not old.empty:
             # 옛 파일에 없는 열(타이틀 등)이 생겼어도 concat 이 깨지지 않게 맞춰 준다
             for c in new.columns:

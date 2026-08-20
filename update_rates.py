@@ -381,11 +381,19 @@ def get_rates_for_date(date_str: str) -> dict:
             log(f"[날짜환율 조회 실패] {url}: {e}")
 
     if not krw_dict:
+        # ★최종 폴백을 `{"KRW": 1}` 로 두면 **안 된다** (2026-08-20).
+        #   원화만 든 환율표는 `.map(rates).fillna(1)` · DuckDB `ELSE 1` 로 떨어져
+        #   엔·달러·바트가 전부 1:1 원화가 되는데, 값이 있으니 아무 검사에도 안 걸린다.
+        #   settlement_fx.missing() 이 "없으면 잡는다"는 전제로 만들어져 있으므로
+        #   **빈 표를 돌려줘 그쪽이 잡게 한다.**
         try:
             with open(CONFIG_FILE, encoding="utf-8") as f:
-                return json.load(f).get("exchange_rates", {"KRW": 1})
+                _cfg = json.load(f).get("exchange_rates") or {}
+            _ok = [k for k, v in _cfg.items()
+                   if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
+            return _cfg if len(_ok) >= 2 else {}
         except Exception:
-            return {"KRW": 1}
+            return {}
 
     rates = _krw_dict_to_rates(krw_dict)
     _save_cache(cache, eff, rates)

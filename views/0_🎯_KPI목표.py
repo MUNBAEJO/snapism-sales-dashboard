@@ -32,6 +32,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from guide_content import render_guide
 import photoism_rules            # 쿠폰·코인 가산 국가 단일 출처
+import data_io
 
 INK = "#1b2330"; PRIMARY = "#4f46e5"; SECONDARY = "#6366f1"; PINK = "#d24d8b"
 st.markdown("""
@@ -122,6 +123,19 @@ BRAND_FILE    = BASE_DIR / "data" / "kpi_brand.csv"
 WEEKLY_FILE   = BASE_DIR / "data" / "kpi_weekly.csv"
 ALIAS_FILE    = BASE_DIR / "data" / "frame_alias.json"
 CONFIG_FILE   = BASE_DIR / "config.json"
+
+# ★환율표는 **못 읽으면 멈춘다** (2026-08-20). 전엔 `except: return {"KRW": 1}` 였는데,
+#   원화만 든 환율표는 `.map(rates).fillna(1)` · DuckDB `ELSE 1` 로 떨어져 **해외 매출이
+#   1:1 원화**가 된다 — 수십 분의 1로 줄어드는데 화면엔 멀쩡한 숫자가 뜬다.
+#   여기서 한 번 확인해 두면 아래 계산은 안심하고 쓸 수 있다(수집기와 겹친 순간의
+#   일시적 실패는 data_io 쪽에서 몇 번 다시 읽는다).
+try:
+    data_io.load_exchange_rates(CONFIG_FILE)
+except Exception as _e:                                   # noqa: BLE001
+    st.error("💱 환율표를 읽지 못해 매출을 계산할 수 없어요 — " + str(_e)
+             + "  \n잠시 뒤 새로고침해 주세요. 계속되면 `config.json` 을 확인해 주세요.")
+    st.stop()
+
 JIRA_CACHE    = BASE_DIR / "data" / "jira_ip_dates_cache.json"   # 타이틀명→종료일(로컬 캐시)
 
 # ★쿠폰·코인 가산 국가는 photoism_rules 가 단일 출처다. 예전엔 여기에만 같은 목록을
@@ -137,11 +151,8 @@ _COIN_CC   = photoism_rules.COIN_CC
 # ══════════════════════════════════════════════════════════════
 
 def load_exchange_rates():
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            return json.load(f).get("exchange_rates", {"KRW": 1})
-    except Exception:
-        return {"KRW": 1}
+    """환율표. **삼키지 않는다** — 자세한 이유는 data_io.load_exchange_rates 주석."""
+    return data_io.load_exchange_rates(CONFIG_FILE)
 
 
 def _calc_revenue_from_cms(df: pd.DataFrame) -> pd.DataFrame:

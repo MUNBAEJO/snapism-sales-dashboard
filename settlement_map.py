@@ -84,11 +84,21 @@ def load_rates(rate_date: str | None = None) -> tuple[dict, str, str]:
         return settlement_fx.resolve(rate_date or "")
     except Exception:
         pass
+    # ★`{"KRW": 1}` 을 돌려주면 안 된다 (2026-08-20). 아래 `_rate_case` 가
+    #   `CASE … ELSE 1` 을 만들어 **엔·달러·바트가 전부 1:1 원화**가 되는데,
+    #   '참고 환율' 이라는 라벨은 그대로라 화면상 멀쩡해 보인다.
+    #   쓸 수 있는 통화가 2개 미만이면 **빈 표 + '환율 없음'** 으로 돌려주고,
+    #   부르는 쪽(views/8)이 발행을 막게 한다.
     try:
         cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
-        return cfg.get("exchange_rates", {"KRW": 1}), (rate_date or ""), "참고 환율"
+        r = cfg.get("exchange_rates") or {}
+        ok = [k for k, v in r.items()
+              if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
+        if len(ok) >= 2:
+            return r, (rate_date or ""), "참고 환율"
     except Exception:
-        return {"KRW": 1}, (rate_date or ""), "참고 환율"
+        pass
+    return {}, (rate_date or ""), "환율 없음"
 
 
 def _rate_case(rates: dict, col: str = '"결제 단위"') -> str:

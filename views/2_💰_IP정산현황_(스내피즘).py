@@ -82,11 +82,21 @@ button[data-baseweb="tab"] p {{ font-size: 1.0rem !important; font-weight: 700 !
 
 # ── 헬퍼 ──────────────────────────────────────────────────────
 def load_exchange_rates():
-    try:
-        with open(CONFIG, encoding="utf-8") as f:
-            return json.load(f).get("exchange_rates", {"KRW": 1})
-    except Exception:
-        return {"KRW": 1}
+    """환율표. **삼키지 않는다** — 자세한 이유는 data_io.load_exchange_rates 주석."""
+    return data_io.load_exchange_rates(CONFIG)
+
+# ★환율표는 **못 읽으면 멈춘다** (2026-08-20). 전엔 `except: return {"KRW": 1}` 였는데,
+#   원화만 든 환율표는 `.map(rates).fillna(1)` · DuckDB `ELSE 1` 로 떨어져 **해외 매출이
+#   1:1 원화**가 된다 — 수십 분의 1로 줄어드는데 화면엔 멀쩡한 숫자가 뜬다.
+#   여기서 한 번 확인해 두면 아래 계산은 안심하고 쓸 수 있다(수집기와 겹친 순간의
+#   일시적 실패는 data_io 쪽에서 몇 번 다시 읽는다).
+try:
+    data_io.load_exchange_rates(CONFIG)
+except Exception as _e:                                   # noqa: BLE001
+    st.error("💱 환율표를 읽지 못해 매출을 계산할 수 없어요 — " + str(_e)
+             + "  \n잠시 뒤 새로고침해 주세요. 계속되면 `config.json` 을 확인해 주세요.")
+    st.stop()
+
 
 
 # ★JsonStore 로 옮긴다(2026-08-18). 여기가 **JsonStore 를 만든 바로 그 이유**였는데
@@ -316,6 +326,14 @@ else:
 
 _eff_date  = get_effective_date(_rate_ref)
 _ip_rates  = get_rates_for_date(_eff_date)
+# ★빈 표면 아래 `.map(_ip_rates).fillna(1)` 이 **해외 매출을 1:1 원화**로 만든다
+#   (2026-08-20). 조용히 넘기지 말고 멈춘다 — 여긴 정산 금액을 보여주는 화면이다.
+if len([v for v in _ip_rates.values()
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]) < 2:
+    st.error("💱 " + str(_eff_date) + " 기준 환율을 구하지 못해 정산 금액을 "
+             "계산할 수 없어요." + "  \n" + "잠시 뒤 새로고침해 주세요. "
+             "계속되면 `config.json` 의 `exchange_rates` 를 확인해 주세요.")
+    st.stop()
 
 
 # ── 프레임 매핑 섹션 ──────────────────────────────────────────

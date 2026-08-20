@@ -115,6 +115,18 @@ c3.markdown(
     f"<div style='color:var(--text-3);font-size:11.5px;margin-top:2px'>"
     f"종료일 당일, 휴장일이면 직전 영업일</div></div>", unsafe_allow_html=True)
 
+# ★환율표가 아예 비었으면(= settlement_map 이 '환율 없음' 을 돌려줬으면) 여기서
+#   멈춘다 (2026-08-20). 그대로 두면 DuckDB `CASE … ELSE 1` 로 **해외 매출이 1:1
+#   원화**가 된 미리보기가 뜬다 — fx.missing() 이 발행 버튼은 막지만, 그 전에
+#   틀린 금액을 눈으로 보게 된다.
+if len([v for v in (RATES or {}).values()
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]) < 2:
+    st.error("💱 " + str(EFF or E) + " 기준 환율을 구하지 못했어요 — 해외 매출을 "
+             "원화로 바꿀 수 없어 정산서를 만들 수 없어요." + "  \n" +
+             "잠시 뒤 다시 시도하거나, `config.json` 의 `exchange_rates` 를 "
+             "확인해 주세요.")
+    st.stop()
+
 if not _official:
     with st.expander("💱 서울외국환중개 환율 조회에 실패했어요 — 파일로 올리기",
                      expanded=True):
