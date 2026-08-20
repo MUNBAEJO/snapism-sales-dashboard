@@ -103,11 +103,15 @@ def load_alias_map():
     """ip_aliases.json → {별칭: 대표명} 평면 딕셔너리 (대표명→대표명 자기참조 포함)."""
     if not ALIAS_FILE.exists():
         return {}
+    # ★파일이 **있는데** 못 읽으면 알린다 (2026-08-20). 빈 표를 돌려주면 IP 통합이
+    #   통째로 꺼지는데 합계는 그대로라 티가 안 난다 — 같은 IP 가 표기별로 갈려
+    #   순위만 조용히 뒤바뀐다(name_alias._table 과 같은 병).
     try:
         with open(ALIAS_FILE, encoding="utf-8") as f:
             raw = json.load(f)
-    except Exception:
-        return {}
+    except Exception as e:
+        raise RuntimeError(f"{ALIAS_FILE.name} 을 읽지 못했어요 — IP 통합이 "
+                           f"꺼지면 같은 IP 가 표기별로 갈립니다. ({e})") from e
     flat = {}
     for canonical, aliases in raw.items():
         if canonical.startswith("_"):
