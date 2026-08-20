@@ -443,7 +443,13 @@ def main():
     except Exception as e:
         log(f"SM 일일 수집 실행 실패: {e}")
 
-    if fail_list:
+    # ★★부분 실패도 **실패로 끝낸다** (2026-08-20). 전엔 `fail_list`(성공 0일인
+    #   국가)만 봤다. 그래서 "이 나라는 됐는데 그중 사흘이 비었다" 는 경우가
+    #   **종료코드 0** = 스케줄러가 성공으로 기록 → 재시도도 안 걸렸다.
+    #   유럽 19개월 결손이 정확히 이 모양이다. 부분 실패도 다시 받아야 한다.
+    if fail_list or partial:
+        if partial and not fail_list:
+            log(f"  일부 일자만 받았습니다 — 재시도 대상입니다: {', '.join(partial)}")
         sys.exit(1)
 
 

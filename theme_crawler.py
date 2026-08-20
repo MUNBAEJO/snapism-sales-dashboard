@@ -232,6 +232,12 @@ def main():
         G_ok += o; G_skip += s; G_fail += f
 
     log(f"=== 전체 완료: 성공 {G_ok} · 건너뜀 {G_skip} · 실패 {G_fail} → {OUT_DIR} ===")
+    # ★★실패 수를 요약 한 줄로만 찍고 정상 종료했다 (2026-08-20). 그래서
+    #   `theme_backfill` 이 "완료" 로 보고 **done 목록에 성공으로 올렸다** —
+    #   빠진 청크는 다시 받을 기회를 영영 잃는다.
+    if G_fail:
+        log(f"[실패] 청크 {G_fail}개를 받지 못했습니다 — 완료로 기록하면 안 됩니다.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

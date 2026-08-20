@@ -155,4 +155,11 @@ def collect(codes):
 if __name__ == "__main__":
     cfg   = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     codes = [c.lower() for c in sys.argv[1:]] or list(cfg["photoism"]["countries"])
-    collect(dedup_by_host(cfg, codes))
+    _ok, _fail = collect(dedup_by_host(cfg, codes))
+    # ★★실패해도 종료코드 0 이었다 (2026-08-20). 그 나라 장비 파일이 옛날 것으로
+    #   남고, 그게 곧 '1대당 매출' 의 **분모가 조용히 낡는다**는 뜻이다.
+    #   요약 한 줄로 끝내지 말고 종료코드로 알린다.
+    if _fail:
+        print(f"[실패] {len(_fail)}개국 장비 목록을 받지 못했습니다: "
+              f"{','.join(_fail)} — 1대당 매출의 분모가 낡은 채로 남습니다.")
+        sys.exit(1)

@@ -228,8 +228,17 @@ def load_monthly_actual(seg: str = "TTL"):
                 .reset_index().rename(columns={"매출액":"실제매출"})
             )
             cms_monthly["실제매출"] = cms_monthly["실제매출"].astype(int)
-        except Exception as e:
-            cms_monthly = pd.DataFrame()
+        except Exception as e:                        # noqa: BLE001
+            # ★★그냥 비우면 아래 "② fallback: CSV" 로 넘어가는데, 그쪽은
+            #   `_calc_revenue_from_cms` 라는 **다른 산식**을 쓴다 — 실적이 조용히
+            #   다른 기준으로 바뀌고 달성률이 통째로 어긋난다. 폴백은 "집계 파일이
+            #   아직 없을 때" 를 위한 것이지 "있는데 읽다 실패" 를 위한 게 아니다.
+            #   (2026-08-20)
+            st.error("📊 집계 파일에서 월별 실적을 읽지 못했어요 — " + str(e)
+                     + "  \n다른 산식의 CSV 로 넘어가면 달성률이 어긋나므로 "
+                       "여기서 멈춰요. `python build_photoism_agg.py` 로 집계를 "
+                       "다시 만든 뒤 새로고침해 주세요.")
+            st.stop()
 
     # ② fallback: CSV (agg 없을 때만)
     if cms_monthly.empty and MASTER_FILE.exists():
@@ -837,10 +846,15 @@ def parse_weekly_data(file) -> pd.DataFrame:
     week_pat = re.compile(r"^\d{1,2}/\d{1,2}[-~]\d{1,2}/\d{1,2}$")
     all_rows = []
 
+    # ★시트 하나를 못 읽으면 **그 팀 주차 실적이 통째로 빠진다** — 합계만 줄어들어
+    #   "이번 주 실적이 낮네" 로 읽힌다. 조용히 넘기지 말고 화면에 올린다
+    #   (파일을 올린 직후라 사용자가 바로 고칠 수 있는 자리다. 2026-08-20).
     for team_sheet in ["A팀", "C팀"]:
         try:
             raw = pd.read_excel(file, sheet_name=team_sheet, header=None, engine="openpyxl")
-        except Exception:
+        except Exception as e:                        # noqa: BLE001
+            st.warning(f"⚠️ `{team_sheet}` 시트를 읽지 못했어요 — 이 팀의 주차 "
+                       f"실적은 빠진 채 집계돼요. ({type(e).__name__})")
             continue
         if len(raw) < 4:
             continue

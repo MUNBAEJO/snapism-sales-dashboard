@@ -282,8 +282,13 @@ def run_photoism_crawler():
     except subprocess.TimeoutExpired:
         log("포토이즘 크롤러 타임아웃 (60분 초과)")
         mark_photoism_ran()
+        # ★타임아웃이면 그날 수집이 통째로 비는데 `mark_photoism_ran()` 으로
+        #   "돌았다" 표시까지 남는다 → 재시도도 안 걸린다. 알려야 한다.
+        fail("포토이즘 수집", "크롤러 타임아웃 (60분 초과) — 그날 데이터가 빕니다")
     except Exception as e:
-        log(f"포토이즘 실행 오류: {e}")
+        # ★재시도를 예약하지 않는 경로다 → 알리지 않으면 그대로 묻힌다.
+        #   스내피즘 쪽(run_crawler)은 이미 fail() 을 부르는데 여기만 빠져 있었다.
+        fail("포토이즘 수집", f"실행 오류: {e}")
 
 
 # ── SM 촬영수 주간 수집 (매주 월요일) ───────────────────────────
@@ -299,8 +304,11 @@ def run_sm_weekly():
         log("SM 주간 완료." if result.returncode == 0 else f"SM 주간 일부 실패 (exit {result.returncode})")
     except subprocess.TimeoutExpired:
         log("SM 주간 수집 타임아웃 (60분 초과)")
+        fail("SM 주간 수집", "타임아웃 (60분 초과)")
     except Exception as e:
-        log(f"SM 주간 수집 오류: {e}")
+        # ★재시도를 예약하지 않는 경로다 — 알리지 않으면 그대로 묻힌다
+        #   (fail() 주석의 기준 그대로). 2026-08-20.
+        fail("SM 주간 수집", f"실행 오류: {e}")
 
 
 def run_jira_cache_warm():
@@ -364,8 +372,12 @@ def run_photoism_deep_resync():
             else f"포토이즘 딥 재수집 일부 실패 (exit {result.returncode})")
     except subprocess.TimeoutExpired:
         log("포토이즘 딥 재수집 타임아웃 (2시간 초과)")
+        fail("포토이즘 딥 재수집",
+             "타임아웃 (2시간 초과) — 멈추면 사후 취소가 원장에 안 붙습니다")
     except Exception as e:
-        log(f"포토이즘 딥 재수집 오류: {e}")
+        # ★재시도를 예약하지 않는 경로다 — 알리지 않으면 그대로 묻힌다
+        #   (fail() 주석의 기준 그대로). 2026-08-20.
+        fail("포토이즘 딥 재수집", f"실행 오류: {e}")
 
 
 def run_sales_deep_resync():
@@ -389,8 +401,12 @@ def run_sales_deep_resync():
             else f"매출 딥 재수집 일부 실패 (exit {result.returncode})")
     except subprocess.TimeoutExpired:
         log("매출 딥 재수집 타임아웃 (30분 초과)")
+        fail("매출 딥 재수집",
+             "타임아웃 (30분 초과) — 멈추면 사후 취소가 원장에 안 붙습니다")
     except Exception as e:
-        log(f"매출 딥 재수집 오류: {e}")
+        # ★재시도를 예약하지 않는 경로다 — 알리지 않으면 그대로 묻힌다
+        #   (fail() 주석의 기준 그대로). 2026-08-20.
+        fail("매출 딥 재수집", f"실행 오류: {e}")
 
 
 # ── [1회성] SM PICK 백필 (자정 실행) ─────────────────────────────
@@ -473,7 +489,12 @@ def run_coverage_audit():
         else:
             log("커버리지 점검: 이상 없음")
     except Exception as e:
+        # ★★이건 **결손을 잡아 주는 감시기 자체**다. 조용히 죽으면 경보가
+        #   멈춘 걸 아무도 모른 채 며칠이 흐른다(2026-08-20).
         log(f"[경고] 커버리지 점검 실패: {type(e).__name__}: {str(e)[:200]}")
+        fail("커버리지 점검",
+             f"감시기가 실패했습니다 — 결손 경보가 멈춘 상태예요. "
+             f"{type(e).__name__}: {str(e)[:200]}")
 
 
 def main():

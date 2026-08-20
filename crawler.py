@@ -102,8 +102,11 @@ def click_search(page):
     try:
         count_text = page.locator("text=/총 [0-9,]+개/").first.inner_text()
         log(f"검색 결과: {count_text}")
-    except Exception:
-        pass
+    except Exception as e:                            # noqa: BLE001
+        # ★결과 건수를 못 읽었다고 그냥 넘어가면 **0건 조회**도 그대로 다운로드로
+        #   이어져 빈/부분 CSV 가 raw/ 에 떨어진다. ingest 는 mtime 최신이라며
+        #   그걸 채택한다 → 그날 매출이 조용히 줄어든다. 최소한 남긴다(2026-08-20).
+        log(f"[경고] 조회 결과 건수를 읽지 못했습니다 — 빈 CSV 를 받을 수 있습니다: {e}")
 
 
 def download_csv(page, site_key, start_str, end_str):

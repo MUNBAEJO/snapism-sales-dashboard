@@ -211,6 +211,7 @@ def collect(start: date, end: date, codes, delay: int, write_sm: bool = True):
             LAST_SKIPPED.append(cc)
             continue
         cc_rows, day_tot = [], {}
+        _cc_failed = False          # 이 나라에서 못 받은 날짜가 하나라도 있나
         for d in dates:
             for attempt in range(2):
                 try:
@@ -223,10 +224,18 @@ def collect(start: date, end: date, codes, delay: int, write_sm: bool = True):
                         token = tc.get_token(url, user, pw)
                         continue
                     log(f"[{cc.upper()}] {d} HTTP {ex.code}")
+                    _cc_failed = True
                 except Exception as ex:
                     if attempt == 0:
                         continue
                     log(f"[{cc.upper()}] {d} 오류 {str(ex)[:60]}")
+                    _cc_failed = True
+        # ★★날짜 단위 실패도 **재시도 대상**이다 (2026-08-20). 전엔 LAST_SKIPPED 에
+        #   로그인 실패(국가 단위)만 넣었다. 그래서 "이 나라는 됐는데 그중 사흘이
+        #   비었다" 는 경우가 `theme_backfill --retry` 대상에서 빠져 **영구 결손**
+        #   으로 남았다. 나라 전체가 아니라 일부 날짜만 비어도 다시 받아야 한다.
+        if _cc_failed and cc not in LAST_SKIPPED:
+            LAST_SKIPPED.append(cc)
         all_rows.extend(cc_rows)
         log(f"[{cc.upper()}] 일별 촬영수합 {day_tot}")
         time.sleep(delay)

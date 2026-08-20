@@ -109,13 +109,20 @@ def load_photo():
                 cols  = [c for c in need if c in avail]
                 df = pq.read_table(str(src), columns=cols).to_pandas(strings_to_categorical=True)
                 break
-            except Exception:
+            except Exception as e:                    # noqa: BLE001
+                # 다음 원본으로 넘어간다. 둘 다 실패하면 아래에서 알린다.
+                print(f"[읽기 실패] {src.name}: {e}", flush=True)
                 df = pd.DataFrame()
+                df.attrs["load_error"] = f"{src.name}: {type(e).__name__}"
     if df.empty:
         # 최후 폴백인 2GB master_photoism.csv 직접 로드는 20~60초 멈춤을 유발하므로
         # 읽지 않는다. (parquet 집계/전체가 모두 실패한 비정상 상황 → 빈 DF 반환,
         #  집계 parquet 을 재생성하면 정상 복구됨)
-        return pd.DataFrame()
+        # ★실패해서 빈 것과 원래 빈 것을 화면이 구분할 수 있게 이유를 들려 보낸다.
+        _out = pd.DataFrame()
+        if getattr(df, "attrs", {}).get("load_error"):
+            _out.attrs["load_error"] = df.attrs["load_error"]
+        return _out
 
     # 날짜/취소 정리 후 취소 건 먼저 제거 (이후 연산 메모리 절감)
     df["날짜"] = pd.to_datetime(df["날짜"].astype("object"), errors="coerce").dt.date
@@ -195,6 +202,13 @@ with st.spinner("Jira 데이터 로딩..."):
 
 snap_df  = load_snap()
 photo_df = load_photo()
+# ★빈 표가 "그 기간에 매출이 없다" 로 읽히면 안 된다 — 원본 두 개를 다 못 읽어서
+#   비었을 수도 있다(2026-08-20). 이유가 붙어 있으면 그대로 알린다.
+_perr = getattr(photo_df, "attrs", {}).get("load_error")
+if _perr:
+    st.error("📦 포토이즘 원본을 읽지 못했어요 — 아래가 비어 있는 건 "
+             "**매출이 없어서가 아니에요.**" + "  " + chr(10) + 
+             "집계 parquet 을 다시 만든 뒤 새로고침해 주세요. (" + _perr + ")")
 
 if brand_filter == "포토이즘만":
     frames = [photo_df] if not photo_df.empty else []
