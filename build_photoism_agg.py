@@ -8,7 +8,10 @@ string 컬럼이 category로 읽혀서 메모리 90% 절약
 
 실행: python build_photoism_agg.py
 """
+import os
 import sys
+import time
+
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -40,6 +43,28 @@ def dict_encode_strings(table: pa.Table) -> pa.Table:
         if pa.types.is_string(col.type) or pa.types.is_large_string(col.type):
             table = table.set_column(i, col.name, table.column(i).dictionary_encode())
     return table
+
+
+def _write_atomic(arrow, path):
+    """★같은 파일에 직접 쓰지 않는다 (2026-08-20).
+
+    `pq.write_table` 은 대상 파일을 **먼저 비우고** 쓴다. 쓰는 중에 죽으면(OOM ·
+    파일락 · 정전) 반쪽짜리 parquet 이 남아 대시보드가 통째로 못 뜬다. 하루 지난
+    파일이라도 온전한 편이 낫다 — 임시파일에 다 쓴 뒤 한 번에 바꿔치기한다.
+    교체는 대시보드(8503)가 그 파일을 열고 있으면 PermissionError 가 나므로
+    photoism_ingest 의 master 교체와 같은 모양으로 몇 번 기다린다.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    pq.write_table(arrow, tmp, compression="snappy")
+    for i in range(6):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == 5:
+                raise
+            print(f"     {path.name} 이 잠겨 있어요 — {(i + 1) * 5}초 뒤 다시 시도")
+            time.sleep((i + 1) * 5)
 
 
 def build_agg(con, parq: str):
@@ -155,7 +180,7 @@ def build_agg(con, parq: str):
     ORDER BY "날짜" DESC, "국가" ASC, "매장 이름" ASC
     """).to_arrow_table()
     arrow = dict_encode_strings(df)
-    pq.write_table(arrow, PARQ_AGG, compression="snappy")
+    _write_atomic(arrow, PARQ_AGG)
     mb = PARQ_AGG.stat().st_size / 1024 / 1024
     print(f"     저장: {PARQ_AGG.name}  ({mb:.1f} MB,  {arrow.num_rows:,}행)")
 
@@ -179,7 +204,7 @@ def build_hourly(con, parq: str):
         ORDER BY 1 DESC, 2
     """).to_arrow_table()
 
-    pq.write_table(arrow, PARQ_HOURLY, compression="snappy")
+    _write_atomic(arrow, PARQ_HOURLY)
     mb = PARQ_HOURLY.stat().st_size / 1024 / 1024
     print(f"     저장: {PARQ_HOURLY.name}  ({mb:.1f} MB,  {arrow.num_rows:,}행)")
 
@@ -212,9 +237,60 @@ def build_orig(con, parq: str):
         GROUP BY 1,2,3,4,5,6,7
     """).to_arrow_table()
     arrow = dict_encode_strings(arrow)
-    pq.write_table(arrow, PARQ_ORIG, compression="snappy")
+    _write_atomic(arrow, PARQ_ORIG)
     mb = PARQ_ORIG.stat().st_size / 1024 / 1024
     print(f"     저장: {PARQ_ORIG.name}  ({mb:.1f} MB,  {arrow.num_rows:,}행)")
+
+
+def _connect(limit: str):
+    """OOM 방지: 메모리 상한 + 디스크 스필(temp_directory). master 가 커지면
+    (수천만 행) 기본 무제한 설정으로는 GROUP BY 중 OutOfMemory 로 집계가 조용히
+    실패한다 (photoism_ingest 와 동일한 안전장치)."""
+    con = duckdb.connect()
+    tdir = BASE_DIR / "data" / "_duckdb_tmp"
+    tdir.mkdir(parents=True, exist_ok=True)
+    con.execute(f"PRAGMA memory_limit='{limit}'")
+    con.execute("PRAGMA threads=1")
+    con.execute("PRAGMA preserve_insertion_order=false")
+    con.execute(f"PRAGMA temp_directory='{str(tdir).replace(chr(92), '/')}'")
+    con.execute("PRAGMA max_temp_directory_size='20GB'")
+    return con
+
+
+# 1GB 로 두 번, 그래도 안 되면 한도를 올려 한 번. 처음부터 올리지 않는 건 대시보드
+# (8503)와 같은 16GB 를 나눠 쓰기 때문이다 — 서로 잡아먹으면 둘 다 죽는다.
+_LIMITS = ("1GB", "1GB", "2GB")
+
+
+def _retry(fn, parq):
+    """★★간헐적으로 죽는다 — 같은 데이터로 다시 돌리면 지나간다 (2026-08-20 실측).
+
+    그날 09:00 수집에서 DuckDB 가 **13.5 GiB 짜리 블록 하나**를 요청하며
+    OutOfMemory 로 죽었는데, 같은 파일·같은 설정으로 다시 돌리니 112초에 끝났다
+    (카디널리티 오추정 + 그때그때 다른 여유 메모리로 보인다).
+
+    한 번 실패로 끝내면 **원장만 갱신되고 집계는 어제 것**으로 남는다. 대시보드는
+    집계본을 읽으므로 최신인 척 옛 숫자를 보여 준다 — 실제로 그날 08-19 매출이
+    54,153건 대신 **66건**으로 찍혀 있었고, 수집은 성공으로 기록돼 아무도 몰랐다.
+
+    단계별로 재시도한다. build_agg 는 됐는데 build_hourly 만 죽었을 때 성공한
+    단계까지 다시 돌리면 그만큼(약 2분) 헛돈다.
+    """
+    last = None
+    for i, limit in enumerate(_LIMITS):
+        con = _connect(limit)
+        try:
+            fn(con, parq)
+            return
+        except Exception as e:                                # noqa: BLE001
+            last = e
+            print(f"  [재시도 {i + 1}/{len(_LIMITS)}] {fn.__name__} 실패 "
+                  f"({type(e).__name__}: {str(e)[:120]})")
+        finally:
+            con.close()
+        time.sleep(10)
+    raise RuntimeError(
+        f"{fn.__name__} 를 {len(_LIMITS)}번 시도해도 못 만들었어요") from last
 
 
 def main():
@@ -226,25 +302,10 @@ def main():
     print(f"집계 시작: {PARQ_IN.name}  ({in_mb:.0f} MB)")
 
     parq = str(PARQ_IN).replace("\\", "/")
-    con  = duckdb.connect()
-    # OOM 방지: 메모리 상한 + 디스크 스필(temp_directory). master가 커지면(수천만 행)
-    # 기본 무제한 설정으로는 GROUP BY 중 OutOfMemory 로 집계가 조용히 실패한다
-    # (photoism_ingest 와 동일한 안전장치).
-    tdir = BASE_DIR / "data" / "_duckdb_tmp"
-    tdir.mkdir(parents=True, exist_ok=True)
-    con.execute("PRAGMA memory_limit='1GB'")
-    con.execute("PRAGMA threads=1")
-    con.execute("PRAGMA preserve_insertion_order=false")
-    con.execute(f"PRAGMA temp_directory='{str(tdir).replace(chr(92), '/')}'")
-    con.execute("PRAGMA max_temp_directory_size='20GB'")
-    try:
-        build_agg(con, parq)
-        build_hourly(con, parq)
-        build_orig(con, parq)
-    finally:
-        con.close()
+    for fn in (build_agg, build_hourly, build_orig):
+        _retry(fn, parq)
 
-    print("[완료] 집계 파일 2개 생성")
+    print("[완료] 집계 파일 3개 생성")
 
 
 if __name__ == "__main__":
