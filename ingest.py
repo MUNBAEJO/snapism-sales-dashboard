@@ -256,6 +256,28 @@ def ingest():
     if removed:
         print(f"  중복 제거(최신 우선): {removed:,}건")
 
+    # ★★어드민 CSV 가 **29열 → 32열**로 바뀌며 '승인번호' 칸이 생겼다(2026-08-06).
+    #   그 번호가 위 중복제거 키에 들어 있어서, **같은 거래인데** 빈칸이던 옛 행과
+    #   채워진 새 행이 서로 다른 키가 됐다 → 일본 1,530건이 두 번 적재됐다
+    #   (2026-08-06~18 · ¥2,447,400 · 일본 조회기간 매출 **+42.9%**).
+    #   확인(2026-08-21): 1,530 그룹 전부 결제일시·매장·상품·단가·최종결제금액·
+    #   결제수단·프레임·취소여부·_seq·국가가 **완전히 같고 승인번호만 다르다.**
+    #
+    #   `매출 ID` 는 어드민이 그 소스 안에서 매기는 고유번호다. 있으면 그걸로 한 번 더 거른다.
+    #   ★키를 통째로 매출 ID 로 갈지는 **않았다** — 2026-01~04 는 매출 ID 가 아예 없다
+    #     (97,395행 · 전체의 21%). 그 구간은 옛 키로만 잡히므로, 옛 키를 그대로 두고
+    #     **덧대기만** 한다. 이러면 열이 또 바뀌어도 매출 ID 가 있는 한 안 겹친다.
+    #   ★keep="last" 인 이유는 위와 같다 — 나중에 받은 행(=승인번호가 채워진 쪽)이 이긴다.
+    if "매출 ID" in combined.columns and "소스" in combined.columns:
+        _sid = combined["매출 ID"].astype(str).str.strip()
+        _has = _sid.ne("") & _sid.ne("nan") & _sid.ne("None")
+        if _has.any():
+            _idk = combined["소스"].astype(str) + "|" + _sid
+            _dup = _has & _idk.duplicated(keep="last")
+            if _dup.any():
+                print(f"  같은 매출 ID 중복 제거: {int(_dup.sum()):,}건")
+                combined = combined[~_dup]
+
     # 컬럼 정리 (KEEP_COLS 중 존재하는 것만 유지, 나머지는 append)
     existing_keep = [c for c in KEEP_COLS if c in combined.columns]
     extra = [c for c in combined.columns if c not in KEEP_COLS]
