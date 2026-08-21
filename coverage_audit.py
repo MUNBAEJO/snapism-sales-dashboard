@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import json
 import sys
+
+import duckdb
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -300,6 +302,61 @@ def summary_text(results: list[dict]) -> str:
     return "\n".join(out)
 
 
+# ── 집계본 신선도 ──────────────────────────────────────────────────────
+# ★★2026-08-20 사고: 원장은 갱신됐는데 집계본이 어제 것으로 남아, 대시보드가
+#   08-19 매출을 54,153건 대신 **66건**으로 보여 줬다. 수집 로그는 "완료" 였고
+#   이 감시기도 **원장만 보고 있어서** 이상 없음으로 지나갔다.
+#   화면이 읽는 건 집계본이다 — 원장이 아니라 **집계본까지** 봐야 한다.
+_DERIVED = [
+    ("포토이즘 집계", DATA_DIR / "master_photoism_agg.parquet"),
+    ("포토이즘 시간대", DATA_DIR / "master_photoism_hourly.parquet"),
+    ("포토이즘 오리지널", DATA_DIR / "master_photoism_orig.parquet"),
+]
+
+
+def _derived_freshness() -> dict:
+    """원장보다 오래된 집계본 · 마지막 날짜가 뒤처진 집계본을 찾는다."""
+    _today = str(date.today())
+    out = {"brand": "집계본 신선도", "first": "", "last": "", "days": 0,
+           "rows": 0, "problems": []}
+    ledger = DATA_DIR / "master_photoism.parquet"
+    if not ledger.exists():
+        out["skipped"] = "원장 없음"
+        return out
+    lm = ledger.stat().st_mtime
+    for label, p in _DERIVED:
+        if not p.exists():
+            out["problems"].append({"kind": "신선도", "date": _today,
+                                    "detail": f"{label} 파일이 없어요 ({p.name})"})
+            continue
+        gap = (lm - p.stat().st_mtime) / 3600
+        if gap > 1:
+            out["problems"].append({"kind": "신선도", "date": _today, "detail":
+                f"{label} 이 원장보다 {gap:.1f}시간 오래됐어요 — 화면은 옛 숫자를 "
+                f"보여 줍니다. `python build_photoism_agg.py` 로 다시 만들어 주세요"})
+
+    # 마지막 날짜 대조 — mtime 이 같아도 내용이 뒤처져 있을 수 있다.
+    agg = DATA_DIR / "master_photoism_agg.parquet"
+    if agg.exists():
+        try:
+            con = duckdb.connect()
+            con.execute("PRAGMA memory_limit='300MB'")
+            con.execute("PRAGMA threads=1")
+            q = "SELECT max(TRY_CAST(\"날짜\" AS DATE)) FROM read_parquet('{}')"
+            a = con.execute(q.format(str(agg).replace(chr(92), "/"))).fetchone()[0]
+            b = con.execute(q.format(str(ledger).replace(chr(92), "/"))).fetchone()[0]
+            con.close()
+            if a and b and (b - a).days >= 1:
+                out["problems"].append({"kind": "신선도", "date": _today, "detail":
+                    f"집계본 마지막 날짜가 원장보다 {(b - a).days}일 뒤처져 있어요 "
+                    f"(집계 {a} · 원장 {b})"})
+            out["last"] = str(a or "")
+        except Exception as e:                                # noqa: BLE001
+            out["problems"].append({"kind": "신선도", "date": _today,
+                                    "detail": f"집계본을 읽지 못했어요 — {type(e).__name__}: {e}"})
+    return out
+
+
 def main() -> int:
     # 콘솔이 cp949 라 '—' 같은 글자에서 UnicodeEncodeError 로 죽는다(실제로 죽었다).
     # 알림은 이미 나간 뒤라 조용히 지나갔지만, 사람이 직접 돌리면 마지막에 터진다.
@@ -322,6 +379,7 @@ def main() -> int:
                 report_days = v
 
     results = audit(days, report_days)
+    results.append(_derived_freshness())   # 화면이 읽는 집계본까지 본다
 
     if as_json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
