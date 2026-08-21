@@ -474,6 +474,13 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     if df.empty:
         return pd.DataFrame(columns=["국가", "unit", "수량", "현지", "매출액", "건수"])
     df["국가"] = df["국가"].map(lambda x: NAT_KO.get(x, x))
+    # ★★멤버 이름을 **별첨과 같은 기준**으로 맞춘다 (2026-08-21).
+    #   `_fold_prices` 의 절사 단위가 국가 × 멤버인데 여기서 정규화를 안 하면,
+    #   키릴문자가 섞인 이름(HARUTО)이나 한글/영문 표기가 갈려 **절사가 두 번**
+    #   일어난다. 별첨(member_pivot)은 `_norm_member` 를 태우므로 본문과 별첨의
+    #   멤버 수가 서로 달라진다 — 같은 문서에서 기준이 두 개면 안 된다.
+    if "mem" in df.columns:
+        df["mem"] = df["mem"].map(_norm_member)
     # ★절사는 현지통화끼리 한다. 환산 후 나누면 환율배수만큼 부푼다.
     df = _fold_prices(df, rates)
     if "구분" in df.columns:

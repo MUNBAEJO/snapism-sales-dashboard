@@ -221,7 +221,12 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
     """
     # ★`or 1` 이었다 — 매출과 취소가 정확히 상쇄돼 합이 0 이면 분모가 1 이 돼
     #   `100,000,000.0%` 가 찍힌다. 총합이 0 이하면 비중을 아예 안 적는다.
-    _t = sum(r["매출액"] for r in rows)
+    # ★★분모는 **양수 행의 합**이다 (2026-08-21). 전엔 음수(취소가 더 많은 나라)까지
+    #   더한 값을 분모로 썼는데, 그러면 분모가 작아져 양수 나라들의 비중 합이 100%를
+    #   넘는다 — 같은 장에 도넛은 100.0%, 표는 **145.3%** 로 찍혀 있었다.
+    #   도넛(_share_rows)은 이미 양수만 분모로 쓰므로 그쪽에 맞춘다. 음수 행은
+    #   비중을 안 적는다(‘-’). 정산액·합계는 음수를 그대로 반영하므로 영향 없다.
+    _t = sum(r["매출액"] for r in rows if r["매출액"] > 0)
     tot_krw = _t if _t > 0 else 0
     # 국가별 요율이 있으면 행마다 다른 요율을 쓴다. 없으면 전 행이 기본 요율.
     _rates = ([(rs_cc or {}).get(r["국가"], rs) for r in rows] if rs_cc else None)
@@ -275,7 +280,9 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
                 h += (f'<tr class="cathd"><td colspan="9">{k}'
                       f'<span>{_f(_sub[k][1])}원</span></td></tr>')
         tq += q; tk += krw; ts += amt
-        p = (krw / tot_krw * 100) if tot_krw else None
+        # 음수(취소가 더 많은 나라)는 비중을 안 적는다 — 분모가 양수 합이라
+        # 음수 비중을 같이 적으면 합이 100%에 안 맞아 더 헷갈린다.
+        p = (krw / tot_krw * 100) if (tot_krw and krw > 0) else None
         zero = krw == 0
         dash = '<span style="color:#c3c9d4">—</span>'
         h += (f'<tr><td>{r["국가"]}'
