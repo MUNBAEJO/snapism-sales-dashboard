@@ -40,6 +40,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 INK, MUTED, GRID = "#1b2330", "#9aa3b2", "#e8eaef"
+PRESET_Y1 = "최근 1년 · 월"
 PRESET_WEEK, PRESET_DAY = "12개월 · 주", "최근 90일 · 일"
 # ★두 대시보드의 CSS 툴팁(.vtip)과 같은 톤으로 맞춘다.
 #   #1b2330 배경 · 흰 글자 · 11.5px · weight 600 · Pretendard.
@@ -63,10 +64,12 @@ def won(v) -> str:
 
 # ── 프리셋 · 창 ────────────────────────────────────────────────────────
 def presets(first: date, last: date) -> list[str]:
-    """고를 수 있는 보기 목록. **데이터가 있는 연도만** 만든다.
-    (포토이즘 2025-01-01~ · 스내피즘 2025-04-30~ 이라 브랜드마다 다르다)"""
-    ys = [f"{y}년" for y in range(last.year, first.year - 1, -1)]
-    return ys + [PRESET_WEEK, PRESET_DAY]
+    """고를 수 있는 보기 목록.
+
+    ★지난 연도 버튼은 뺐다(2026-08-21 요청) — 올해 하나만 두고, 해를 걸친 흐름은
+      `최근 1년 · 월` 이 본다. 버튼 넷이 한 줄에 들어가는 한계도 있다.
+    """
+    return [f"{last.year}년", PRESET_Y1, PRESET_WEEK, PRESET_DAY]
 
 
 def is_year(preset: str) -> bool:
@@ -217,6 +220,16 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
     """
     parts_cols = [c for c in (parts_cols or []) if c in daily.columns]
     stack_cols = [c for c in (stack_cols or []) if c in daily.columns]
+    _scol = list(stack_colors or [])
+    _scol += [color] * max(0, len(stack_cols) - len(_scol))
+    _cmap = dict(zip(stack_cols, _scol))
+    # ★구성 고르기 (2026-08-21 요청) — "색 구분이 모호하다".
+    #   쌓아 놓으면 아래 계열이 위를 밀어올려 각 층을 눈으로는 못 읽는다(스택의 한계라
+    #   색을 아무리 잘 골라도 안 풀린다). 그래서 **골라서 그것만 보게** 한다.
+    #   위젯을 그리기 전에 값이 필요해서(제목 배지·요약 줄) 세션에서 미리 읽는다.
+    _picks = ["전체"] + stack_cols
+    pick = st.session_state.get(f"{key}_part")
+    pick = pick if pick in _picks else "전체"
     opts = options or [PRESET_WEEK, PRESET_DAY]
     if daily.empty or float(daily["total"].sum()) == 0:
         # 토글은 그려 준다 — 안 그리면 빈 해를 골랐을 때 되돌아올 방법이 없다.
@@ -231,7 +244,7 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         return
 
     kr_share = None
-    if kr_col and kr_col in daily.columns:
+    if pick == "전체" and kr_col and kr_col in daily.columns:
         tot = float(daily["total"].sum())
         kr_share = (float(daily[kr_col].sum()) / tot) if tot else 0.0
 
@@ -245,12 +258,21 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
     with head:
         badge = (f' <span class="muted">{_span}'
                  + (f' · 한국 {kr_share * 100:.0f}%' if kr_share is not None else "")
+                 + (f' · <b>{pick}</b>만' if pick != "전체" else "")
                  + "</span>")
         st.markdown(f'<div class="ct" style="margin-bottom:0">{title}{badge}</div>',
                     unsafe_allow_html=True)
     with tog:
         st.segmented_control("보기", opts, default=cur, key=f"{key}_preset",
                              label_visibility="collapsed")
+    if stack_cols:
+        st.segmented_control("구성", _picks, default=pick, key=f"{key}_part",
+                             label_visibility="collapsed")
+    if pick != "전체":
+        # 고른 구분 하나만 — 색도 그 구분 색으로 바꾼다(범례가 필요 없어진다).
+        d = daily[[pick]].rename(columns={pick: "total"})
+        color = _cmap.get(pick, color)
+        stack_cols, parts_cols = [], []
 
     # ── 항상 보이는 요약 — 그래프를 못 봐도 답이 되게 ──────────────────
     bits = [f"<b>합계 {money(float(d['total'].sum()))}</b>"]
@@ -272,14 +294,13 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
 
     rgba = "rgba(79,70,229,"          # --brand 계열. fill 은 투명도가 필요해 hex 로 못 쓴다.
     legend = None
-    if _yr or cur not in (PRESET_WEEK, PRESET_DAY):            # 연도 → 월 막대
+    _bars = _yr or cur not in (PRESET_WEEK, PRESET_DAY)
+    if _bars:                                                  # 연도·최근1년 → 월 막대
         g = d.resample("MS").sum()
         # ★쌓을 땐 툴팁도 그 구성으로 — 아래 계열이 위를 밀어올려 막대만으로는
         #   각 구분의 값을 못 읽는다. 툴팁이 그 자리를 메운다.
         tip_cols = stack_cols or parts_cols
-        _tipcol = (dict(zip(stack_cols, (list(stack_colors or [])
-                                         + [color] * len(stack_cols))))
-                   if stack_cols else None)
+        _tipcol = _cmap if stack_cols else None
         cd = [_tip(r["total"], {c: r[c] for c in tip_cols}, _tipcol)
               for _, r in g.iterrows()]
         # 진행 중인 마지막 달은 사선 — 부분 집계를 '급락'으로 오해하는 걸 막는다.
@@ -290,8 +311,7 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
             pat[-1] = "/"
         fig = go.Figure()
         if stack_cols:
-            _cols = list(stack_colors or [])
-            _cols += [color] * (len(stack_cols) - len(_cols))
+            _cols = _scol
             for c, col in zip(stack_cols, _cols):
                 fig.add_trace(go.Bar(
                     x=g.index, y=g[c], name=c, hoverinfo="skip",
@@ -359,8 +379,9 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
 
     if legend:
         _legend(st, *legend)
+    # 막대 아래 두 줄짜리 라벨(달 + 금액)이라 아래 여백을 더 준다.
     st.plotly_chart(_shell(fig, top, hoverfmt=hfmt,
-                           bmargin=46 if (_yr and len(g) <= 12) else 32),
+                           bmargin=46 if _bars else 32),
                     use_container_width=True,
                     config={"displayModeBar": False}, key=f"{key}_fig")
     st.caption(cap)
