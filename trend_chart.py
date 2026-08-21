@@ -58,8 +58,20 @@ def money(v) -> str:
 
 
 def won(v) -> str:
-    """원 단위 표기(fmt_krw 와 같은 규칙). 툴팁은 2026-08-21 부터 money() 를 쓴다."""
+    """원 단위 표기(fmt_krw 와 같은 규칙)."""
     return f"₩{int(v or 0):,}"
+
+
+def won_k(v) -> str:
+    """**천원 단위** 표기 — 툴팁용(2026-08-21 요청).
+
+    ₩12,612,051,380 → `₩12,612,051천`. 원 단위 11자리는 자릿수를 세게 되고,
+    억 단위 축약(₩126.1억)은 백만 원 아래가 통째로 날아간다. 그 사이를 잡는다.
+    ★반올림이다 — 정산서의 **절사**(내림)와는 규칙이 다르니 대조에 쓰면 안 된다.
+    """
+    v = float(v or 0)
+    k = int(v / 1000 + (0.5 if v >= 0 else -0.5))
+    return f"₩{k:,}천"
 
 
 # ── 프리셋 · 창 ────────────────────────────────────────────────────────
@@ -160,9 +172,10 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
 
 def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
     """툴팁 본문. 계열을 하나로 줄이는 대신 구성은 여기에 숫자로 남긴다.
-    ★금액은 **원 단위**다. 축약(₩135.9억)으로 갔다가 되돌렸다(2026-08-21) —
-      축은 축약이라도 툴팁은 정확한 값을 보러 오는 자리다. 축약은 막대 아래
-      라벨·y축 눈금·요약 줄이 이미 맡고 있다.
+    ★금액은 **천원 단위**다(2026-08-21 요청). 억 단위 축약 → 원 단위 →
+      천원 단위로 옮겨 왔다. 억 단위는 백만 원 아래가 날아가고, 원 단위는
+      11자리라 자릿수를 세게 된다. 억 단위 축약은 y축 눈금·막대 아래 라벨·
+      요약 줄이 이미 맡고 있다.
 
     ★Plotly 툴팁은 **SVG 텍스트**다 — 표·flex 로 자리를 맞출 수가 없다(색·크기·
       굵기만 먹는다). 그래서 정렬 대신 **읽히는 순서**로 푼다(2026-08-21):
@@ -170,7 +183,7 @@ def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
         · **금액 큰 순**으로 세운다 — 입력 순서(구분 목록 순)는 뜻이 없다
         · 이름은 흐리게, 금액은 굵게, **비중(%)** 은 더 흐리게 — 세 단계로 읽힌다
     """
-    s = (f'<span style="font-size:14.5px"><b>{won(row_total)}</b></span>'
+    s = (f'<span style="font-size:14.5px"><b>{won_k(row_total)}</b></span>'
          f'<span style="color:#8d97a8;font-size:11px"> 합계</span>')
     items = sorted(((k, v) for k, v in parts.items() if v),
                    key=lambda kv: -abs(kv[1]))
@@ -180,7 +193,7 @@ def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
         pct = (f' <span style="color:#8d97a8">{v / row_total * 100:.0f}%</span>'
                if row_total else "")
         s += (f'<br>{dot}<span style="color:#c3cad6">{k}</span>'
-              f'  <b>{won(v)}</b>{pct}')
+              f'  <b>{won_k(v)}</b>{pct}')
     return s
 
 
