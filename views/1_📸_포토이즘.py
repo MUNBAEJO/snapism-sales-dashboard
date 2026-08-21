@@ -2229,7 +2229,9 @@ with tab_home:
         #   433만 행 × 26열이 새로 복사되고, 뒤이은 paid_sales·assign 이 또 복사해
         #   한 rerun 에 2~3GB 가 겹친다. 실제로 여기서 ArrayMemoryError 가 났다.
         #   이 카드가 보는 건 다섯 열뿐이다(취소 여부는 paid_sales 가 본다).
-        _TREND_COLS = [c for c in ("날짜", "IP구분", "매출액", "국가", "취소 여부")
+        # ★'국가' 는 뺐다 — 한국 비중 배지를 없애면서 쓸 데가 없어졌다(2026-08-21).
+        #   이 창이 433만 행이라 열 하나가 그대로 메모리다.
+        _TREND_COLS = [c for c in ("날짜", "IP구분", "매출액", "취소 여부")
                        if c in scope.columns]
         _tw = scope.loc[(scope["날짜"] >= _t_start) & (scope["날짜"] <= _t_end),
                         _TREND_COLS]
@@ -2259,9 +2261,6 @@ with tab_home:
                 for _gb in _tpresent:
                     _g[_gb] = (_tp[_gb].reindex(_g.index).fillna(0)
                                if _gb in _tp.columns else 0)
-            if "국가" in _tsales.columns:
-                _g["한국"] = (_tsales[_tsales["국가"] == "한국"]
-                              .groupby("_d")["매출액"].sum().reindex(_g.index).fillna(0))
             # 빈 날을 0으로 — 안 채우면 이동평균·주 집계가 날짜를 건너뛴다.
             _g = _g.asfreq("D").fillna(0) if len(_g) > 1 else _g
             trend_chart.render(st, _g, key="ph_trend", color="#4f46e5",
@@ -2270,8 +2269,7 @@ with tab_home:
                                # 이다(쌓지는 않는다). 색은 도넛과 같은 _GUB_COLORS.
                                stack_cols=_tpresent,
                                stack_colors=[_GUB_COLORS.get(str(g), "#c7ccd6")
-                                             for g in _tpresent],
-                               kr_col="한국" if "한국" in _g.columns else None)
+                                             for g in _tpresent])
         helpbox("""
 **매출 추이**
 - ★**이 차트만 상단 조회 기간을 안 따라요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. 대신 **오른쪽에서 연도를 골라요.** **국가·브랜드·매장·IP 필터는 그대로 적용돼요.**

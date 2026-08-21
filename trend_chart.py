@@ -47,31 +47,23 @@ PRESET_WEEK, PRESET_DAY = "12개월 · 주", "최근 90일 · 일"
 FONT = "Pretendard, 'Malgun Gothic', -apple-system, sans-serif"
 
 
-def money(v) -> str:
-    """축 눈금·툴팁용 짧은 표기(fmt_short 와 같은 규칙)."""
-    v = float(v or 0)
-    if abs(v) >= 1e8:
-        return f"₩{v / 1e8:,.1f}억"
-    if abs(v) >= 1e4:
-        return f"₩{v / 1e4:,.0f}만"
-    return f"₩{v:,.0f}"
+# ★억/만 축약(money)·원 단위(won) 표기는 지웠다 — 카드 전체를 천원 단위로
+#   통일하면서(2026-08-21) 부르는 곳이 하나도 안 남았다.
+UNIT = "단위 : 천원"
 
 
-def won(v) -> str:
-    """원 단위 표기(fmt_krw 와 같은 규칙)."""
-    return f"₩{int(v or 0):,}"
+def kilo(v) -> str:
+    """**천원 단위** 숫자 — 이 카드의 모든 금액 표기(2026-08-21 요청).
 
-
-def won_k(v) -> str:
-    """**천원 단위** 표기 — 툴팁용(2026-08-21 요청).
-
-    ₩12,612,051,380 → `₩12,612,051천`. 원 단위 11자리는 자릿수를 세게 되고,
-    억 단위 축약(₩126.1억)은 백만 원 아래가 통째로 날아간다. 그 사이를 잡는다.
+    ₩12,612,051,380 → `12,612,051`. 단위는 숫자마다 붙이지 않고 그래프
+    오른쪽 위에 `단위 : 천원` 으로 **한 번만** 적는다(회계 보고서 방식).
+      · 원 단위 11자리는 자릿수를 세게 된다
+      · 억 단위 축약(₩126.1억)은 백만 원 아래가 통째로 날아가고, 툴팁 숫자와
+        눈으로 맞춰 볼 수가 없다
     ★반올림이다 — 정산서의 **절사**(내림)와는 규칙이 다르니 대조에 쓰면 안 된다.
     """
     v = float(v or 0)
-    k = int(v / 1000 + (0.5 if v >= 0 else -0.5))
-    return f"₩{k:,}천"
+    return f"{int(v / 1000 + (0.5 if v >= 0 else -0.5)):,}"
 
 
 # ── 프리셋 · 창 ────────────────────────────────────────────────────────
@@ -138,7 +130,7 @@ def _month_ticks(fig, lo, hi, amounts=None):
         if amounts is not None:
             v = amounts.get(t)
             if v:
-                lab += f"<br><span style='color:{INK};font-weight:700'>{money(v)}</span>"
+                lab += f"<br><span style='color:{INK};font-weight:700'>{kilo(v)}</span>"
         txt.append(lab)
     fig.update_xaxes(tickvals=list(ticks), ticktext=txt)
 
@@ -149,7 +141,7 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
     영문으로 나와 화면 톤과 안 맞는다. D3 포맷이라 %-m 같은 건 못 쓴다."""
     ticks = [0, top / 2, top]
     fig.update_layout(
-        height=height, margin=dict(l=66, r=14, t=6, b=bmargin),
+        height=height, margin=dict(l=82, r=14, t=6, b=bmargin),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT, size=12, color=INK),
         showlegend=False, hovermode="x unified", dragmode=False,
@@ -164,7 +156,7 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
                    hoverformat=hoverfmt),
         # ★0 기준 고정. 0을 안 깔면 5% 오르내림이 두 배처럼 보인다.
         yaxis=dict(range=[0, top * 1.04], tickvals=ticks,
-                   ticktext=[money(t) for t in ticks], gridcolor=GRID,
+                   ticktext=[kilo(t) for t in ticks], gridcolor=GRID,
                    zeroline=False, tickfont=dict(color=MUTED, size=11)),
     )
     return fig
@@ -172,10 +164,8 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
 
 def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
     """툴팁 본문. 계열을 하나로 줄이는 대신 구성은 여기에 숫자로 남긴다.
-    ★금액은 **천원 단위**다(2026-08-21 요청). 억 단위 축약 → 원 단위 →
-      천원 단위로 옮겨 왔다. 억 단위는 백만 원 아래가 날아가고, 원 단위는
-      11자리라 자릿수를 세게 된다. 억 단위 축약은 y축 눈금·막대 아래 라벨·
-      요약 줄이 이미 맡고 있다.
+    ★금액은 **천원 단위**다 — 카드 전체(축·막대 라벨·요약 줄)와 같은 자다.
+      단위 표시는 그래프 오른쪽 위에 한 번만 있다.
 
     ★Plotly 툴팁은 **SVG 텍스트**다 — 표·flex 로 자리를 맞출 수가 없다(색·크기·
       굵기만 먹는다). 그래서 정렬 대신 **읽히는 순서**로 푼다(2026-08-21):
@@ -183,7 +173,7 @@ def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
         · **금액 큰 순**으로 세운다 — 입력 순서(구분 목록 순)는 뜻이 없다
         · 이름은 흐리게, 금액은 굵게, **비중(%)** 은 더 흐리게 — 세 단계로 읽힌다
     """
-    s = (f'<span style="font-size:14.5px"><b>{won_k(row_total)}</b></span>'
+    s = (f'<span style="font-size:14.5px"><b>{kilo(row_total)}</b></span>'
          f'<span style="color:#8d97a8;font-size:11px"> 합계</span>')
     items = sorted(((k, v) for k, v in parts.items() if v),
                    key=lambda kv: -abs(kv[1]))
@@ -193,7 +183,7 @@ def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
         pct = (f' <span style="color:#8d97a8">{v / row_total * 100:.0f}%</span>'
                if row_total else "")
         s += (f'<br>{dot}<span style="color:#c3cad6">{k}</span>'
-              f'  <b>{won_k(v)}</b>{pct}')
+              f'  <b>{kilo(v)}</b>{pct}')
     return s
 
 
@@ -213,7 +203,7 @@ def _carry(fig, x, y, cd) -> None:
 
 def render(st, daily: pd.DataFrame, *, key: str, color: str,
            parts_cols: list[str] | None = None, title: str = "📈 매출 추이",
-           kr_col: str | None = None, preset: str | None = None,
+           preset: str | None = None,
            options: list[str] | None = None, data_last=None,
            stack_cols: list[str] | None = None,
            stack_colors: list[str] | None = None):
@@ -228,10 +218,9 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
       넘어오는 프레임은 이미 잘린 창이라 2025년을 골라도 그 창의 끝이 늘
       `index.max()` 라, 2025년 12월을 '최근 4주' 라고 부르게 된다.
 
-    ★'한국 제외' 토글은 뺐다(2026-08-11, 사용자 요청). 상단 국가 필터에서 한국을
-      빼면 같은 걸 볼 수 있어 중복이었고, 토글을 켜면 구성(툴팁) 값이 한국을 못
-      덜어내 아예 사라지는 부작용도 있었다. 배지는 남긴다 — '전체'가 사실상
-      한국이라는 사실은 계속 알려줘야 하니까.
+    ★'한국 제외' 토글은 뺐고(2026-08-11), **한국 비중 배지도 뺐다**(2026-08-21
+      요청). 상단 국가 필터에서 한국을 빼면 같은 걸 볼 수 있어 중복이었다.
+      (`kr_col` 인자도 같이 없앴다 — 화면 쪽 '한국' 열 계산도 지웠다)
     """
     parts_cols = [c for c in (parts_cols or []) if c in daily.columns]
     stack_cols = [c for c in (stack_cols or []) if c in daily.columns]
@@ -258,11 +247,6 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         st.info("선택한 조건에 맞는 데이터가 없어요. 필터나 기간을 바꿔 보세요.")
         return
 
-    kr_share = None
-    if pick == "전체" and kr_col and kr_col in daily.columns:
-        tot = float(daily["total"].sum())
-        kr_share = (float(daily[kr_col].sum()) / tot) if tot else 0.0
-
     d = daily
     end, start = d.index.max(), d.index.min()
     cur = preset or opts[0]
@@ -272,7 +256,6 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
     head, tog = st.columns([2.05, 1.25])
     with head:
         badge = (f' <span class="muted">{_span}'
-                 + (f' · 한국 {kr_share * 100:.0f}%' if kr_share is not None else "")
                  + (f' · <b>{pick}</b>만' if pick != "전체" else "")
                  + "</span>")
         st.markdown(f'<div class="ct" style="margin-bottom:0">{title}{badge}</div>',
@@ -289,23 +272,16 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         color = _cmap.get(pick, color)
         stack_cols, parts_cols = [], []
 
-    # ── 항상 보이는 요약 — 그래프를 못 봐도 답이 되게 ──────────────────
-    bits = [f"<b>합계 {money(float(d['total'].sum()))}</b>"]
-    _live = (len(d) >= 56 and (data_last is None
-                               or end.date() >= data_last))
-    if _live:
-        cur4 = float(d["total"].tail(28).sum())
-        prv4 = float(d["total"].tail(56).head(28).sum())
-        bits.append(f"최근 4주 {money(cur4)}")
-        if prv4:
-            _d = cur4 / prv4 - 1
-            _c = "var(--green)" if _d >= 0 else "var(--red)"
-            bits.append(f'직전 4주 대비 <b style="color:{_c}">{_d * 100:+.0f}%</b>')
-    elif _yr:
-        _mn = max(1, len(pd.date_range(start, end, freq="MS")))
-        bits.append(f"월평균 {money(float(d['total'].sum()) / _mn)}")
-    st.markdown('<div class="tsum">' + " · ".join(bits) + "</div>",
-                unsafe_allow_html=True)
+    # ── 요약 줄 ────────────────────────────────────────────────────────
+    # ★'최근 4주 · 직전 4주 대비 -9%' 를 뺐다(2026-08-21 요청). 그 줄은 늘 최근
+    #   4주라 **고른 기간과 무관한 숫자**였고, 막대마다 금액이 아래에 붙은 뒤로는
+    #   자리만 차지했다. 남는 건 그 창의 합계 하나다.
+    # 단위는 숫자마다 안 붙이고 **그래프 오른쪽 위에 한 번만** 적는다(요청).
+    st.markdown('<div class="tsum" style="display:flex;justify-content:space-between;'
+                'align-items:baseline;gap:12px">'
+                f'<span><b>합계 {kilo(float(d["total"].sum()))}</b></span>'
+                '<span class="muted" style="font-size:11.5px;white-space:nowrap">'
+                + UNIT + '</span></div>', unsafe_allow_html=True)
 
     rgba = "rgba(79,70,229,"          # --brand 계열. fill 은 투명도가 필요해 hex 로 못 쓴다.
     _bars = _yr or cur not in (PRESET_WEEK, PRESET_DAY)
