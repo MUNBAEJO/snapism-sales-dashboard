@@ -497,6 +497,25 @@ def flag_img(name, h=13):
             'style="vertical-align:middle;margin-right:7px;border:1px solid #eee;border-radius:2px;">')
 
 
+# '어디서 파나' 매장 카드의 기본값 — 나라를 안 고른 상태.
+# ★셀렉트박스 라벨 그대로 비교하므로 두 화면에서 **글자가 같아야** 한다.
+_ALL_NAT = "🌏 전체(글로벌)"
+
+
+def _nat_of(df, _amt="정산금액"):
+    """매장 이름 → 국가. 국기를 붙이려면 매장이 어느 나라인지 알아야 한다.
+
+    ★같은 매장 이름이 여러 나라에 있을 수 있어서(전수검사 2026-08-20) 아무거나
+      집으면 엉뚱한 국기가 붙는다. **매출이 가장 큰 나라**로 정한다.
+    """
+    if "국가" not in df.columns or "매장 이름" not in df.columns or df.empty:
+        return {}
+    g = (df.groupby(["매장 이름", "국가"], observed=True)[_amt].sum()
+         .reset_index().sort_values(_amt, ascending=False)
+         .drop_duplicates("매장 이름"))
+    return dict(zip(g["매장 이름"].astype(str), g["국가"].astype(str)))
+
+
 def load_config():
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -752,9 +771,12 @@ def cat3(series):
 #   plotly import 2줄도 같이 나갔다(포토이즘 페이지엔 애초에 plotly 가 없다).
 
 
-def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False):
+def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False,
+              tip_col=None):
     """시안 TOP 스타일 가로막대(이름 | 트랙+채움 | 금액). 1위=브랜드색, 나머지=연한 블루.
-    collapse_after=N 이면 상위 N개만 보이고 나머지는 '더보기' 접기."""
+    collapse_after=N 이면 상위 N개만 보이고 나머지는 '더보기' 접기.
+    tip_col — 이름 칸에 국기 <img> 를 섞어 그릴 때가 있다. 툴팁(data-tip)은
+    속성값이라 태그를 넣으면 깨지므로 **순수 이름**을 따로 받는다."""
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
@@ -768,7 +790,7 @@ def hbar_list(dframe, name_col, top=None, collapse_after=None, show_pct=False):
         for i, r in sub.iterrows():
             w = max(3, r["매출"] / mx * 100)
             col = BRAND if i == 0 else "#a9c7ef"   # 전체 1위만 브랜드색(원본 인덱스 유지)
-            _t = f'{r[name_col]} · {fmt_krw(r["매출"])}'
+            _t = f'{r[tip_col] if tip_col else r[name_col]} · {fmt_krw(r["매출"])}'
             if "건수" in sub.columns:
                 _t += f' · {int(r["건수"]):,}건'
             _p = (f'<span class="hb-p">{r["매출"] / _tot * 100:.1f}%</span>'
@@ -1356,6 +1378,15 @@ helpbox("""
   취소된 거래는 원거래(+)와 반전행(−)이 둘 다 취소로 들어와서, 그냥 더하면 서로
   상쇄돼 취소 규모가 실제보다 작게 나와요(음수로 찍히기도 했어요).
 
+**★5일에 판 걸 10일에 취소하면 — 어느 날 매출이 줄까요?**
+- **스내피즘은 5일이 줄어요.** 원거래(5일) 줄이 그대로 남은 채 `취소 여부` 가 True 로 바뀌고,
+  **취소한 날(10일)에 음수 반전행**이 한 줄 더 생겨요(이것도 True). 화면은 True 인 줄을 전부 빼니까
+  **5일 매출에서 소급해서 빠지고, 10일엔 아무 흔적이 없어요.**
+- **포토이즘은 반대로 10일이 줄어요** — 플래그가 없고 **취소한 날짜에 음수 거래 한 줄**만 들어와서,
+  5일 매출은 그대로 두고 10일 매출이 깎여요.
+- ⚠️ **그래서 달을 넘긴 취소는 두 브랜드가 다르게 보여요.** 7월 판매가 8월에 취소되면
+  스내피즘은 7월이 깎이고, 포토이즘은 7월이 그대로·8월이 깎여요. 월별 비교할 때 참고하세요.
+
 **④ 검증 — 숫자가 맞는지 확인하는 법**
 - `헤드라인(합계) − 쿠폰 매출 = 실결제` 가 항상 성립해요.
 - 아래 매출 차트·표(국가별·카테고리·매장별)는 **전부 같은 `정산금액` 기준**이에요 → 국가/카테고리/매장으로 쪼갠 합을 다 더하면 **헤드라인과 정확히 일치**해야 정상.
@@ -1409,7 +1440,7 @@ with tab_runs:
 # ════════════ 탭 1: 매출 한눈에 ════════════
 with tab_home:
     sec("1", "매출 동향",
-        "잘 가고 있나? — <b>조회 기간과 무관하게 항상 최근 1년</b>이에요 "
+        "잘 가고 있나? — <b>조회 기간을 안 따라요. 오른쪽에서 연도를 골라요</b> "
         "(국가·매장·카테고리 필터는 그대로 적용돼요)")
     with card():
         # @st.fragment — 기간(월·주·일) 토글을 눌러도 이 조각만 다시 그린다.
@@ -1419,13 +1450,18 @@ with tab_home:
             # ★이 차트만 **상단 조회 기간을 안 따른다 — 항상 최근 1년**이다(2026-08-07).
             #   흐름은 길게 봐야 읽히는데, 기간을 좁히면 막대 서너 개만 남아 추이가 안 보였다.
             #   국가·매장·카테고리 필터는 그대로 적용된다(scope = 날짜만 빠진 프레임).
-            _t_end = last_date
-            _t_start = (pd.Timestamp(_t_end).normalize()
-                        - pd.DateOffset(months=11)).replace(day=1).date()
+            # ★창은 **프리셋이 정한다**(2026-08-21) — 연도를 고르면 그 해만 자른다.
+            #   위젯을 그리기 전에 잘라야 해서 세션 상태에서 미리 읽는다(current).
+            _opts = trend_chart.presets(first_date, last_date)
+            _cur = trend_chart.current(st, "sn_trend", first_date, last_date)
+            _t_start, _t_end = trend_chart.window(_cur, first_date, last_date)
             _tw = scope[(scope["날짜"] >= _t_start) & (scope["날짜"] <= _t_end)]
             _r = revenue_txns(_tw)          # 정산금액 = 실결제 + 쿠폰 (다른 카드와 같은 기준)
             if _r.empty:
-                st.info("선택한 조건에 맞는 데이터가 없어요. 필터를 바꿔 보세요.")
+                # ★st.info 로 끝내면 안 된다 — 데이터 없는 해를 고르면 토글까지
+                #   사라져 되돌아올 방법이 없다. render 가 토글을 그려 준다.
+                trend_chart.render(st, pd.DataFrame({"total": []}), key="sn_trend",
+                                   color="#4f46e5", preset=_cur, options=_opts)
                 return
             _r = _r.assign(_d=pd.to_datetime(_r["날짜"]))
             _g = _r.groupby("_d").agg(
@@ -1437,18 +1473,36 @@ with tab_home:
             _kr = (_r[_r["국가"] == "대한민국"].groupby("_d")["정산금액"].sum()
                    if "국가" in _r.columns else pd.Series(dtype=float))
             _g["한국"] = _kr.reindex(_g.index).fillna(0)
+            # 월 막대에 쌓을 구성 — 스내피즘엔 '구좌'가 없어 **상품 카테고리**로 나눈다
+            # (요청, 2026-08-21). 종류가 6개뿐이라 묶을 필요가 없다.
+            _cats = []
+            if "상품 카테고리" in _r.columns:
+                _cs = (_r.groupby("상품 카테고리")["정산금액"].sum()
+                       .sort_values(ascending=False))
+                _cats = [str(c) for c in _cs[_cs > 0].index[:6]]
+                if _cats:
+                    _cp = (_r.groupby(["_d", "상품 카테고리"], observed=True)["정산금액"]
+                           .sum().unstack(fill_value=0))
+                    for _c in _cats:
+                        _g[_c] = (_cp[_c].reindex(_g.index).fillna(0)
+                                  if _c in _cp.columns else 0)
             # 빈 날을 0으로 채운다 — 안 채우면 이동평균·주 집계가 날짜를 건너뛴다.
             _g = _g.asfreq("D").fillna(0) if len(_g) > 1 else _g
             trend_chart.render(st, _g, key="sn_trend", color="#4f46e5",
-                               parts_cols=["실결제", "쿠폰"], kr_col="한국")
+                               parts_cols=["실결제", "쿠폰"], preset=_cur,
+                               options=_opts, data_last=last_date, stack_cols=_cats,
+                               stack_colors=PAL[:len(_cats)], kr_col="한국")
             helpbox("""
     **매출 추이**
-    - ★**이 차트만 상단 조회 기간을 안 따라요 — 항상 최근 1년이에요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. **국가·매장·카테고리 필터는 그대로 적용돼요.**
-    - **보기 3가지** — `12개월·월`(막대 12개) · `12개월·주`(선 48점) · `최근 90일·일`(선 90점 + 7일 이동평균). 뭘 골라도 점이 12~90개예요.
+    - ★**이 차트만 상단 조회 기간을 안 따라요.** 흐름은 길게 봐야 읽히는데 기간을 좁히면 막대가 서너 개만 남아서요. 대신 **오른쪽에서 연도를 골라요.** **국가·매장·카테고리 필터는 그대로 적용돼요.**
+    - **보기** — `2026년`·`2025년`(그 해 월별 막대) · `12개월·주`(선 48점) · `최근 90일·일`(선 90점 + 7일 이동평균). **기본은 올해**예요.
+      - 연도를 고르면 **그 해만** 그려요. 스내피즘 데이터는 **2025-04-30 부터**라 2025년은 5월부터예요.
+      - 막대 **아래 숫자가 그 달 합계**예요. 막대 색은 **상품 카테고리** 구성이고, 마우스를 올리면 카테고리별 금액이 나와요.
       - ★**12개월을 일 단위로는 안 그려요.** 점이 341개라 화면 폭(점당 3px)보다 많아 읽을 수가 없고, 주말이 평일의 1.5배라 요일 흔들림이 추세보다 커서 오히려 방해가 돼요.
       - `주` 보기는 **양 끝의 잘린 주를 빼요.** 안 빼면 실제로 없는 U자 모양이 항상 생겨요.
       - `월` 보기의 마지막 달은 **사선**이에요 — 아직 진행 중인 부분 집계라 '급락'으로 오해하기 쉬워서요.
-    - **선은 하나(정산금액 = 실결제 + 쿠폰)**예요. 예전엔 실결제 위에 쿠폰을 쌓았는데, 그러면 제일 또렷한 위쪽 선이 '정가 총액'이 돼서 정작 봐야 할 값이 가려졌어요. 실결제·쿠폰 내역은 **툴팁에 숫자로** 나와요.
+    - **선(주·일) 보기는 계열 하나(정산금액 = 실결제 + 쿠폰)**예요. 예전엔 실결제 위에 쿠폰을 쌓았는데, 그러면 제일 또렷한 위쪽 선이 '정가 총액'이 돼서 정작 봐야 할 값이 가려졌어요. 실결제·쿠폰 내역은 **툴팁에 숫자로** 나와요.
+      막대(연도) 보기만 **상품 카테고리별로 쌓아요** — 막대는 경계가 뚜렷해서 구성이 읽혀요.
     - **위쪽 요약 줄**(최근 4주 · 직전 4주 대비)은 그래프를 안 봐도 답이 되게 항상 띄워요. 터치 기기에선 툴팁을 못 띄우거든요. 4주 이동합이라 '이번 달이 아직 안 끝나서 낮아 보이는' 문제도 안 생겨요.
     - **한국 제외** 토글 — 한국이 88%라 '전체'가 사실상 한국이에요. 해외만 보려면 켜세요.
     - ※ 공통 기준(원본·환율·정산금액 정의)은 상단 'KPI 카드' 설명 참고.
@@ -1561,23 +1615,36 @@ with tab_home:
             # 없으면 전체 재실행 → st.tabs(1.45)가 선택을 못 기억해 첫 탭으로 튕긴다.
             @st.fragment
             def _home_store():  # 국가 선택 → TOP5 매장
+                # ★기본을 **전체(글로벌)** 로 (2026-08-21 요청). 예전엔 매출 1위 국가가
+                #   기본이라 '대한민국 TOP 5' 만 보였다.
                 _opts = (rev.groupby("국가")["정산금액"].sum().sort_values(ascending=False).index.tolist()
                          if "국가" in rev.columns else [])
                 if _opts:
-                    _pick = st.selectbox("국가", _opts, key="home_store_country", label_visibility="collapsed")
-                    _ss = (rev[rev["국가"] == _pick].groupby("매장 이름")
+                    _pick = st.selectbox("국가", [_ALL_NAT] + [str(o) for o in _opts],
+                                         key="home_store_country", label_visibility="collapsed")
+                    _src = rev if _pick == _ALL_NAT else rev[rev["국가"] == _pick]
+                    _ss = (_src.groupby("매장 이름")
                            .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
                            .reset_index().sort_values("매출", ascending=False).head(5))
                     if not _ss.empty:
-                        hbar_list(_ss, "매장 이름", top=5)
-                        st.caption("선택한 국가의 매출 상위 5개 매장")
+                        if _pick == _ALL_NAT:
+                            # 나라가 섞이니 국기를 붙인다 — 이름만으론 알 수가 없다.
+                            _ss = _ss.assign(표시=[flag_img(_v) + str(_n) for _n, _v
+                                                  in zip(_ss["매장 이름"],
+                                                         _ss["매장 이름"].map(_nat_of(rev)))])
+                            hbar_list(_ss, "표시", top=5, tip_col="매장 이름")
+                        else:
+                            hbar_list(_ss, "매장 이름", top=5)
+                        st.caption("전 세계 매출 상위 5개 매장" if _pick == _ALL_NAT
+                                   else "선택한 국가의 매출 상위 5개 매장")
                     else:
                         st.info("이 국가의 매장 데이터가 없어요.")
                 else:
                     st.info("데이터가 없어요.")
                 helpbox("""
 **국가별 매출 TOP 5 매장**
-- 위 셀렉트박스에서 고른 국가의 매출 거래를 `매장 이름`으로 묶어 `정산금액`(실결제+쿠폰) 합·건수 → 상위 5개 매장.
+- 기본은 **전체(글로벌)** — 나라를 가리지 않은 매출 상위 5개 매장이에요. 국기로 어느 나라인지 표시해요.
+- 나라를 고르면 그 나라의 매출 거래를 `매장 이름`으로 묶어 `정산금액`(실결제+쿠폰) 합·건수 → 상위 5개 매장.
 - 국가 목록도 정산금액 순이라 전액 쿠폰 국가(대만 등)도 고를 수 있어요.
 """)
 
@@ -2066,6 +2133,9 @@ def _store_tab():
               .agg(매출=("정산금액", "sum"), 건수=("정산금액", "count"))
               .reset_index())
         ss = ss[ss["매출"] > 0].sort_values("매출", ascending=False)
+        # 국기(요청, 2026-08-21) — 8개국이 한 줄에 섞여 있어 이름만으론 알 수가 없다.
+        ss = ss.assign(표시=[flag_img(_v) + str(_n) for _n, _v
+                            in zip(ss["매장 이름"], ss["매장 이름"].map(_nat_of(rev)))])
         # ★이 탭의 축은 **매장**이다. 매출·건수는 맨 위 요약과 다른 탭에 이미 있다.
         statrow([("매장 수", f"{rev['매장 이름'].nunique():,}개"),
                  ("매출 발생 매장", f"{len(ss):,}개")])
@@ -2074,7 +2144,8 @@ def _store_tab():
             st.info("해당 조건에 맞는 매장이 없어요. 위 필터바를 넓혀 보세요.")
         else:
             # 매장 전체 순위 = 전체 목록이라 비중을 켜도 분모가 맞다.
-            hbar_list(ss, "매장 이름", collapse_after=10, show_pct=True)
+            hbar_list(ss, "표시", collapse_after=10, show_pct=True,
+                      tip_col="매장 이름")
         helpbox("""
 **매장 전체 순위**
 - **상단 필터바**(기간·국가·매장·상품·IP)로 거른 결과의 `매장 이름`별 `정산금액`(실결제+쿠폰) 합·건수 순위예요.
@@ -2082,6 +2153,7 @@ def _store_tab():
 - **매장 수** = 그 조건에 나타난 매장 개수, **매출 발생 매장** = 그중 매출이 0보다 큰 곳이에요.
   둘이 다르면 그 차이만큼은 **기간 안에 거래가 없던 매장**이에요.
 - 전액 쿠폰 결제 매장(대만 등)도 **같은 막대 순위**에 들어와요.
+- 이름 앞 **국기**는 그 매장의 `국가` 예요. 같은 이름이 여러 나라에 있으면 매출이 가장 큰 쪽 국기로 보여요.
 - 카테고리별 프레임(IP)은 **'🧩 상품 카테고리 분석' 탭**에서 전체를 봐요.
 """)
 

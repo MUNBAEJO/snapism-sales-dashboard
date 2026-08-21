@@ -16,33 +16,38 @@
 
 설계
   · 토글을 '단위'가 아니라 **'단위 + 기간' 프리셋**으로. 뭘 골라도 점이 12~90개다.
-      12개월·월(막대 12) · 12개월·주(선 48) · 최근 90일·일(선 90 + 7일 이동평균)
-    12개월을 일 단위로 보는 건 **안 만든다.** 읽을 수 없는데 자리만 차지한다.
-  · 계열은 **하나**(합계). 구성은 바로 아래 비중 카드가 이미 답하고 있다.
-    구성 값은 툴팁에 숫자로 딸려 나오므로 정보가 사라지지 않는다.
-  · 그래프를 안 봐도 되는 요약 줄을 항상 띄운다(터치 대비). 4주 이동합이라
-    '이번 달이 아직 안 끝나서 낮아 보이는' 문제도 구조적으로 안 생긴다.
+  · 그래프를 안 봐도 되는 요약 줄을 항상 띄운다(터치 대비).
   · Plotly 를 쓴다 — 0 기준 y축·눈금·월 라벨·최근접 스냅 툴팁·터치가 전부 딸려온다.
-    다른 4개 화면이 이미 Plotly 라 새로 까는 것도 없다.
+
+2026-08-21 개편 (요청)
+  · 프리셋의 '12개월 · 월' 을 **연도**로 바꿨다 — `2026년` `2025년` … 기본은 올해다.
+    "어차피 올해 것이 12개월과 거의 같으니, 지난해를 통째로 보는 쪽이 낫다" 는 요청.
+    ★연도를 고르면 **화면이 그 해만 잘라서 넘긴다**(`window()`). 그래서 프레임이
+      늘 1년치 이하로 유지된다 — 2년을 통째로 들고 있으면 메모리가 감당이 안 된다.
+  · 월 막대는 **구성(구좌·카테고리)별로 색을 나눠 쌓는다**(`stack_cols`).
+    ★예전에 스택을 뺐던 이유(아래 계열이 위를 밀어올려 값이 안 읽힘)는 그대로다 —
+      그래서 **막대(월) 보기에서만** 쌓고, 선(주·일) 보기는 계열 하나를 유지한다.
+      쌓아도 툴팁은 예전 그대로 **합계 + 구성** 한 덩어리다(투명 계열이 툴팁을 문다).
+  · 툴팁 금액을 **축약 표기**로 바꿨다(₩13,587,850,000 → ₩135.9억).
+  · 막대 **아래에 그 달 금액**을 적는다 — 그래프를 안 봐도 달마다 숫자가 읽힌다.
 """
 from __future__ import annotations
 
 import math
+from datetime import date
 
 import pandas as pd
 import plotly.graph_objects as go
 
 INK, MUTED, GRID = "#1b2330", "#9aa3b2", "#e8eaef"
-PRESETS = ["12개월 · 월", "12개월 · 주", "최근 90일 · 일"]
+PRESET_WEEK, PRESET_DAY = "12개월 · 주", "최근 90일 · 일"
 # ★두 대시보드의 CSS 툴팁(.vtip)과 같은 톤으로 맞춘다.
 #   #1b2330 배경 · 흰 글자 · 11.5px · weight 600 · Pretendard.
-#   (다른 화면의 Plotly 는 '1,234,567원' 을 쓰지만, 이 카드는 스내피즘·포토이즘
-#    페이지에 얹히므로 그 페이지 방식인 '₩1,234,567' 을 따른다.)
 FONT = "Pretendard, 'Malgun Gothic', -apple-system, sans-serif"
 
 
 def money(v) -> str:
-    """축 눈금용 짧은 표기(fmt_short 와 같은 규칙)."""
+    """축 눈금·툴팁용 짧은 표기(fmt_short 와 같은 규칙)."""
     v = float(v or 0)
     if abs(v) >= 1e8:
         return f"₩{v / 1e8:,.1f}억"
@@ -52,8 +57,46 @@ def money(v) -> str:
 
 
 def won(v) -> str:
-    """툴팁용 원 단위 표기(fmt_krw 와 같은 규칙)."""
+    """원 단위 표기(fmt_krw 와 같은 규칙). 툴팁은 2026-08-21 부터 money() 를 쓴다."""
     return f"₩{int(v or 0):,}"
+
+
+# ── 프리셋 · 창 ────────────────────────────────────────────────────────
+def presets(first: date, last: date) -> list[str]:
+    """고를 수 있는 보기 목록. **데이터가 있는 연도만** 만든다.
+    (포토이즘 2025-01-01~ · 스내피즘 2025-04-30~ 이라 브랜드마다 다르다)"""
+    ys = [f"{y}년" for y in range(last.year, first.year - 1, -1)]
+    return ys + [PRESET_WEEK, PRESET_DAY]
+
+
+def is_year(preset: str) -> bool:
+    return bool(preset) and preset.endswith("년") and preset[:-1].isdigit()
+
+
+def window(preset: str, first: date, last: date) -> tuple[date, date]:
+    """그 프리셋이 그릴 창(시작, 끝).
+
+    ★화면은 **이 창만 잘라서** `render()` 에 넘긴다. 연도 프리셋을 넣으면서도
+      한 번에 들고 있는 행이 1년치를 안 넘게 하려는 것이다(포토이즘은 1년 창이
+      이미 433만 행 × 5열이라, 2년을 통째로 뜨면 ArrayMemoryError 가 난다).
+    """
+    if is_year(preset):
+        y = int(preset[:-1])
+        return max(first, date(y, 1, 1)), min(last, date(y, 12, 31))
+    start = (pd.Timestamp(last).normalize()
+             - pd.DateOffset(months=11)).replace(day=1).date()
+    return max(first, start), last
+
+
+def current(st, key: str, first: date, last: date) -> str:
+    """이번 실행에서 쓸 프리셋.
+
+    ★위젯을 그리기 **전에** 창을 잘라야 해서 세션 상태에서 미리 읽는다.
+      토글을 누르면 재실행이 걸리고, 그때는 이미 새 값이 들어와 있다.
+    """
+    opts = presets(first, last)
+    v = st.session_state.get(f"{key}_preset")
+    return v if v in opts else opts[0]
 
 
 def _nice_top(v: float) -> float:
@@ -67,24 +110,35 @@ def _nice_top(v: float) -> float:
     return 10 * e
 
 
-def _month_ticks(fig, lo, hi):
+def _month_ticks(fig, lo, hi, amounts=None):
     """월 경계 라벨. ★D3(plotly tickformat)는 '%-m' 을 모르고 윈도 strftime 도 안 받는다
-    → 눈금값을 직접 만든다. 1월엔 연도를 붙여 해가 바뀌는 지점을 보이게 한다."""
+    → 눈금값을 직접 만든다. 1월엔 연도를 붙여 해가 바뀌는 지점을 보이게 한다.
+
+    amounts={Timestamp: 금액} 을 주면 라벨 **아랫줄에 그 달 금액**을 붙인다(요청).
+    """
     ticks = pd.date_range(pd.Timestamp(lo).replace(day=1), hi, freq="MS")
-    fig.update_xaxes(tickvals=list(ticks),
-                     ticktext=[(f"{t.year % 100}년 {t.month}월" if t.month == 1
-                                else f"{t.month}월") for t in ticks])
+    txt = []
+    for t in ticks:
+        lab = f"{t.year % 100}년 {t.month}월" if t.month == 1 else f"{t.month}월"
+        if amounts is not None:
+            v = amounts.get(t)
+            if v:
+                lab += f"<br><span style='color:{INK};font-weight:700'>{money(v)}</span>"
+        txt.append(lab)
+    fig.update_xaxes(tickvals=list(ticks), ticktext=txt)
 
 
-def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d"):
+def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
+           bmargin: int = 32):
     """hoverfmt — 'x unified' 툴팁 머리의 날짜 표기. 안 주면 'Sep 1, 2025' 처럼
     영문으로 나와 화면 톤과 안 맞는다. D3 포맷이라 %-m 같은 건 못 쓴다."""
     ticks = [0, top / 2, top]
     fig.update_layout(
-        height=height, margin=dict(l=66, r=14, t=6, b=32),
+        height=height, margin=dict(l=66, r=14, t=6, b=bmargin),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT, size=12, color=INK),
         showlegend=False, hovermode="x unified", dragmode=False,
+        barmode="stack", bargap=.35,
         # bordercolor 를 배경과 같게 — 안 주면 Plotly 가 계열색 테두리를 둘러
         # 집 툴팁(.vtip, 테두리 없음)과 달라 보인다.
         hoverlabel=dict(bgcolor=INK, bordercolor=INK, align="left",
@@ -102,21 +156,44 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d"):
 
 def _tip(row_total, parts: dict) -> str:
     """툴팁 본문. 계열을 하나로 줄이는 대신 구성은 여기에 숫자로 남긴다.
-    금액은 **원 단위**로 적는다 — 같은 페이지의 다른 툴팁이 전부 그렇다."""
-    s = f"<b>{won(row_total)}</b>"
+    ★금액은 **축약 표기**다(2026-08-21 요청) — 원 단위 11자리는 눈으로 못 읽는다."""
+    s = f"<b>{money(row_total)}</b>"
     for k, v in parts.items():
         if v:
-            s += f'<br><span style="opacity:.72">{k}</span> {won(v)}'
+            s += f'<br><span style="opacity:.72">{k}</span> {money(v)}'
     return s
+
+
+def _legend(st, cols, colors) -> None:
+    """쌓은 색이 뭔지 알려 주는 줄. 색만으로는 어느 구분인지 알 수가 없다."""
+    if not cols:
+        return
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:5px;'
+        f'margin-right:13px;font-size:11.5px;color:var(--text-2)">'
+        f'<i style="width:9px;height:9px;border-radius:2px;background:{c};'
+        f'display:inline-block"></i>{n}</span>'
+        for n, c in zip(cols, colors))
+    st.markdown(f'<div style="margin:-2px 0 2px 66px">{chips}</div>',
+                unsafe_allow_html=True)
 
 
 def render(st, daily: pd.DataFrame, *, key: str, color: str,
            parts_cols: list[str] | None = None, title: str = "📈 매출 추이",
-           kr_col: str | None = None):
+           kr_col: str | None = None, preset: str | None = None,
+           options: list[str] | None = None, data_last=None,
+           stack_cols: list[str] | None = None,
+           stack_colors: list[str] | None = None):
     """daily: 날짜 인덱스(일 단위, 빈 날 0) · 'total' 컬럼 필수 · parts_cols 는 툴팁용.
 
-    kr_col 을 주면 **한국 비중 배지**가 붙는다 — 한국이 88%라 '전체'라고 써 있어도
-    사실상 한국 그래프이기 때문이다.
+    preset/options 를 주면 그 목록으로 토글을 그린다(화면이 `current()`·`window()`
+    로 이미 창을 잘라 넘겼다는 뜻). 안 주면 예전처럼 최근 1년 3종이다.
+
+    stack_cols 를 주면 **월 막대만** 그 구성으로 색을 나눠 쌓는다.
+
+    data_last — 데이터의 마지막 날. ★이게 없으면 '최근 4주' 를 못 가린다:
+      넘어오는 프레임은 이미 잘린 창이라 2025년을 골라도 그 창의 끝이 늘
+      `index.max()` 라, 2025년 12월을 '최근 4주' 라고 부르게 된다.
 
     ★'한국 제외' 토글은 뺐다(2026-08-11, 사용자 요청). 상단 국가 필터에서 한국을
       빼면 같은 걸 볼 수 있어 중복이었고, 토글을 켜면 구성(툴팁) 값이 한국을 못
@@ -124,8 +201,18 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
       한국이라는 사실은 계속 알려줘야 하니까.
     """
     parts_cols = [c for c in (parts_cols or []) if c in daily.columns]
+    stack_cols = [c for c in (stack_cols or []) if c in daily.columns]
+    opts = options or [PRESET_WEEK, PRESET_DAY]
     if daily.empty or float(daily["total"].sum()) == 0:
-        st.info("선택한 조건에 맞는 데이터가 없어요. 필터를 바꿔 보세요.")
+        # 토글은 그려 준다 — 안 그리면 빈 해를 골랐을 때 되돌아올 방법이 없다.
+        _h, _t = st.columns([2.05, 1.25])
+        with _h:
+            st.markdown(f'<div class="ct" style="margin-bottom:0">{title}</div>',
+                        unsafe_allow_html=True)
+        with _t:
+            st.segmented_control("보기", opts, default=preset or opts[0],
+                                 key=f"{key}_preset", label_visibility="collapsed")
+        st.info("선택한 조건에 맞는 데이터가 없어요. 필터나 기간을 바꿔 보세요.")
         return
 
     kr_share = None
@@ -133,56 +220,87 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         tot = float(daily["total"].sum())
         kr_share = (float(daily[kr_col].sum()) / tot) if tot else 0.0
 
+    d = daily
+    end, start = d.index.max(), d.index.min()
+    cur = preset or opts[0]
+    _yr = is_year(cur)
+    _span = (f"{start:%Y-%m-%d} ~ {end:%Y-%m-%d}" if _yr else "최근 1년")
+
     head, tog = st.columns([2.05, 1.25])
     with head:
-        badge = (f' <span class="muted">최근 1년'
+        badge = (f' <span class="muted">{_span}'
                  + (f' · 한국 {kr_share * 100:.0f}%' if kr_share is not None else "")
                  + "</span>")
         st.markdown(f'<div class="ct" style="margin-bottom:0">{title}{badge}</div>',
                     unsafe_allow_html=True)
     with tog:
-        preset = st.segmented_control("보기", PRESETS, default=PRESETS[0],
-                                      key=f"{key}_preset",
-                                      label_visibility="collapsed") or PRESETS[0]
-
-    d = daily
-    end = d.index.max()
+        st.segmented_control("보기", opts, default=cur, key=f"{key}_preset",
+                             label_visibility="collapsed")
 
     # ── 항상 보이는 요약 — 그래프를 못 봐도 답이 되게 ──────────────────
-    cur = float(d["total"].tail(28).sum())
-    prv = float(d["total"].tail(56).head(28).sum())
-    bits = [f"<b>최근 4주 {money(cur)}</b>"]
-    if prv:
-        _d = cur / prv - 1
-        _c = "var(--green)" if _d >= 0 else "var(--red)"
-        bits.append(f'직전 4주 대비 <b style="color:{_c}">{_d * 100:+.0f}%</b>')
-    ly = d[(d.index >= end - pd.Timedelta(days=392))
-           & (d.index <= end - pd.Timedelta(days=365))]["total"].sum()
-    if ly:                       # 데이터가 1년 넘게 쌓이면 자동으로 붙는다
-        _d = cur / float(ly) - 1
-        _c = "var(--green)" if _d >= 0 else "var(--red)"
-        bits.append(f'작년 같은 기간 대비 <b style="color:{_c}">{_d * 100:+.0f}%</b>')
+    bits = [f"<b>합계 {money(float(d['total'].sum()))}</b>"]
+    _live = (len(d) >= 56 and (data_last is None
+                               or end.date() >= data_last))
+    if _live:
+        cur4 = float(d["total"].tail(28).sum())
+        prv4 = float(d["total"].tail(56).head(28).sum())
+        bits.append(f"최근 4주 {money(cur4)}")
+        if prv4:
+            _d = cur4 / prv4 - 1
+            _c = "var(--green)" if _d >= 0 else "var(--red)"
+            bits.append(f'직전 4주 대비 <b style="color:{_c}">{_d * 100:+.0f}%</b>')
+    elif _yr:
+        _mn = max(1, len(pd.date_range(start, end, freq="MS")))
+        bits.append(f"월평균 {money(float(d['total'].sum()) / _mn)}")
     st.markdown('<div class="tsum">' + " · ".join(bits) + "</div>",
                 unsafe_allow_html=True)
 
     rgba = "rgba(79,70,229,"          # --brand 계열. fill 은 투명도가 필요해 hex 로 못 쓴다.
-    if preset == PRESETS[0]:                                   # 12개월 · 월
+    legend = None
+    if _yr or cur not in (PRESET_WEEK, PRESET_DAY):            # 연도 → 월 막대
         g = d.resample("MS").sum()
-        cd = [_tip(r["total"], {c: r[c] for c in parts_cols}) for _, r in g.iterrows()]
+        # ★쌓을 땐 툴팁도 그 구성으로 — 아래 계열이 위를 밀어올려 막대만으로는
+        #   각 구분의 값을 못 읽는다. 툴팁이 그 자리를 메운다.
+        tip_cols = stack_cols or parts_cols
+        cd = [_tip(r["total"], {c: r[c] for c in tip_cols}) for _, r in g.iterrows()]
         # 진행 중인 마지막 달은 사선 — 부분 집계를 '급락'으로 오해하는 걸 막는다.
+        _partial = ((data_last is None or end.date() >= data_last)
+                    and end.day < end.days_in_month)
         pat = [""] * len(g)
-        pat[-1] = "/"
-        fig = go.Figure(go.Bar(
-            x=g.index, y=g["total"], customdata=cd,
-            marker=dict(color=color, pattern=dict(shape=pat, fgcolor="#fff",
-                                                  size=4, solidity=.25)),
-            hovertemplate="%{customdata}<extra></extra>"))
-        fig.update_layout(bargap=.35)
-        _month_ticks(fig, g.index[0], g.index[-1])
+        if _partial:
+            pat[-1] = "/"
+        fig = go.Figure()
+        if stack_cols:
+            _cols = list(stack_colors or [])
+            _cols += [color] * (len(stack_cols) - len(_cols))
+            for i, (c, col) in enumerate(zip(stack_cols, _cols)):
+                # ★툴팁은 **맨 앞 계열 하나만** 문다. 계열마다 물리면 'x unified'
+                #   툴팁이 6줄로 늘어나고 합계가 어디에도 안 나온다. 한 계열이
+                #   합계+구성을 한 덩어리로 들고, 나머지는 hoverinfo=skip 이다.
+                fig.add_trace(go.Bar(
+                    x=g.index, y=g[c], name=c,
+                    customdata=cd if i == 0 else None,
+                    hovertemplate=("%{customdata}<extra></extra>" if i == 0 else None),
+                    hoverinfo=None if i == 0 else "skip",
+                    marker=dict(color=col, pattern=dict(shape=pat, fgcolor="#fff",
+                                                        size=4, solidity=.25))))
+            legend = (stack_cols, _cols)
+        else:
+            fig.add_trace(go.Bar(
+                x=g.index, y=g["total"], customdata=cd,
+                marker=dict(color=color, pattern=dict(shape=pat, fgcolor="#fff",
+                                                      size=4, solidity=.25)),
+                hovertemplate="%{customdata}<extra></extra>"))
+        # 막대 아래 그 달 금액(요청) — 그래프를 안 봐도 달마다 숫자가 읽힌다.
+        _month_ticks(fig, g.index[0], g.index[-1],
+                     amounts={i: float(v) for i, v in g["total"].items()})
         top = _nice_top(float(g["total"].max()))
         hfmt = "%Y년 %m월"
-        cap = f"마지막 달은 사선이에요 — {end.month}월 {end.day}일까지만 집계된 부분치예요."
-    elif preset == PRESETS[1]:                                 # 12개월 · 주
+        cap = (f"마지막 달은 사선이에요 — {end.month}월 {end.day}일까지만 집계된 부분치예요."
+               if _partial else "막대 아래 숫자가 그 달 합계예요.")
+        if stack_cols:
+            cap += " 색은 구성이고, 마우스를 올리면 구분별 금액이 나와요."
+    elif cur == PRESET_WEEK:                                   # 12개월 · 주
         g = d.resample("W-MON", label="left", closed="left").sum()
         cnt = d["total"].resample("W-MON", label="left", closed="left").size()
         g = g[cnt == 7]                    # ★부분주 제거 — 양 끝이 꺾이는 가짜 U자의 원인
@@ -216,6 +334,10 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         cap = ("굵은 선이 7일 평균(추세), 옅은 선이 그날 실제값이에요. "
                "12개월을 일 단위로는 안 그려요 — 점이 341개라 읽을 수가 없어서요.")
 
-    st.plotly_chart(_shell(fig, top, hoverfmt=hfmt), use_container_width=True,
+    if legend:
+        _legend(st, *legend)
+    st.plotly_chart(_shell(fig, top, hoverfmt=hfmt,
+                           bmargin=46 if (_yr and len(g) <= 12) else 32),
+                    use_container_width=True,
                     config={"displayModeBar": False}, key=f"{key}_fig")
     st.caption(cap)
