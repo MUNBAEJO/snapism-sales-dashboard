@@ -49,27 +49,22 @@ FONT = "Pretendard, 'Malgun Gothic', -apple-system, sans-serif"
 
 # ★억/만 축약(money)·원 단위(won) 표기는 지웠다 — 카드 전체를 천원 단위로
 #   통일하면서(2026-08-21) 부르는 곳이 하나도 안 남았다.
-UNIT = "단위 : 천원"
+UNIT = "단위 : 원"
 
 
 def kilo(v) -> str:
-    """**천원 단위** 숫자 — 이 카드의 모든 금액 표기(2026-08-21 요청).
+    """이 카드의 모든 금액 표기 — **원 단위 그대로**.
 
-    ₩12,612,051,380 → `₩12,612,051천`.
+    ₩12,612,051,380.
 
-    ★★자릿말 `천` 을 **숫자마다** 붙인다. 처음엔 회계 보고서식으로 오른쪽 위에
-      `단위 : 천원` 한 번만 적고 숫자는 맨숫자로 뒀는데, 그러면 `₩12,612,051` 을
-      **1,261만원으로 읽어 버린다** — 실제로는 126억이다. 100배 차이다.
-      작은 단위 표시를 못 본 사람은 틀리게 읽을 수밖에 없으니, 숫자 스스로
-      자기 자릿수를 들고 있게 한다. 오른쪽 위 표시는 그대로 두는 게 낫다(중복이지만
-      한쪽만 봐도 맞게 읽힌다).
-      · 원 단위 11자리는 자릿수를 세게 된다
-      · 억 단위 축약(₩126.1억)은 백만 원 아래가 통째로 날아가고, 툴팁 숫자와
-        눈으로 맞춰 볼 수가 없다
-    ★반올림이다 — 정산서의 **절사**(내림)와는 규칙이 다르니 대조에 쓰면 안 된다.
+    ★★단위를 세 번 갈아 봤고 결론은 **원**이다(2026-08-21).
+        억 축약(₩126.1억)     → 백만 원 아래가 날아가고 툴팁 숫자와 자가 안 맞는다
+        천원 + 오른쪽 위 표시  → `₩12,612,051` 을 **1,261만원으로 읽어 버린다**(100배)
+        천원 + 숫자마다 '천'   → 안 틀리지만 자릿수를 세게 돼 "너무 어렵다"
+      환산이 필요한 표기는 어디선가 값을 치른다. 원 단위는 자리는 길어도
+      **읽는 사람이 아무것도 안 해도 된다.** 대신 자리를 마련해 준다(_month_ticks).
     """
-    v = float(v or 0)
-    return f"₩{int(v / 1000 + (0.5 if v >= 0 else -0.5)):,}천"
+    return f"₩{int(v or 0):,}"
 
 
 # ── 프리셋 · 창 ────────────────────────────────────────────────────────
@@ -130,13 +125,29 @@ def _month_ticks(fig, lo, hi, amounts=None):
     amounts={Timestamp: 금액} 을 주면 라벨 **아랫줄에 그 달 금액**을 붙인다(요청).
     """
     ticks = pd.date_range(pd.Timestamp(lo).replace(day=1), hi, freq="MS")
+    # ★원 단위는 '₩12,612,051,380' 으로 15자다. 막대가 12개면 칸이 70px 뿐이라
+    #   그대로 쓰면 옆 라벨과 겹친다. 칸 폭에 맞춰 글자를 줄이고, 그래도 모자라면
+    #   **마지막 콤마에서 줄을 바꿔** 두 줄로 쌓는다. 숫자는 하나도 안 줄인다.
+    n = max(1, len(ticks))
+    # 실측: 15자 라벨이 10.5px 에서 85px 다. 칸은 막대 8개면 89px, 12개면 59px.
+    fs = 9.5 if n <= 8 else 9.0
+    wrap = n > 8
     txt = []
     for t in ticks:
         lab = f"{t.year % 100}년 {t.month}월" if t.month == 1 else f"{t.month}월"
         if amounts is not None:
             v = amounts.get(t)
             if v:
-                lab += f"<br><span style='color:{INK};font-weight:700'>{kilo(v)}</span>"
+                num = kilo(v)
+                if wrap:
+                    # 가운데에 가장 가까운 콤마에서 접는다. 끝 콤마에서 접으면
+                    # 둘째 줄이 '380' 한 토막만 남아 오히려 안 읽힌다.
+                    cs = [k for k, ch in enumerate(num) if ch == ","]
+                    if cs:
+                        c = min(cs, key=lambda k: abs(k - len(num) // 2))
+                        num = num[:c + 1] + "<br>" + num[c + 1:]
+                lab += (f"<br><span style='color:{INK};font-weight:700;"
+                        f"font-size:{fs}px'>{num}</span>")
         txt.append(lab)
     fig.update_xaxes(tickvals=list(ticks), ticktext=txt)
 
@@ -147,7 +158,7 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
     영문으로 나와 화면 톤과 안 맞는다. D3 포맷이라 %-m 같은 건 못 쓴다."""
     ticks = [0, top / 2, top]
     fig.update_layout(
-        height=height, margin=dict(l=102, r=14, t=6, b=bmargin),
+        height=height, margin=dict(l=126, r=14, t=6, b=bmargin),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT, size=12, color=INK),
         showlegend=False, hovermode="x unified", dragmode=False,
@@ -361,7 +372,7 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
 
     # 막대 아래 두 줄짜리 라벨(달 + 금액)이라 아래 여백을 더 준다.
     st.plotly_chart(_shell(fig, top, hoverfmt=hfmt,
-                           bmargin=46 if _bars else 32),
+                           bmargin=(58 if len(g) > 9 else 46) if _bars else 32),
                     use_container_width=True,
                     config={"displayModeBar": False}, key=f"{key}_fig")
     st.caption(cap)
