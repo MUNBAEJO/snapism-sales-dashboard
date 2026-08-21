@@ -418,12 +418,23 @@ def main():
     #   적재는 406MB parquet 을 통째로 다시 만들어 1회 14분이 걸린다. 기간을 나눠
     #   여러 번 돌리면 그것만 몇 시간이 붙는다. 전량 재수집은 다 받은 뒤 **한 번만**
     #   적재하는 게 맞다. 일일 수집은 이 변수가 없으니 지금까지와 똑같이 동작한다.
+    ingest_failed = False
     if success_list and os.environ.get("PHOTOISM_SKIP_INGEST") != "1":
         log("\n데이터 누적 처리 시작 (photoism_ingest.py)...")
-        subprocess.run(
+        # ★★적재가 죽어도 크롤러는 성공으로 끝나고 있었다 (2026-08-21 실제 사고).
+        #   그날 스내피즘 적재가 MemoryError 로 죽었는데(커밋 한도 초과),
+        #   `subprocess.run` 의 반환값을 받지도 `check=True` 를 주지도 않아
+        #   scheduler.log 에는 "크롤러 완료" 로 찍혔고 실패 메일도 안 갔다.
+        #   원장이 하루치 통째로 비었는데 아무도 몰랐다 — 파일 시각을 보고서야 찾았다.
+        #   받아 온 CSV 가 멀쩡해도 **적재가 실패하면 그날 데이터는 없다.**
+        _r = subprocess.run(
             [sys.executable, str(BASE_DIR / "photoism_ingest.py"), dates[0]],
             cwd=str(BASE_DIR),
         )
+        if _r.returncode != 0:
+            ingest_failed = True
+            log(f"[실패] 적재가 종료코드 {_r.returncode} 로 끝났어요 — "
+                "받은 CSV 는 raw_photoism/ 에 있지만 **원장·집계에는 안 들어갔어요.**")
     elif success_list:
         log("\n적재 건너뜀 (PHOTOISM_SKIP_INGEST=1) — 끝나면 직접 돌려 주세요.")
 
@@ -447,6 +458,9 @@ def main():
     #   국가)만 봤다. 그래서 "이 나라는 됐는데 그중 사흘이 비었다" 는 경우가
     #   **종료코드 0** = 스케줄러가 성공으로 기록 → 재시도도 안 걸렸다.
     #   유럽 19개월 결손이 정확히 이 모양이다. 부분 실패도 다시 받아야 한다.
+    if ingest_failed:
+        log("적재 실패로 종료코드 1 — 스케줄러가 재시도를 예약해요.")
+        sys.exit(1)
     if fail_list or partial:
         if partial and not fail_list:
             log(f"  일부 일자만 받았습니다 — 재시도 대상입니다: {', '.join(partial)}")

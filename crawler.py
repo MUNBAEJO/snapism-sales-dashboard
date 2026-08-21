@@ -278,17 +278,29 @@ def main():
     log("="*45)
 
     # 성공 건이 있으면 자동으로 ingest 실행
+    ingest_failed = False
     if any(results.values()):
         log("\n데이터 누적 처리 시작 (ingest.py)...")
-        subprocess.run(
+        # ★★적재가 죽어도 크롤러는 성공으로 끝나고 있었다 (2026-08-21 실제 사고).
+        #   그날 스내피즘 적재가 MemoryError 로 죽었는데(커밋 한도 초과),
+        #   `subprocess.run` 의 반환값을 받지도 `check=True` 를 주지도 않아
+        #   scheduler.log 에는 "크롤러 완료" 로 찍혔고 실패 메일도 안 갔다.
+        #   원장이 하루치 통째로 비었는데 아무도 몰랐다 — 파일 시각을 보고서야 찾았다.
+        #   받아 온 CSV 가 멀쩡해도 **적재가 실패하면 그날 데이터는 없다.**
+        _r = subprocess.run(
             [sys.executable, str(BASE_DIR / "ingest.py")],
             cwd=str(BASE_DIR),
         )
+        if _r.returncode != 0:
+            ingest_failed = True
+            log(f"[실패] 적재가 종료코드 {_r.returncode} 로 끝났어요 — "
+                "받은 CSV 는 raw/ 에 있지만 **원장에는 안 들어갔어요.**")
     else:
         log("[주의] 다운로드된 파일이 없습니다. logs/ 폴더를 확인하세요.")
 
     # 일부 실패 시 exit code 1 → scheduler가 1시간 후 재시도 예약
-    if not all(results.values()):
+    #   ★적재 실패도 같이 본다 — 다운로드가 다 됐어도 적재가 죽으면 그날 데이터는 없다.
+    if ingest_failed or not all(results.values()):
         sys.exit(1)
 
 
