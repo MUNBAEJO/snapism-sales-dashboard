@@ -393,6 +393,11 @@ df_ip["쿠폰KRW"]  = (df_ip["쿠폰 할인 금액"]  * df_ip["환율"]).round(0
 paid       = df_ip[~df_ip["취소 여부"] & (df_ip["최종 결제 금액"] > 0)]
 coupons    = df_ip[~df_ip["취소 여부"] & (df_ip["최종 결제 금액"] == 0) & (df_ip["쿠폰 할인 금액"] > 0)]
 all_coupon = pd.concat([coupons, paid[paid["쿠폰 할인 금액"] > 0]])
+# ★★`paid` 는 **최종결제 > 0** 인 행만이라 전액 쿠폰 거래가 빠진다 (2026-08-21).
+#   국가별·카테고리별 표는 아래에서 `nat_cpn`·`cat_cpn` 을 따로 붙여 메우는데,
+#   '상품 이름별 정산' 과 '일별 매출 추이' 는 그 처리가 없어 **같은 화면 안에서
+#   합계가 서로 안 맞았다.** 정산 기준(매출+쿠폰)을 쓰는 자리는 이 행 집합을 쓴다.
+settle_rows = df_ip[~df_ip["취소 여부"]]
 
 rs_agency = _rs_a_pct / 100 if _rs_a_pct > 0 else None
 rs_mgmt   = _rs_m_pct / 100 if _rs_m_pct > 0 else None
@@ -597,10 +602,14 @@ st.divider()
 with st.container(border=True):
     st.markdown('<div class="section-title">🏷 상품 이름별 정산</div>', unsafe_allow_html=True)
 
-    if not paid.empty and "상품 이름" in paid.columns:
+    if not settle_rows.empty and "상품 이름" in settle_rows.columns:
         name_df = (
-            paid.groupby(["상품 이름", "상품 카테고리"] if "상품 카테고리" in paid.columns else ["상품 이름"])
-            .agg(결제건수=("KRW환산","count"), 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
+            # 전액 쿠폰 거래까지 포함한다(settle_rows 주석 참고).
+            # 결제건수는 '돈이 오간 건수' 라 매출 > 0 인 행만 센다.
+            settle_rows.groupby(["상품 이름", "상품 카테고리"]
+                                if "상품 카테고리" in settle_rows.columns else ["상품 이름"])
+            .agg(결제건수=("KRW환산", lambda x: int((x > 0).sum())),
+                 매출KRW=("KRW환산","sum"), 쿠폰KRW=("쿠폰KRW","sum"))
             .reset_index()
             .sort_values("매출KRW", ascending=False)
             .reset_index(drop=True)
@@ -639,15 +648,19 @@ with st.container(border=True):
 
     # ── 일별 추이 ─────────────────────────────────────────────────
     with st.expander("📅 일별 매출 추이"):
+        # ★위 KPI '정산 기준액' 과 같은 기준(매출+쿠폰)으로 그린다. 전엔 매출만
+        #   그려서 카드 합계와 이 그래프 합계가 서로 달랐다(2026-08-21).
+        _d = settle_rows.assign(_정산기준=settle_rows["KRW환산"] + settle_rows["쿠폰KRW"])
         daily = (
-            paid.groupby("날짜")["KRW환산"].sum()
-            .reset_index().rename(columns={"KRW환산": "매출"})
+            _d.groupby("날짜")["_정산기준"].sum()
+            .reset_index().rename(columns={"_정산기준": "매출"})
         )
         daily["날짜_str"] = daily["날짜"].astype(str)
         fig2 = px.bar(daily, x="날짜_str", y="매출", color_discrete_sequence=["#4361ee"])
         fig2.update_layout(yaxis_tickformat=",", height=260, margin=dict(t=10, b=0))
         fig2.update_traces(hovertemplate="%{x}<br>%{y:,}원<extra></extra>")
         st.plotly_chart(fig2, use_container_width=True)
+        st.caption("정산 기준(매출 + 쿠폰) 기준이에요 — 위 '정산 기준액' 카드와 같은 기준.")
 
     # ── 원본 데이터 ───────────────────────────────────────────────
     with st.expander("🗃 원본 데이터 보기"):
