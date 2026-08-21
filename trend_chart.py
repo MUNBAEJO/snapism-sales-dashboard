@@ -273,17 +273,21 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         if stack_cols:
             _cols = list(stack_colors or [])
             _cols += [color] * (len(stack_cols) - len(_cols))
-            for i, (c, col) in enumerate(zip(stack_cols, _cols)):
-                # ★툴팁은 **맨 앞 계열 하나만** 문다. 계열마다 물리면 'x unified'
-                #   툴팁이 6줄로 늘어나고 합계가 어디에도 안 나온다. 한 계열이
-                #   합계+구성을 한 덩어리로 들고, 나머지는 hoverinfo=skip 이다.
+            for c, col in zip(stack_cols, _cols):
                 fig.add_trace(go.Bar(
-                    x=g.index, y=g[c], name=c,
-                    customdata=cd if i == 0 else None,
-                    hovertemplate=("%{customdata}<extra></extra>" if i == 0 else None),
-                    hoverinfo=None if i == 0 else "skip",
+                    x=g.index, y=g[c], name=c, hoverinfo="skip",
                     marker=dict(color=col, pattern=dict(shape=pat, fgcolor="#fff",
                                                         size=4, solidity=.25))))
+            # ★툴팁은 **보이지 않는 선 하나**가 문다.
+            #   계열마다 물리면 'x unified' 툴팁이 6줄로 늘고 합계가 어디에도 안 나온다.
+            #   그렇다고 막대 하나에 물리면 Plotly 가 툴팁 왼쪽에 **그 계열의 색 칩**을
+            #   세로 가운데에 그린다 — 6줄짜리 툴팁에선 그게 엉뚱한 줄(PICK) 옆에 붙어
+            #   "PICK 만 색이 있다" 로 읽혔다(2026-08-21). 투명한 선이 물면 칩도 투명하다.
+            #   Scatter 는 barmode='stack' 에 안 쌓이므로 y 에 총계를 그대로 준다.
+            fig.add_trace(go.Scatter(
+                x=g.index, y=g["total"], mode="lines", customdata=cd,
+                line=dict(width=0, color="rgba(0,0,0,0)"), showlegend=False,
+                hovertemplate="%{customdata}<extra></extra>"))
             legend = (stack_cols, _cols)
         else:
             fig.add_trace(go.Bar(
