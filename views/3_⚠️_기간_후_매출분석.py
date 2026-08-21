@@ -20,6 +20,7 @@ sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))
 from guide_content import render_guide
 import auth
 import data_io
+import store_rules
 st.markdown("""
 <style>
 html, body, [class*="css"], [data-testid="stAppViewContainer"] {
@@ -67,13 +68,24 @@ def _load_snap(v):        # ★밑줄 금지 — 밑줄이면 파일 버전이 �
     if not SNAP_MASTER.exists():
         return pd.DataFrame()
     df = data_io.read_master(SNAP_MASTER)  # parquet 우선(없으면 csv)
+    # 테스트 매장은 다른 화면과 같은 규칙으로 뺀다(store_rules 주석 참고).
+    if "매장 이름" in df.columns:
+        df = df[~store_rules.is_test(df["매장 이름"])].reset_index(drop=True)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true","1","yes"])
-    for col in ["KRW환산금액", "쿠폰KRW"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-        else:
-            df[col] = 0
+    # ★★`KRW환산금액`·`쿠폰KRW` 는 **원장에 없는 열**이다 (2026-08-21).
+    #   views/0 이 화면에서 만들어 쓰는 파생 열인데 여기선 원장에서 찾다가 못 찾고
+    #   `else: 0` 으로 채웠다 → 이 페이지의 **스내피즘 금액이 늘 0원**이었다.
+    #   (브랜드 '전체'로 보면 포토이즘 값만 나와 스내피즘이 없는 것처럼 보인다.)
+    #   views/0 과 같은 식으로 여기서 만든다 — 실결제(원화) + 쿠폰(원화).
+    _ex = data_io.load_exchange_rates(BASE_DIR / "config.json")
+    _unit = (df["결제 단위"].astype(str).str.strip().replace("", "KRW")
+             if "결제 단위" in df.columns else pd.Series("KRW", index=df.index))
+    _rate = _unit.map(_ex).fillna(1)
+    _fin = pd.to_numeric(df.get("최종 결제 금액", 0), errors="coerce").fillna(0)
+    _cpn = pd.to_numeric(df.get("쿠폰 할인 금액", 0), errors="coerce").fillna(0)
+    df["KRW환산금액"] = (_fin * _rate).round(0).astype("int64")
+    df["쿠폰KRW"] = (_cpn * _rate).round(0).astype("int64")
     df["정산금액"]   = df["KRW환산금액"] + df["쿠폰KRW"]
     df["브랜드소스"] = "스내피즘"
     df["건수"]       = 1   # 개별 거래 행 → 1건
@@ -129,11 +141,11 @@ def load_photo():
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
     df = df[~df["취소 여부"]].copy()
 
-    try:
-        with open(BASE_DIR / "config.json", encoding="utf-8") as f:
-            ex = json.load(f).get("exchange_rates", {"KRW": 1})
-    except (FileNotFoundError, KeyError, json.JSONDecodeError):
-        ex = {"KRW": 1}
+    # ★환율표를 못 읽으면 **멈춘다** (2026-08-21). 전엔 `{"KRW": 1}` 로 넘어갔는데,
+    #   원화만 든 표는 `.map(ex).fillna(1)` 로 떨어져 **해외 매출이 1:1 원화**가 된다.
+    #   아래 `defaults` 가 있어 완전히 1:1 이 되진 않지만, 그건 손으로 적어 둔 옛 값이라
+    #   (USD 1380 등) 그것대로 조용히 틀린다. 없는 통화를 메우는 용도로만 둔다.
+    ex = data_io.load_exchange_rates(BASE_DIR / "config.json")
     defaults = {
         "PHP": 24.0,  "VND": 0.054, "CAD": 1050.0,"USD": 1380.0,
         "AED": 375.0, "CLP": 1.5,   "EUR": 1500.0, "AUD": 890.0,

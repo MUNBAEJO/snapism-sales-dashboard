@@ -204,4 +204,12 @@ def resolve(rate_date: str) -> tuple[dict, str, str]:
     import json
     from pathlib import Path
     cfg = json.loads((Path(__file__).parent / "config.json").read_text("utf-8"))
-    return cfg.get("exchange_rates", {"KRW": 1}), "", SRC_FALLBACK
+    # ★`{"KRW": 1}` 을 돌려주면 안 된다 (2026-08-21). 부르는 쪽(settlement_map)이
+    #   `CASE … ELSE 1` 을 만들어 **엔·달러·바트가 전부 1:1 원화**가 되는데,
+    #   '참고 환율' 라벨은 그대로라 화면상 멀쩡해 보인다. 쓸 수 있는 통화가
+    #   2개 미만이면 **빈 표**로 돌려주고 부르는 쪽이 발행을 막게 한다
+    #   (settlement_map.load_rates 와 같은 방침).
+    _r = cfg.get("exchange_rates") or {}
+    _ok = [k for k, v in _r.items()
+           if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0]
+    return (_r if len(_ok) >= 2 else {}), "", SRC_FALLBACK

@@ -506,7 +506,21 @@ def load_config():
 
 
 def load_exchange_rates():
-    return load_config().get("exchange_rates", {"KRW": 1})
+    """환율표. **삼키지 않는다** — 자세한 이유는 data_io.load_exchange_rates 주석."""
+    return data_io.load_exchange_rates(CONFIG_FILE)
+
+# ★환율표는 **못 읽으면 멈춘다** (2026-08-21). 전엔 `.get(..., {"KRW": 1})` 였는데,
+#   원화만 든 환율표는 `.map(rates).fillna(1)` 로 떨어져 **해외 매출이 1:1 원화**가
+#   된다. 게다가 환율이 25개 중 4개만 1 미만이라 매출이 **줄지 않고 1.5배로 부푼다**
+#   — 급락 경보에도 안 걸리고 화면엔 멀쩡한 숫자가 뜬다(2026-07 실측 151.9%).
+#   여기서 한 번 확인해 두면 아래 계산은 안심하고 쓸 수 있다(수집기와 겹친 순간의
+#   일시적 실패는 data_io 쪽에서 몇 번 다시 읽는다).
+try:
+    data_io.load_exchange_rates(CONFIG_FILE)
+except Exception as _e:                                   # noqa: BLE001
+    st.error("💱 환율표를 읽지 못해 매출을 계산할 수 없어요 — " + str(_e)
+             + "  \n잠시 뒤 새로고침해 주세요. 계속되면 `config.json` 을 확인해 주세요.")
+    st.stop()
 
 
 # ★ 인자 이름에 밑줄(_)을 붙이면 안 된다 — st.cache_data 는 **밑줄로 시작하는 인자를
