@@ -51,17 +51,52 @@ def _pick_title(titles: list) -> str:
     return sorted(names, key=lambda n: (0 if _HANGUL_RE.search(n) else 1, len(n)))[0]
 
 
-def _name_of(item: dict) -> str:
-    """티켓 하나의 표시 이름. WBS → (서브태스크면 부모 / 작업이면 summary) 순."""
-    wbs = _pick_title(item.get("wbs_titles") or [])
-    if wbs:
-        return wbs
+def _norm(s) -> str:
+    """이름 대조용 — 공백·괄호·구분기호를 걷어낸다."""
+    return _NORM_RE.sub("", str(s)).lower()
+
+
+def _product_of(item: dict) -> str:
+    """티켓이 가리키는 **상품** 이름. 서브태스크면 부모(상품), 작업이면 summary.
+
+    WBS 는 일부러 안 본다 — WBS 는 기획전 이름일 때가 있어 상품을 못 가른다.
+    """
     summary = str(item.get("summary") or "")
     parent = str(item.get("parent") or "")
     # summary 가 공정 이름이면 상품명이 아니다 → 부모(상품)로 간다.
     if _STEP_RE.match(summary) or not summary:
         return _strip_prefix(parent) or _strip_prefix(summary)
     return _strip_prefix(summary)
+
+
+def _shared_wbs(items) -> set:
+    """서로 다른 상품이 둘 이상 매달린 WBS(정규화). 이런 WBS 는 **기획전 이름**이다.
+
+    ★★2026-08-21 — 달력의 '오픈 N건' 이 실제 상품 수와 달랐던 원인이다.
+      `260801 반팔 입고 나와` 하나에 크래비티·에잇턴·비투비·템페스트… 15개 상품이,
+      `DIVE IN PHOTOISM` 에 16개가 매달려 있다. WBS 를 표시 이름으로 쓰면 이것들이
+      **한 줄로 뭉쳐** 상품이 화면에서 사라진다.
+      실측: 오픈일 있는 티켓 6,511장 · WBS 938개 중 **193개가 상품 2개 이상**.
+    """
+    by: dict = {}
+    for it in items or []:
+        w = _pick_title(it.get("wbs_titles") or [])
+        if not w:
+            continue
+        by.setdefault(_norm(w), set()).add(_norm(_product_of(it)))
+    return {k for k, v in by.items() if len(v) > 1}
+
+
+def _name_of(item: dict, shared_wbs: set | None = None) -> str:
+    """티켓 하나의 표시 이름. WBS → (서브태스크면 부모 / 작업이면 summary) 순.
+
+    ★단, **기획전 이름인 WBS 는 쓰지 않는다**(`_shared_wbs`). 그걸 쓰면 서로 다른
+      상품이 같은 이름이 되어 화면에서 한 줄로 보인다.
+    """
+    wbs = _pick_title(item.get("wbs_titles") or [])
+    if wbs and _norm(wbs) not in (shared_wbs or set()):
+        return wbs
+    return _product_of(item) or wbs
 
 
 def _brand_of(raw: str) -> str:
@@ -205,11 +240,12 @@ def load_openings(brand: str = "all", force_refresh: bool = False) -> pd.DataFra
         return pd.DataFrame(columns=cols)
 
     rows = []
+    shared = _shared_wbs(items)
     for it in items or []:
         start = _to_date(it.get("startdate"))
         if start is None:            # 오픈일이 없으면 달력에 찍을 수 없다
             continue
-        name = _name_of(it)
+        name = _name_of(it, shared)
         if not name:
             continue
         # 서브태스크는 부모가 상품, 작업은 부모가 계약이다. '계약' 칸에는 후자만 넣는다.
@@ -226,9 +262,13 @@ def load_openings(brand: str = "all", force_refresh: bool = False) -> pd.DataFra
             # 오픈 국가(Jira Country 필드). 6,312건 중 98.6% 가 채워져 있다.
             "국가":   list(it.get("countries") or []),
             "국가수": len(it.get("countries") or []),
+            # ★묶는 기준은 **상품**이다(표시 이름이 아니라). 아래 주석 참고.
+            "_상품": _norm(_product_of(it)) or _norm(name),
         })
 
-    df = pd.DataFrame(rows, columns=cols)
+    # ★`_상품` 은 묶기 전용 내부 열이다. columns 에서 빠지면 그대로 잘려 나가
+    #   _merge_same_product 가 옛 방식(표시 이름)으로 되돌아간다 — 실제로 그랬다.
+    df = pd.DataFrame(rows, columns=cols + ["_상품"])
     if df.empty:
         return df
     return _merge_same_product(df)
@@ -249,19 +289,25 @@ def _merge_same_product(df: pd.DataFrame) -> pd.DataFrame:
       '프로그램 및 검수' 서브태스크가 JQL 에 둘 다 걸린다. 그대로 두면
       달력에 '십란'이 두 번 찍혀 오픈 건수가 배로 보인다. (6,149 → 3,325)
 
-    묶는 기준은 (오픈일, 브랜드, 이름) 이다. 티켓 사이에 부모-자식 관계를
+    묶는 기준은 (오픈일, 브랜드, **상품**) 이다. 티켓 사이에 부모-자식 관계를
     알려주는 id 가 안 넘어와서(부모는 제목만 온다) 이름으로 맞출 수밖에 없다.
     '십란 (10CM X SORAN)' 과 '십란(10CM X SORAN)' 처럼 띄어쓰기만 다른 경우가
     있어 공백·괄호·구분기호를 걷어내고 비교한다.
+
+    ★★예전엔 **표시 이름**으로 묶었는데, 그 이름이 티켓마다 들쭉날쭉했다
+      (WBS 가 있으면 WBS, 없으면 부모/summary). 그래서 양쪽으로 어긋났다 —
+        · 같은 상품인데 한쪽만 WBS 가 있어 **두 줄로 갈리고**(110일 · 188줄)
+        · 다른 상품인데 기획전 WBS 를 공유해 **한 줄로 뭉쳤다**(19일 · 39개 상품)
+      상품 키(`_상품`)는 WBS 를 안 보므로 티켓마다 흔들리지 않는다(2026-08-21).
     """
     d = df.copy()
-    d["_n"] = d["IP"].map(lambda s: _NORM_RE.sub("", str(s)).lower())
+    d["_n"] = d["_상품"] if "_상품" in d.columns else d["IP"].map(_norm)
     d["_r"] = d["상태"].map(lambda s: _STATUS_RANK.get(str(s), -1))
     # 진행이 앞선 줄을 위로 → 그룹 첫 줄이 대표가 된다.
     d = d.sort_values("_r", ascending=False, kind="stable")
     d["티켓수"] = d.groupby(["오픈일", "브랜드", "_n"])["티켓"].transform("size")
     d = d.drop_duplicates(subset=["오픈일", "브랜드", "_n"], keep="first")
-    d = d.drop(columns=["_n", "_r"])
+    d = d.drop(columns=["_n", "_r", "_상품"], errors="ignore")
     return d.sort_values(["오픈일", "브랜드", "IP"], kind="stable").reset_index(drop=True)
 
 
