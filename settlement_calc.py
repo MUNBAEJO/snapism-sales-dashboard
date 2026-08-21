@@ -24,6 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 import ip_classify
+import store_rules
 import settlement_map as smap
 from json_store import JsonStore
 
@@ -243,6 +244,10 @@ def _title_map(start: str, end: str) -> dict:
                    COALESCE(CAST("프레임 이름" AS VARCHAR), '') AS fr
             FROM read_parquet('{PH_RAW.as_posix()}')
             WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
             GROUP BY 1, 2, 3
         """).df()
     finally:
@@ -422,6 +427,10 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
                     {_title_pred(titles, start, end)}
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
@@ -702,6 +711,10 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
                     {_title_pred(titles, start, end)}
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
@@ -770,6 +783,10 @@ def price_table(brand: str, titles: list[str], start: str, end: str) -> pd.DataF
                        AVG(NULLIF(TRY_CAST("상품 단가" AS DOUBLE), 0)) AS 단가
                 FROM read_parquet('{PH_RAW.as_posix()}')
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
                   {_title_pred(titles, start, end)}
                   {_gubun_filter()}
                   AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
@@ -908,6 +925,10 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
                 FROM (SELECT *, lower(trim("국가코드")) AS cc
                       FROM read_parquet('{PH_RAW.as_posix()}'))
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
                   {_title_pred(titles, start, end)} {_gubun_filter()}
                   AND CAST("최종 결제 금액" AS BIGINT) < 0"""
         else:

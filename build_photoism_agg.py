@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 from pathlib import Path
 
 import ip_classify  # IP구분/IP명 분류 공용 모듈
+import store_rules  # 테스트·본사 매장 가리기(장비 쪽과 같은 규칙)
 
 BASE_DIR      = Path(__file__).parent
 PARQ_IN       = BASE_DIR / "data" / "master_photoism.parquet"
@@ -107,6 +108,10 @@ def build_agg(con, parq: str):
                 {COIN_FIX}                                                      AS "_coin"
             FROM read_parquet('{parq}')
             WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
         ),
         tagged AS (
             SELECT *,
@@ -200,6 +205,10 @@ def build_hourly(con, parq: str):
             CAST(COALESCE(SUM({COIN_FIX}),0) AS BIGINT) AS "서비스코인"
         FROM read_parquet('{parq}')
         WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
         GROUP BY 1,2,3
         ORDER BY 1 DESC, 2
     """).to_arrow_table()
@@ -233,6 +242,10 @@ def build_orig(con, parq: str):
             CAST(COALESCE(SUM({COIN_FIX}),0)                       AS BIGINT) AS "서비스코인"
         FROM read_parquet('{parq}')
         WHERE "날짜" IS NOT NULL AND TRIM(CAST("날짜" AS VARCHAR)) != ''
+              -- ★테스트 매장은 매출에서도 뺀다 (store_rules 주석 참고).
+              --   장비 목록은 진작 빼고 있었는데 매출만 남아
+              --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
+              {store_rules.not_test_sql()}
           AND ({ip_classify.IP_GUBUN_SQL}) IN ('오리지널(포토이즘)','오리지널(기본)')
         GROUP BY 1,2,3,4,5,6,7
     """).to_arrow_table()

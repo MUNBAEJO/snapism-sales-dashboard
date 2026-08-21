@@ -18,6 +18,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from guide_content import render_guide
 import name_alias  # 프레임 한/영 통합 + 글자깨짐 교정
+import store_rules  # 테스트·본사 매장 가리기(장비 쪽과 같은 규칙)
 import data_io
 import auth
 import xlsx_export  # 내려받기 → 엑셀(.xlsx)
@@ -520,6 +521,10 @@ def _load_data(v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
     df = data_io.read_master(MASTER_FILE)
+    # ★테스트 매장은 매출에서 뺀다 — 장비 목록(device_ingest_snapism)은
+    #   진작 빼고 있었다. 'KC 시험 기관용' 124행 507,000원(2026-08-21).
+    if "매장 이름" in df.columns:
+        df = df[~store_rules.is_test(df["매장 이름"])].reset_index(drop=True)
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df["결제일시"] = pd.to_datetime(df["결제일시"], format="%Y.%m.%d %H:%M", errors="coerce")
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])

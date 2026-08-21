@@ -26,7 +26,7 @@ OUT_FILE   = BASE_DIR / "data" / "devices_snapism.parquet"
 SALES_FILE = BASE_DIR / "data" / "master.parquet"
 ALIAS_FILE = BASE_DIR / "store_aliases_snapism.json"
 
-TEST_RE = re.compile(r"테스트|test|샘플|sample|데모|demo|본사|오피스|창고|회의실|시험", re.I)
+from store_rules import TEST_RE  # noqa: F401  (한 곳에서만 정한다)
 # 국가 표기: "🇰🇷 대한민국(KR)" → KR
 CC_RE = re.compile(r"\(([A-Z]{2})\)\s*$")
 

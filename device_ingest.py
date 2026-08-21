@@ -23,7 +23,7 @@ ALIAS_FILE = BASE_DIR / "store_aliases.json"
 SALES_FILE = BASE_DIR / "data" / "master_photoism_agg.parquet"
 
 # 실매장이 아닌 것 — 대당 매출 분모에 들어가면 안 된다.
-TEST_RE = re.compile(r"테스트|test|샘플|sample|데모|demo|본사|오피스|창고|회의실|시험", re.I)
+from store_rules import TEST_RE  # noqa: F401  (한 곳에서만 정한다)
 
 # 여러 나라가 섞여 오는 지역 파일 — 기기정보가 비어 있어도 파일명으로 국가를 단정하면 안 된다.
 MULTI_COUNTRY_SRC = {"tw", "ph", "id", "jp"}
