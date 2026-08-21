@@ -1715,6 +1715,8 @@ df_all = load_data()
 
 st.title("📸 포토이즘 매출 대시보드")
 st.caption("기간·국가·매장·IP를 골라 매출을 봐요. 매출 = 실결제 + 쿠폰 + 서비스코인(지정 국가 가산) 기준이에요.")
+
+
 render_guide("photoism")
 
 if df_all.empty:
@@ -1723,6 +1725,25 @@ if df_all.empty:
     st.stop()
 
 first_date, last_date = _date_bounds(_file_mtime(AGG_FILE), _file_mtime(CONFIG_FILE))
+
+# ★★화면이 **언제 만들어진 집계본**을 보고 있는지 적는다 (2026-08-21).
+#   2026-08-20 에 원장은 갱신됐는데 집계본이 어제 것으로 남아, 08-19 매출이
+#   54,153건 대신 66건으로 찍혀 있었다. 화면 어디에도 '언제 것인지' 가 없어
+#   최신인 척 옛 숫자가 보였다. 여기 한 줄이면 사람이 바로 알아챈다.
+_agg_m = _file_mtime(AGG_FILE)
+if _agg_m:
+    from datetime import datetime as _dt
+    _made = _dt.fromtimestamp(_agg_m)
+    _age_h = (_dt.now() - _made).total_seconds() / 3600
+    _msg = (f"데이터 기준 {last_date} · 집계 {_made:%m-%d %H:%M} 생성")
+    if _age_h > 26:
+        st.warning(f"⏳ {_msg} — **{_age_h / 24:.1f}일 전** 집계예요. "
+                   "수집이 멈췄을 수 있어요(보통 매일 아침 갱신돼요).")
+    else:
+        st.caption(_msg)
+
+
+
 cfg        = load_config()
 ex         = load_exchange_rates()
 
