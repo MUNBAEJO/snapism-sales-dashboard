@@ -65,7 +65,7 @@ def _con():
 def _gubun_filter() -> str:
     """원거래에도 IP구분 필터를 건다.
 
-    ★_raw_titles 는 '타이틀명' 으로만 좁히는데, 같은 타이틀명 안에 렌탈 행이 섞여 있다
+    ★타이틀만으로 좁히면 같은 타이틀 안에 렌탈 행이 섞여 있다
       (예: 260628 추영우 → 아티스트 8,610,000 + 렌탈 98,000). 집계본은 IP구분으로
       걸러지지만 원거래는 안 걸러져서 렌탈이 정산에 다시 들어왔다.
       집계본과 같은 분류식을 원거래에도 그대로 적용한다.
@@ -165,26 +165,126 @@ def confirmed_tickets(brand: str) -> dict[str, list[str]]:
     return out
 
 
-def _raw_titles(titles: list[str], start: str, end: str) -> list[str]:
-    """포토이즘 파생 '타이틀' → 원거래의 '타이틀명' 들.
+_KEYCACHE: dict = {}
 
-    집계본의 `타이틀` 은 날짜코드 + 별칭 적용 IP명이라 원거래 컬럼과 다르다.
-    멤버·단가처럼 원거래에만 있는 값을 뽑으려면 이 다리를 건너야 한다.
+
+def _mem_sql(col: str) -> str:
+    """멤버 이름을 꺼내는 식. **타이틀 모양이면 IP명만 남긴다.**
+
+    ★BASIC 구좌는 `프레임 이름` 이 멤버가 아니라 **타이틀 문자열**이다
+      (`L 260701 왈맹이`). 아티스트 IP 는 BASIC 이라도 멤버명이 들어가지만
+      (코르티스 → JAMES·JUHOON…), 캐릭터·렌탈은 타이틀이 그대로 들어온다.
+      그대로 두면 같은 캐릭터가 멤버 두 명으로 갈린다 —
+      `빤쮸토끼` 가 `L 260601 빤쮸토끼`(BASIC 6,515,000) + `빤쮸토끼`(WITH 1,340,000)
+      두 열로 발행된다(2026-08-21). **절사 단위가 국가 × 멤버**라 금액도 어긋난다.
+
+    ★날짜코드가 앞에 붙어 있을 때만 벗긴다. 멤버 이름에 5~8자리 숫자가 앞에
+      오는 경우는 없으므로, 진짜 멤버명(`JAMES`·`빤쮸토끼`)은 건드리지 않는다.
+      접두어만 보고 벗기면 `L`·`P` 로 시작하는 멤버명을 깎을 위험이 있어서다.
     """
-    if not titles:
-        return []
+    pfx = r"'^(렌탈|PW|L7|L|P|B|SP)\s+'"
+    return (f"CASE WHEN regexp_matches({col}, "
+            f"'^((렌탈|PW|L7|L|P|B|SP)\\s+)?[0-9]{{5,8}}\\s') "
+            f"THEN trim(regexp_replace(regexp_replace({col}, {pfx}, ''), "
+            f"'^[0-9]{{5,8}}\\s*', '')) ELSE {col} END")
+
+
+def _title_map(start: str, end: str) -> dict:
+    """그 기간의 **타이틀 → (타이틀명 집합, 프레임이름 집합)** 표. 기간 단위로 한 번만 만든다.
+
+    ★★왜 이 다리가 필요한가 (2026-08-21)
+      예전엔 집계의 `타이틀` → 원거래의 `타이틀명` 하나로만 갈아탔다. 그런데
+      **BASIC 구좌는 타이틀명이 비어 있다** — IP 이름이 `프레임 이름` 에 들어 있다
+      (ip_classify: WITH/EVENT 는 타이틀명, BASIC 은 프레임명 기준). 빈 값은
+      `COALESCE("타이틀명",'') <> ''` 로 걸러 냈으니 다리가 통째로 끊겼다.
+      실측 — `L 260701 왈맹이` 화면 29,068,000 → 정산 **0**,
+             `L 260601 빤쮸토끼` 7,855,000 → 1,340,000(83% 누락).
+      아티스트 IP 도 BASIC 몫이 빠져 있었다(`260505 코르티스` +6,717,711).
+      2026-07 한 달 158개 타이틀 1억 9,122만원 · 2026년 424개 18억 594만원.
+
+    ★어떻게 만드나: `build_photoism_agg.build_agg` 가 타이틀을 만드는 **바로 그 식**을
+      원거래에 적용해 (타이틀 → 타이틀명·프레임이름) 짝을 뽑는다. 2026-07 전량
+      대조에서 타이틀 776개 · 23,164,238,813원이 집계본과 한 푼도 다르지 않았다.
+
+    ★왜 이 식을 하류 쿼리에 **직접** 안 쓰나 — 써 봤는데 한 번에 94초가 걸렸다.
+      정규식이라 parquet 필터로 밀려나지 않아 3,860만 행을 다 훑는다. 값 목록으로
+      바꾸면 DuckDB 가 로우그룹을 건너뛰어 0.2초로 돌아온다.
+    ★왜 **타이틀로 안 좁히고** 기간 전체를 만드나 — `WHERE (식) IN (타이틀)` 로 좁히면
+      어차피 전 행에 식을 돌려야 해서 89초가 걸렸다. 좁히지 않고 GROUP BY 로 한 번에
+      뽑으면 4초다(열 4개만 읽는다). 게다가 기간이 같으면 **문서 여러 장이 나눠 쓴다.**
+
+    ★이 갈아타기가 정확한 근거: 두 방향 다 충돌이 없다(2026년 전량 확인).
+      타이틀명 2,337개 → 각각 타이틀 1개 · 빈 타이틀명 행의 프레임이름 360개 →
+      각각 타이틀 1개. 날짜코드가 이름 안에 들어 있어서 회차가 갈린다.
+    """
+    key = (start, end, data_version())
+    if key in _KEYCACHE:
+        return _KEYCACHE[key]
+
+    nm = f"TRIM({ip_classify.IP_NAMECORE_SQL})"
+    amap = ip_classify.load_alias_map()
+    pairs = ", ".join(
+        "'{}': '{}'".format(str(k).strip().replace("'", "''"),
+                            str(v).strip().replace("'", "''"))
+        for k, v in amap.items() if str(k).strip() and str(v).strip()
+    )
+    ip = (f"COALESCE(map_extract(MAP {{{pairs}}}, {nm})[1], NULLIF({nm}, ''), '')"
+          if pairs else f"COALESCE(NULLIF({nm}, ''), '')")
+    dt, pfx = ip_classify.IP_DATE_SQL, ip_classify.IP_PREFIX_SQL
+    expr = (f"CASE WHEN ({ip}) = '' THEN ''"
+            f" WHEN ({dt}) = '' THEN NULLIF(TRIM({pfx} || ' ' || ({ip})), '')"
+            f" ELSE TRIM({pfx} || ' ' || {dt} || ' ' || ({ip})) END")
+
     con = _con()
     try:
         df = con.execute(f"""
-            SELECT DISTINCT "타이틀명"
-            FROM read_parquet('{PH_AGG.as_posix()}')
-            WHERE "날짜" BETWEEN DATE '{start}' AND DATE '{end}'
-              AND "타이틀" IN ({_sqlist(titles)})
-              AND COALESCE("타이틀명",'') <> ''
+            SELECT {expr}                                    AS t,
+                   COALESCE("타이틀명", '')                    AS tn,
+                   COALESCE(CAST("프레임 이름" AS VARCHAR), '') AS fr
+            FROM read_parquet('{PH_RAW.as_posix()}')
+            WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+            GROUP BY 1, 2, 3
         """).df()
     finally:
         con.close()
-    return df["타이틀명"].tolist()
+
+    out: dict = {}
+    for t, tn, fr in zip(df["t"], df["tn"], df["fr"]):
+        if not t:
+            continue
+        cur = out.setdefault(t, (set(), set()))
+        if tn:
+            cur[0].add(tn)
+        elif fr:
+            cur[1].add(fr)          # 타이틀명이 빈 행(BASIC)만 프레임으로 잡는다
+    _KEYCACHE[key] = out
+    return out
+
+
+def _title_pred(titles: list[str], start: str, end: str) -> str:
+    """원거래를 그 타이틀의 행으로 좁히는 WHERE 조각. 근거는 `_title_map` 주석 참고.
+
+    타이틀명으로 잡고, **타이틀명이 빈 행은 프레임 이름으로** 잡는다.
+    둘 다 값 목록이라 parquet 단계에서 걸러진다.
+    """
+    if not titles:
+        return "AND FALSE"
+    m = _title_map(start, end)
+    tn: set = set()
+    fr: set = set()
+    for t in titles:
+        a, b = m.get(t, (set(), set()))
+        tn |= a
+        fr |= b
+    parts = []
+    if tn:
+        parts.append(f'"타이틀명" IN ({_sqlist(sorted(tn))})')
+    if fr:
+        parts.append('(COALESCE("타이틀명", \'\') = \'\''
+                     f' AND CAST("프레임 이름" AS VARCHAR) IN ({_sqlist(sorted(fr))}))')
+    if not parts:
+        return "AND FALSE"
+    return "AND (" + " OR ".join(parts) + ")"
 
 
 # ★★쿠폰·코인 결제분은 '상품총액'으로 센다 (2026-08-05, 사용자 확정)
@@ -310,13 +410,10 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     try:
         if brand == "photoism":
             cpn, coin = _sqlist(sorted(COUPON_CC)), _sqlist(sorted(COIN_CC))
-            raws = _raw_titles(titles, start, end)
-            if not raws:
-                return pd.DataFrame(columns=["국가", "unit", "수량", "현지", "매출액", "건수"])
             df = con.execute(f"""
                 WITH t AS (
                   SELECT "국가", lower(trim("국가코드")) AS cc, "결제 단위" AS unit,
-                         trim(CAST("프레임 이름" AS VARCHAR)) AS mem,
+                         {_mem_sql('trim(CAST("프레임 이름" AS VARCHAR))')} AS mem,
                          {rate} AS r,
                          CAST("최종 결제 금액" AS BIGINT) AS pay,
                          CAST("쿠폰 할인 금액"  AS BIGINT) AS cpn,
@@ -325,7 +422,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                    AND "타이틀명" IN ({_sqlist(raws)})
+                    {_title_pred(titles, start, end)}
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
@@ -593,14 +690,11 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
     try:
         if brand == "photoism":
             cpn, coin = _sqlist(sorted(COUPON_CC)), _sqlist(sorted(COIN_CC))
-            raws = _raw_titles(titles, start, end)
-            if not raws:
-                return pd.DataFrame(), pd.DataFrame()
             df = con.execute(f"""
                 WITH t AS (
                   SELECT "국가", lower(trim("국가코드")) AS cc,
                          "결제 단위",
-                         trim("프레임 이름") AS member,
+                         {_mem_sql('trim("프레임 이름")')} AS member,
                          CAST("최종 결제 금액" AS BIGINT) AS pay,
                          CAST("쿠폰 할인 금액"  AS BIGINT) AS cpn,
                          CAST("서비스코인"      AS BIGINT) AS coin,
@@ -608,7 +702,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{PH_RAW.as_posix()}')
                   WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                    AND "타이틀명" IN ({_sqlist(raws)})
+                    {_title_pred(titles, start, end)}
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
@@ -671,15 +765,12 @@ def price_table(brand: str, titles: list[str], start: str, end: str) -> pd.DataF
     con = _con()
     try:
         if brand == "photoism":
-            raws = _raw_titles(titles, start, end)
-            if not raws:
-                return pd.DataFrame(columns=["국가", "unit", "형태", "단가"])
             df = con.execute(f"""
                 SELECT "국가", any_value("결제 단위") AS unit, '프레임' AS 형태,
                        AVG(NULLIF(TRY_CAST("상품 단가" AS DOUBLE), 0)) AS 단가
                 FROM read_parquet('{PH_RAW.as_posix()}')
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "타이틀명" IN ({_sqlist(raws)})
+                  {_title_pred(titles, start, end)}
                   {_gubun_filter()}
                   AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 GROUP BY 1,3
@@ -805,9 +896,6 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
     try:
         if brand == "photoism":
             from photoism_rules import COIN_CC, COUPON_CC
-            raws = _raw_titles(titles, start, end)
-            if not raws:
-                return 0
             cpn, coin = _sqlist(sorted(COUPON_CC)), _sqlist(sorted(COIN_CC))
             # 위 두 곳과 **같은 식**을 써야 취소 차감이 매출과 어긋나지 않는다.
             num = _ph_num(cpn, coin,
@@ -820,7 +908,7 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
                 FROM (SELECT *, lower(trim("국가코드")) AS cc
                       FROM read_parquet('{PH_RAW.as_posix()}'))
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "타이틀명" IN ({_sqlist(raws)}) {_gubun_filter()}
+                  {_title_pred(titles, start, end)} {_gubun_filter()}
                   AND CAST("최종 결제 금액" AS BIGINT) < 0"""
         else:
             q = f"""
