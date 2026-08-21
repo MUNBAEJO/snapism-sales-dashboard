@@ -24,11 +24,11 @@
     "어차피 올해 것이 12개월과 거의 같으니, 지난해를 통째로 보는 쪽이 낫다" 는 요청.
     ★연도를 고르면 **화면이 그 해만 잘라서 넘긴다**(`window()`). 그래서 프레임이
       늘 1년치 이하로 유지된다 — 2년을 통째로 들고 있으면 메모리가 감당이 안 된다.
-  · 월 막대는 **구성(구좌·카테고리)별로 색을 나눠 쌓는다**(`stack_cols`).
-    ★예전에 스택을 뺐던 이유(아래 계열이 위를 밀어올려 값이 안 읽힘)는 그대로다 —
-      그래서 **막대(월) 보기에서만** 쌓고, 선(주·일) 보기는 계열 하나를 유지한다.
-      쌓아도 툴팁은 예전 그대로 **합계 + 구성** 한 덩어리다(투명 계열이 툴팁을 문다).
-  · 툴팁 금액을 **축약 표기**로 바꿨다(₩13,587,850,000 → ₩135.9억).
+  · 구성(구좌·카테고리)은 **`구성 고르기` 로 골라 보고**, 그래프는 한 색으로 둔다.
+    ★잠깐 쌓아 봤다가 되돌렸다 — 아래 층이 위를 통째로 밀어올려 어느 층도 자기
+      값으로 안 읽힌다(스택의 구조적 한계). 대신 **마우스를 올리면** 툴팁이
+      구분별 금액·비중을 낸다. 막대 색은 브랜드색 하나다.
+  · 툴팁은 **원 단위 그대로**. 축약은 y축·막대 아래 라벨·요약 줄이 맡는다.
   · 막대 **아래에 그 달 금액**을 적는다 — 그래프를 안 봐도 달마다 숫자가 읽힌다.
 """
 from __future__ import annotations
@@ -160,7 +160,9 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
 
 def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
     """툴팁 본문. 계열을 하나로 줄이는 대신 구성은 여기에 숫자로 남긴다.
-    ★금액은 **축약 표기**다(2026-08-21 요청) — 원 단위 11자리는 눈으로 못 읽는다.
+    ★금액은 **원 단위**다. 축약(₩135.9억)으로 갔다가 되돌렸다(2026-08-21) —
+      축은 축약이라도 툴팁은 정확한 값을 보러 오는 자리다. 축약은 막대 아래
+      라벨·y축 눈금·요약 줄이 이미 맡고 있다.
 
     ★Plotly 툴팁은 **SVG 텍스트**다 — 표·flex 로 자리를 맞출 수가 없다(색·크기·
       굵기만 먹는다). 그래서 정렬 대신 **읽히는 순서**로 푼다(2026-08-21):
@@ -168,7 +170,7 @@ def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
         · **금액 큰 순**으로 세운다 — 입력 순서(구분 목록 순)는 뜻이 없다
         · 이름은 흐리게, 금액은 굵게, **비중(%)** 은 더 흐리게 — 세 단계로 읽힌다
     """
-    s = (f'<span style="font-size:14.5px"><b>{money(row_total)}</b></span>'
+    s = (f'<span style="font-size:14.5px"><b>{won(row_total)}</b></span>'
          f'<span style="color:#8d97a8;font-size:11px"> 합계</span>')
     items = sorted(((k, v) for k, v in parts.items() if v),
                    key=lambda kv: -abs(kv[1]))
@@ -178,22 +180,22 @@ def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
         pct = (f' <span style="color:#8d97a8">{v / row_total * 100:.0f}%</span>'
                if row_total else "")
         s += (f'<br>{dot}<span style="color:#c3cad6">{k}</span>'
-              f'  <b>{money(v)}</b>{pct}')
+              f'  <b>{won(v)}</b>{pct}')
     return s
 
 
-def _legend(st, cols, colors) -> None:
-    """쌓은 색이 뭔지 알려 주는 줄. 색만으로는 어느 구분인지 알 수가 없다."""
-    if not cols:
-        return
-    chips = "".join(
-        f'<span style="display:inline-flex;align-items:center;gap:5px;'
-        f'margin-right:13px;font-size:11.5px;color:var(--text-2)">'
-        f'<i style="width:9px;height:9px;border-radius:2px;background:{c};'
-        f'display:inline-block"></i>{n}</span>'
-        for n, c in zip(cols, colors))
-    st.markdown(f'<div style="margin:-2px 0 2px 66px">{chips}</div>',
-                unsafe_allow_html=True)
+def _carry(fig, x, y, cd) -> None:
+    """툴팁 전담 계열 — **보이지 않는 선** 하나가 툴팁을 문다.
+
+    ★보이는 계열에 물리면 Plotly 가 'x unified' 툴팁 왼쪽에 **그 계열의 색 칩**을
+      세로 가운데에 그린다. 여러 줄짜리 툴팁에선 그게 엉뚱한 줄 옆에 붙어
+      "저 줄만 색이 있다" 로 읽혔다(2026-08-21). 투명한 선이 물면 칩도 투명하다.
+      Scatter 는 barmode='stack' 에 안 쌓이므로 y 에 총계를 그대로 준다.
+    """
+    fig.add_trace(go.Scatter(
+        x=x, y=y, mode="lines", customdata=cd, showlegend=False,
+        line=dict(width=0, color="rgba(0,0,0,0)"),
+        hovertemplate="%{customdata}<extra></extra>"))
 
 
 def render(st, daily: pd.DataFrame, *, key: str, color: str,
@@ -293,14 +295,12 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
                 unsafe_allow_html=True)
 
     rgba = "rgba(79,70,229,"          # --brand 계열. fill 은 투명도가 필요해 hex 로 못 쓴다.
-    legend = None
     _bars = _yr or cur not in (PRESET_WEEK, PRESET_DAY)
     if _bars:                                                  # 연도·최근1년 → 월 막대
         g = d.resample("MS").sum()
-        # ★쌓을 땐 툴팁도 그 구성으로 — 아래 계열이 위를 밀어올려 막대만으로는
-        #   각 구분의 값을 못 읽는다. 툴팁이 그 자리를 메운다.
+        # 구성은 툴팁이 맡는다(아래 주석 참고).
         tip_cols = stack_cols or parts_cols
-        _tipcol = _cmap if stack_cols else None
+        _tipcol = _cmap or None
         cd = [_tip(r["total"], {c: r[c] for c in tip_cols}, _tipcol)
               for _, r in g.iterrows()]
         # 진행 중인 마지막 달은 사선 — 부분 집계를 '급락'으로 오해하는 걸 막는다.
@@ -309,31 +309,17 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         pat = [""] * len(g)
         if _partial:
             pat[-1] = "/"
+        # ★★막대는 **한 색**이다 (2026-08-21, 쌓았다가 되돌렸다).
+        #   구분별로 쌓아 봤더니 아래 층이 위를 통째로 밀어올려 어느 층도 자기
+        #   값으로 안 읽혔다 — 스택의 구조적 한계라 색을 아무리 갈라도 안 풀린다.
+        #   구분을 정확히 볼 길은 이미 **'구성 고르기'** 로 열어 뒀으니, 막대는
+        #   흐름만 보여 주고 **구성은 마우스를 올렸을 때만** 숫자로 낸다.
         fig = go.Figure()
-        if stack_cols:
-            _cols = _scol
-            for c, col in zip(stack_cols, _cols):
-                fig.add_trace(go.Bar(
-                    x=g.index, y=g[c], name=c, hoverinfo="skip",
-                    marker=dict(color=col, pattern=dict(shape=pat, fgcolor="#fff",
-                                                        size=4, solidity=.25))))
-            # ★툴팁은 **보이지 않는 선 하나**가 문다.
-            #   계열마다 물리면 'x unified' 툴팁이 6줄로 늘고 합계가 어디에도 안 나온다.
-            #   그렇다고 막대 하나에 물리면 Plotly 가 툴팁 왼쪽에 **그 계열의 색 칩**을
-            #   세로 가운데에 그린다 — 6줄짜리 툴팁에선 그게 엉뚱한 줄(PICK) 옆에 붙어
-            #   "PICK 만 색이 있다" 로 읽혔다(2026-08-21). 투명한 선이 물면 칩도 투명하다.
-            #   Scatter 는 barmode='stack' 에 안 쌓이므로 y 에 총계를 그대로 준다.
-            fig.add_trace(go.Scatter(
-                x=g.index, y=g["total"], mode="lines", customdata=cd,
-                line=dict(width=0, color="rgba(0,0,0,0)"), showlegend=False,
-                hovertemplate="%{customdata}<extra></extra>"))
-            legend = (stack_cols, _cols)
-        else:
-            fig.add_trace(go.Bar(
-                x=g.index, y=g["total"], customdata=cd,
-                marker=dict(color=color, pattern=dict(shape=pat, fgcolor="#fff",
-                                                      size=4, solidity=.25)),
-                hovertemplate="%{customdata}<extra></extra>"))
+        fig.add_trace(go.Bar(
+            x=g.index, y=g["total"], hoverinfo="skip",
+            marker=dict(color=color, pattern=dict(shape=pat, fgcolor="#fff",
+                                                  size=4, solidity=.25))))
+        _carry(fig, g.index, g["total"], cd)
         # 막대 아래 그 달 금액(요청) — 그래프를 안 봐도 달마다 숫자가 읽힌다.
         _month_ticks(fig, g.index[0], g.index[-1],
                      amounts={i: float(v) for i, v in g["total"].items()})
@@ -341,8 +327,8 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         hfmt = "%Y년 %m월"
         cap = (f"마지막 달은 사선이에요 — {end.month}월 {end.day}일까지만 집계된 부분치예요."
                if _partial else "막대 아래 숫자가 그 달 합계예요.")
-        if stack_cols:
-            cap += " 색은 구성이고, 마우스를 올리면 구분별 금액이 나와요."
+        if tip_cols:
+            cap += " 막대에 마우스를 올리면 구분별 금액이 나와요."
     elif cur == PRESET_WEEK:                                   # 12개월 · 주
         g = d.resample("W-MON", label="left", closed="left").sum()
         cnt = d["total"].resample("W-MON", label="left", closed="left").size()
@@ -350,12 +336,13 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         if g.empty:
             st.info("주 단위로 볼 만큼 기간이 길지 않아요.")
             return
-        cd = [_tip(r["total"], {c: r[c] for c in parts_cols}) for _, r in g.iterrows()]
+        cd = [_tip(r["total"], {c: r[c] for c in parts_cols}, _cmap or None)
+              for _, r in g.iterrows()]
         fig = go.Figure(go.Scatter(
-            x=g.index, y=g["total"], mode="lines", customdata=cd,
+            x=g.index, y=g["total"], mode="lines", hoverinfo="skip",
             line=dict(width=2.4, color=color, shape="spline", smoothing=.4),
-            fill="tozeroy", fillcolor=rgba + ".10)",
-            hovertemplate="%{customdata}<extra></extra>"))
+            fill="tozeroy", fillcolor=rgba + ".10)"))
+        _carry(fig, g.index, g["total"], cd)
         _month_ticks(fig, g.index[0], g.index[-1])
         top = _nice_top(float(g["total"].max()))
         hfmt = "%Y-%m-%d 부터 한 주"
@@ -363,22 +350,20 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
     else:                                                      # 최근 90일 · 일
         g = d.tail(90)
         ma = d["total"].rolling(7, center=True, min_periods=4).mean().tail(90)
-        cd = [_tip(r["total"], {c: r[c] for c in parts_cols}) for _, r in g.iterrows()]
+        cd = [_tip(r["total"], {c: r[c] for c in parts_cols}, _cmap or None)
+              for _, r in g.iterrows()]
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=g.index, y=g["total"], mode="lines", opacity=.28,
                                  line=dict(width=1, color=color), hoverinfo="skip"))
-        fig.add_trace(go.Scatter(
-            x=ma.index, y=ma, mode="lines", customdata=cd,
-            line=dict(width=2.8, color=color),
-            hovertemplate="%{customdata}<extra></extra>"))
+        fig.add_trace(go.Scatter(x=ma.index, y=ma, mode="lines", hoverinfo="skip",
+                                 line=dict(width=2.8, color=color)))
+        _carry(fig, g.index, g["total"], cd)
         _month_ticks(fig, g.index[0], g.index[-1])
         top = _nice_top(float(max(g["total"].max(), ma.max())))
         hfmt = "%Y-%m-%d"
         cap = ("굵은 선이 7일 평균(추세), 옅은 선이 그날 실제값이에요. "
                "12개월을 일 단위로는 안 그려요 — 점이 341개라 읽을 수가 없어서요.")
 
-    if legend:
-        _legend(st, *legend)
     # 막대 아래 두 줄짜리 라벨(달 + 금액)이라 아래 여백을 더 준다.
     st.plotly_chart(_shell(fig, top, hoverfmt=hfmt,
                            bmargin=46 if _bars else 32),
