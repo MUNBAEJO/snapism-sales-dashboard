@@ -1229,8 +1229,12 @@ rev = revenue_txns(df)          # ★모든 카드의 공통 기준 (정산금�
 #   첫거래일·마지막거래일을 쓰기 시작하면 그 순간 남의 필터 결과가 섞인다.
 #   ⚠️밑줄을 떼면 필터 조합마다 재계산이라 비용이 크다(5.75MB 지라 캐시 파싱 +
 #     41만 행 to_datetime). 로딩 개선 작업에서 같이 판단할 것 — 2026-08-03.
+# ★**데이터 버전(v)만 밑줄을 뗐다** (2026-08-21). 이건 하루에 한 번 바뀌는 값이라
+#   재계산 비용이 늘지 않으면서, 새 데이터가 들어왔을 때 옛 결과를 쓰는 일은 막는다.
+#   기간·국가·매장은 여전히 키에 없다 — 위 경고대로 **필터에 따라 달라지는 값
+#   (첫거래일·마지막거래일)을 쓰기 시작하면 그때 같이 풀어야 한다.**
 @st.cache_data(ttl=900, show_spinner=False, max_entries=16)
-def _title_status(_v, _p0, _p1, _countries, _stores):
+def _title_status(v, _p0, _p1, _countries, _stores):
     from title_runs import title_status
     from jira_ip_dates import fetch_ip_dates
     base = paid_sales(df_all)

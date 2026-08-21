@@ -353,6 +353,12 @@ def _rev_index(brand):
 # ★키에 dataver 를 반드시 넣는다. 대외 문서를 만드는 화면이라 캐시가 옛 매출을
 #   물고 있으면 slow 보다 훨씬 나쁘다.
 @st.cache_data(ttl=900, max_entries=16, show_spinner=False)
+def _members_cached(brand, titles_key, start, end, dataver):
+    """멤버 이름 목록 — 매핑 안내용. 키에 dataver 를 넣는 이유는 아래와 같다."""
+    return sc.member_names(brand, list(titles_key), start, end)
+
+
+@st.cache_data(ttl=900, max_entries=16, show_spinner=False)
 def _detail_cached(brand, titles_key, start, end, fx_key, dataver):
     rates, _, _ = _rates(end, fx_key)
     return sc.fill_open(sc.country_detail(brand, list(titles_key), start, end, rates),
@@ -646,6 +652,41 @@ def make_panel():
     if warns:
         ui_theme.nbox("warn", "⚠️ <b>환율 검증 실패</b><div class='sub'>"
                       + "<br>".join(warns[:4]) + "</div>")
+
+    # ── 멤버 이름 정리 ────────────────────────────────────────────────
+    # ★★`unmapped_members`·`set_member_alias` 는 만들어져 있는데 **화면에서
+    #   부르는 곳이 없었다** (2026-08-21). 그래서 매핑할 방법이 자체가 없었고
+    #   member_aliases.json 이 빈 채로 남아, 같은 멤버가 한글·영문 두 열로
+    #   발행되고 있었다(2026-07 상위 12개 중 10개가 해당 — TWICE 는 NAYEON 과
+    #   '나연' 이 따로, ATEEZ 는 'SAN A' 와 '산 A' 가 따로).
+    #   **절사 단위가 국가 × 멤버**라 열이 갈리면 금액도 어긋난다.
+    _mem_all = []
+    for b, (tks, titles) in picks.items():
+        if tks and titles:
+            try:
+                _mem_all += _members_cached(b, tuple(titles), S, E,
+                                            sc.data_version())
+            except Exception:                                  # noqa: BLE001
+                pass
+    _un = sc.unmapped_names(_mem_all)
+    if _un:
+        _en = [m for m in sorted(set(_mem_all)) if m not in _un]
+        with st.expander(f"🔤 멤버 이름 정리 필요 {len(_un)}명 — 한글·영문이 "
+                         "따로 잡혀 있어요", expanded=False):
+            st.caption("같은 사람인데 한글 이름과 영문 이름이 각각 한 명으로 세어져요. "
+                       "짝을 맞춰 두면 다음 발행부터 한 열로 합쳐져요. "
+                       "**절사가 멤버 단위라 금액도 조금 달라져요.**")
+            for _i, _ko in enumerate(_un[:30]):
+                c1, c2, c3 = st.columns([2, 3, 1])
+                c1.markdown(f"**{_ko}**")
+                _pick = c2.selectbox("영문 이름", ["(고르기)"] + _en,
+                                     key=f"mal_{_ko}", label_visibility="collapsed")
+                if c3.button("저장", key=f"malb_{_ko}", disabled=not CAN_EDIT
+                             or _pick == "(고르기)"):
+                    sc.set_member_alias(_ko, _pick)
+                    st.rerun()
+            if len(_un) > 30:
+                st.caption(f"… 외 {len(_un) - 30}명")
 
     # ── 만들기 ────────────────────────────────────────────────────────
     ui_theme.sec(4, "정산서 만들기")

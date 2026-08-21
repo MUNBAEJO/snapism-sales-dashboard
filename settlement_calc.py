@@ -605,6 +605,49 @@ def unmapped_members(*pivots) -> list[str]:
     return sorted(out)
 
 
+def member_names(brand: str, titles: list[str], start: str, end: str) -> list[str]:
+    """그 타이틀들의 **멤버 이름만** (정규화 후, 금액 안 셈). 매핑 화면용.
+
+    ★`member_pivot` 을 부르면 금액 배분까지 돌아 무겁다. 이름만 필요하므로
+      같은 필터로 DISTINCT 만 긁는다.
+    """
+    if not titles:
+        return []
+    con = _con()
+    try:
+        if brand == "photoism":
+            col = _mem_sql('trim(CAST("프레임 이름" AS VARCHAR))')
+            sql = f"""
+                SELECT DISTINCT {col} AS mem
+                FROM read_parquet('{PH_RAW.as_posix()}')
+                WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+                  {store_rules.not_test_sql()}
+                  {_title_pred(titles, start, end)}
+                  {_gubun_filter()}
+            """
+        else:
+            sql = f"""
+                SELECT DISTINCT trim(CAST("상품 이름" AS VARCHAR)) AS mem
+                FROM read_parquet('{SN_MASTER.as_posix()}')
+                WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+                  {store_rules.not_test_sql()}
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+            """
+        df = con.execute(sql).df()
+    finally:
+        con.close()
+    out = {_norm_member(x) for x in df["mem"].tolist() if str(x).strip()}
+    return sorted(out)
+
+
+def unmapped_names(names) -> list[str]:
+    """한글이 든 이름 중 **별칭이 없는 것**. `unmapped_members` 의 리스트판."""
+    import re
+    alias = _member_alias()
+    return sorted({str(m) for m in names
+                   if re.search(r"[가-힣]", str(m)) and str(m) not in alias})
+
+
 def set_member_alias(ko: str, en: str) -> None:
     """한글 멤버명 → 영문 표기 저장. 저장하면 다음 집계부터 열이 합쳐진다."""
     ko, en = str(ko).strip(), str(en).strip()
