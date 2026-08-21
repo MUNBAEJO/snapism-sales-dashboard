@@ -141,8 +141,9 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
         barmode="stack", bargap=.35,
         # bordercolor 를 배경과 같게 — 안 주면 Plotly 가 계열색 테두리를 둘러
         # 집 툴팁(.vtip, 테두리 없음)과 달라 보인다.
+        # ★색 점·비중까지 들어가면서 11.5px 는 빽빽했다 — 12.5px 로 키운다.
         hoverlabel=dict(bgcolor=INK, bordercolor=INK, align="left",
-                        font=dict(family=FONT, size=11.5, color="#fff")),
+                        font=dict(family=FONT, size=12.5, color="#fff")),
         xaxis=dict(showgrid=False, showline=True, linecolor=GRID, ticks="outside",
                    tickcolor=GRID, tickfont=dict(color=MUTED, size=11),
                    hoverformat=hoverfmt),
@@ -154,13 +155,27 @@ def _shell(fig, top: float, height: int = 300, hoverfmt: str = "%Y-%m-%d",
     return fig
 
 
-def _tip(row_total, parts: dict) -> str:
+def _tip(row_total, parts: dict, colors: dict | None = None) -> str:
     """툴팁 본문. 계열을 하나로 줄이는 대신 구성은 여기에 숫자로 남긴다.
-    ★금액은 **축약 표기**다(2026-08-21 요청) — 원 단위 11자리는 눈으로 못 읽는다."""
-    s = f"<b>{money(row_total)}</b>"
-    for k, v in parts.items():
-        if v:
-            s += f'<br><span style="opacity:.72">{k}</span> {money(v)}'
+    ★금액은 **축약 표기**다(2026-08-21 요청) — 원 단위 11자리는 눈으로 못 읽는다.
+
+    ★Plotly 툴팁은 **SVG 텍스트**다 — 표·flex 로 자리를 맞출 수가 없다(색·크기·
+      굵기만 먹는다). 그래서 정렬 대신 **읽히는 순서**로 푼다(2026-08-21):
+        · 막대와 **같은 색 점**을 앞에 찍어 어느 층인지 눈으로 바로 잇는다
+        · **금액 큰 순**으로 세운다 — 입력 순서(구분 목록 순)는 뜻이 없다
+        · 이름은 흐리게, 금액은 굵게, **비중(%)** 은 더 흐리게 — 세 단계로 읽힌다
+    """
+    s = (f'<span style="font-size:14.5px"><b>{money(row_total)}</b></span>'
+         f'<span style="color:#8d97a8;font-size:11px"> 합계</span>')
+    items = sorted(((k, v) for k, v in parts.items() if v),
+                   key=lambda kv: -abs(kv[1]))
+    for k, v in items:
+        dot = (f'<span style="color:{colors[k]};font-size:13px">●</span> '
+               if colors and colors.get(k) else "")
+        pct = (f' <span style="color:#8d97a8">{v / row_total * 100:.0f}%</span>'
+               if row_total else "")
+        s += (f'<br>{dot}<span style="color:#c3cad6">{k}</span>'
+              f'  <b>{money(v)}</b>{pct}')
     return s
 
 
@@ -262,7 +277,11 @@ def render(st, daily: pd.DataFrame, *, key: str, color: str,
         # ★쌓을 땐 툴팁도 그 구성으로 — 아래 계열이 위를 밀어올려 막대만으로는
         #   각 구분의 값을 못 읽는다. 툴팁이 그 자리를 메운다.
         tip_cols = stack_cols or parts_cols
-        cd = [_tip(r["total"], {c: r[c] for c in tip_cols}) for _, r in g.iterrows()]
+        _tipcol = (dict(zip(stack_cols, (list(stack_colors or [])
+                                         + [color] * len(stack_cols))))
+                   if stack_cols else None)
+        cd = [_tip(r["total"], {c: r[c] for c in tip_cols}, _tipcol)
+              for _, r in g.iterrows()]
         # 진행 중인 마지막 달은 사선 — 부분 집계를 '급락'으로 오해하는 걸 막는다.
         _partial = ((data_last is None or end.date() >= data_last)
                     and end.day < end.days_in_month)
