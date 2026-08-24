@@ -2059,7 +2059,13 @@ sales = paid_sales(df)
 def _title_status_ph(agg_mtime, p0, p1, countries, brands, stores, gubuns, ips):
     from title_runs import title_status
     from jira_ip_dates import fetch_ip_dates
-    base = scope[~scope["취소 여부"].astype(bool)]
+    # ★★큰 프레임을 통째로 복사하지 않는다 (2026-08-24). title_status 는 타이틀·날짜
+    #   두 열만 쓰는데(title_runs:401), 전엔 scope 전체(14열 × 711만행, 날짜로도 안
+    #   좁힌 것)를 복사해 넘겼다 — 어제 고친 세 곳과 같은 병이다. 두 열만 뽑아 거른다.
+    #   `취소 여부` 는 _load_data 에서 이미 bool 이라 astype 도 뺐다(중복 복사였다).
+    #   실측: 새 base (7118824, 2) · title_status 결과 4,718키 옛것과 완전 일치.
+    _tcols = [c for c in ("타이틀", "날짜") if c in scope.columns]
+    base = scope.loc[~scope["취소 여부"], _tcols]
     try:
         # brand="all" — 브랜드 필드로 거르면 오히려 놓친다(스내피즘 쪽에서 확인된 사실).
         jira = fetch_ip_dates(brand="all", force_refresh=False)
