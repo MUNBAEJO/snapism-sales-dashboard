@@ -91,13 +91,30 @@ def vat3(amount: int, use_vat: bool) -> tuple[int, int]:
     return vat_split(int(amount or 0), bool(use_vat))
 
 
-def _fx_cell(unit: str, local, krw) -> str:
-    """적용 환율 = 매출KRW ÷ 현지매출. KRW 행은 '—'."""
+def _fx_cell(unit: str, local, krw, rates=None) -> str:
+    """적용 환율. KRW 행은 '—'.
+
+    ★★**고시값을 그대로 적는다** (2026-08-24, 전수검사 low #13).
+      전엔 `매출KRW ÷ 현지매출` 로 역산했다. 그런데 매출KRW 는 반올림된 값이라
+      금액이 작은 나라일수록 역산값이 흔들려, **같은 통화가 한 문서 안에서 두
+      값으로 인쇄됐다** — 실제 발행본(USD 1,441.1)에서 미국 1,441.10 · 괌
+      1,441.09 가 같이 찍혔다(괌은 32달러 × 1441.1 = 46,115.2 → 46,115 로
+      반올림된 뒤 ÷32 = 1,441.09375). 부록의 '국가별 적용 환율' 표는 고시값을
+      쓰므로 본문과도 어긋났다. 금액은 맞았고 표기만 틀렸다.
+      ※config 환율(USD 1,402.5)로는 32×1402.5 가 딱 떨어져 재현이 안 된다 —
+        환율값에 따라 나타났다 사라지는 종류라 눈으로는 못 잡는다.
+      고시값을 못 찾을 때만(통화가 환율표에 없음) 예전처럼 역산한다.
+    """
     u = str(unit or "").strip().upper()
-    if u == "KRW" or not local:
+    if u == "KRW":
         return "—"
-    v = krw / local * (100 if u in FX_100 else 1)
-    return f"{v:,.2f}" + (" <small>/100</small>" if u in FX_100 else "")
+    per = 100 if u in FX_100 else 1
+    v = (rates or {}).get(u)
+    if not v:
+        if not local:
+            return "—"
+        v = krw / local                      # 폴백 — 부록 표와 어긋날 수 있다
+    return f"{v * per:,.2f}" + (" <small>/100</small>" if per == 100 else "")
 
 
 def _chart_items(rows, total, top_n=6):
@@ -214,7 +231,7 @@ def _pct(v) -> str:
 NOSALE = "매출 없음"        # settlement_calc.fill_open 이 붙이는 표식
 
 
-def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
+def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None, rates=None):
     """국가 | 통화 | 수량 | 현지 매출 | 적용 환율 | 매출(KRW) | 요율 | 정산액 | 비중
 
     ★소계 정산액은 각 행 정산액의 합이면서 총액×요율과도 같다(_alloc_settle).
@@ -290,7 +307,7 @@ def _country_table(rows, qty_label, rate_pct, rs, rs_cc=None):
               + f'</td><td class="cur">{r["unit"]}</td>'
               f'<td>{_f(q) if q else dash}</td>'
               f'<td class="dim">{_f(loc) if loc else dash}</td>'
-              f'<td class="dim">{_fx_cell(r["unit"], loc, krw) if krw else dash}</td>'
+              f'<td class="dim">{_fx_cell(r["unit"], loc, krw, rates) if krw else dash}</td>'
               f'<td>{_f(krw) if krw else dash}</td>'
               f'<td class="dim">{_pct(_rates[_i]) if _rates else rate_pct}</td>'
               f'<td>{"<b>" + _f(amt) + "</b>" if amt else dash}</td>'
@@ -723,7 +740,21 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
         return "국가별" if _b_cc(b) else (f"{_r * 100:g}%" if _r else "—")
     ip, S, E = ctx["ip"], ctx["start"], ctx["end"]
     ym = f"{int(E[:4])}년 {int(E[5:7])}월"
+    # ★★문서번호는 **여기서 만든다** (2026-08-24, 전수검사 low #14).
+    #   settlement_calc.doc_number() 는 규칙까지 다 짜 놓고 **호출부가 0건**이라
+    #   ctx["docno"] 를 채우는 곳이 없었다 — 대외 문서 머리말·꼬리말의 번호 자리가
+    #   늘 비어 있었고(HTML 에 'SB-SET' 0건), 정정본을 주고받을 때 어느 문서를
+    #   말하는지 특정할 수가 없었다.
+    #   ★ctx 에 미리 넣지 않고 여기서 만드는 이유: 번호에 종류(L/A)가 들어가는데
+    #     같은 ctx 로 대행사용·관리용 두 장을 만든다. ctx 에 하나로 박으면 둘이
+    #     같은 번호를 달게 된다.
     docno = ctx.get("docno") or ""
+    if not docno:
+        try:
+            from settlement_calc import doc_number
+            docno = doc_number(ip, E, kind)
+        except Exception:                                   # noqa: BLE001
+            docno = ""
     iss = ctx.get("issuer") or {}
     _p = ctx.get("partner") or {}
     recv = (_p.get("agency_name") if kind == "agency" else _p.get("mgmt_name")) or ""
@@ -748,7 +779,8 @@ def build_html(ctx: dict, kind: str, sample: bool = False,
         rows = (_d if "구분" in _d.columns
                 else _d.sort_values("매출액", ascending=False)).to_dict("records")
         tbl, krw, setl, qty = _country_table(rows, QTY_LABEL[b],
-                                             _b_pct(b), _b_rs(b), _b_cc(b))
+                                             _b_pct(b), _b_rs(b), _b_cc(b),
+                                             ctx.get("rates") or {})
         calc[b] = {"rows": rows, "tbl": tbl, "krw": krw, "set": setl, "qty": qty}
     base = sum(c["krw"] for c in calc.values())
     total = sum(c["set"] for c in calc.values())
