@@ -38,11 +38,18 @@ st.markdown('<div style="font-size:26px;font-weight:800;letter-spacing:-.03em;'
             unsafe_allow_html=True)
 
 df = ipu.load()
+# ★오픈일이 없어 달력에 못 올린 건수를 알려 준다(2026-08-24, 전수검사 #16).
+#   '이 달력이 전부' 라고 믿게 두면 안 된다 — 완료·송출 중인 것도 섞여 있다.
+_nodate = int(getattr(df, "attrs", {}).get("no_date") or 0)
 if df.empty:
     ui_theme.nbox("warn", "Jira 일정을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.")
     st.stop()
 
 # ── 필터 (본문) ──
+if _nodate:
+    st.caption(f"⚠️ 오픈일이 아직 안 잡힌 상품 **{_nodate:,}건**은 이 달력에 "
+               "안 나와요 — Jira 의 '시작 날짜'가 비어 있어요.")
+
 ui_theme.sec(1, "무엇을 볼까요", "브랜드 · 진행 상태 · 이름으로 좁힐 수 있어요")
 brands_all = [b for b in ipc.BRAND_ORDER if b in set(df["브랜드"])]
 statuses_all = sorted(set(df["상태"]))

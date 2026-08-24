@@ -137,8 +137,15 @@ CC_NAME = _country_names()
 # config 의 포토이즘 국가 목록에 없는 나라. Jira Country 선택지가 더 넓다.
 CC_NAME.setdefault("AR", "아르헨티나")
 CC_NAME.setdefault("CO", "콜롬비아")
-# Jira Country 선택지가 30개국이라, 그만큼 다 고른 건 사실상 '전 국가'다.
+# 이만큼 고르면 나라 이름을 다 쓰지 않고 한 덩어리로 줄인다(사용자 확인).
 ALL_COUNTRY_N = 28
+# ★★그런데 '줄인다' 와 '전 국가라고 부른다' 는 다른 얘기다 (2026-08-24, 전수검사 #15).
+#   실제로 쓰이는 Jira Country 코드는 **32종**인데 문턱이 28 이라, 3~4개국이 빠졌는데도
+#   '전 국가' 로 찍혔다. 그중 **한국이 빠진 게 27건** — 제목에 '한국제외' 라고 적힌
+#   상품까지 '전 국가' 로 보여서, 어디에 여는지 보러 온 사람이 정반대로 읽었다.
+#   (실측 코드 32종: AE AR AU BN CA CL CN CO DE ES FR GB GU HK ID JP KR LA LU LV
+#    MN MO MX MY NL PE PH SG TH TW US VN — Jira 에 나라가 늘면 이 값도 올려야 한다)
+ALL_COUNTRY_UNIVERSE = 32
 
 
 def cc_name(code: str) -> str:
@@ -204,13 +211,20 @@ def country_label(codes, limit: int = 12) -> str:
     ★'아시아 8' 같은 권역 요약으로 줄여 봤더니(2026-08-04 1차) 그게 어느 나라인지
       알 수가 없다는 지적을 받았다. 규모만 알아서는 쓸모가 없다 — 국가수 열이
       이미 숫자를 주고 있으니 이 열은 **이름**을 줘야 한다.
-    ★단, 28개국 이상은 사실상 전 국가라 이름을 다 쓰는 게 오히려 방해다.
+    ★단, 28개국 이상은 이름을 다 쓰는 게 오히려 방해라 한 덩어리로 줄인다.
+      ★줄이더라도 **'전 국가' 라고 부르는 건 진짜 전 국가일 때만**이다 —
+        빠진 나라가 있는데 '전 국가' 라고 적으면 정반대로 읽힌다(#15 주석 참고).
     """
     codes = list(codes or [])
     if not codes:
         return ""
     if len(codes) >= ALL_COUNTRY_N:
-        return f"전 국가 {len(codes)}개국"
+        if len(codes) >= ALL_COUNTRY_UNIVERSE:
+            return f"전 국가 {len(codes)}개국"
+        if "KR" not in {str(c).strip().upper() for c in codes}:
+            # 가장 많이 오해받는 갈래라 따로 적는다('한국제외' 기획전).
+            return f"한국 제외 {len(codes)}개국"
+        return f"{len(codes)}개국(일부 제외)"
     names = [cc_name(c) for c in sort_countries(codes)]
     head = " · ".join(names[:limit])
     return head if len(names) <= limit else f"{head} 외 {len(names) - limit}"
@@ -240,10 +254,17 @@ def load_openings(brand: str = "all", force_refresh: bool = False) -> pd.DataFra
         return pd.DataFrame(columns=cols)
 
     rows = []
+    no_date = 0                      # 오픈일 미정 — 아래에서 화면에 알려 준다
     shared = _shared_wbs(items)
     for it in items or []:
         start = _to_date(it.get("startdate"))
         if start is None:            # 오픈일이 없으면 달력에 찍을 수 없다
+            # ★찍을 수 없는 건 맞지만 **말없이 빠지면 안 된다** (2026-08-24,
+            #   전수검사 #16). 실측 169장(할 일 107 · 진행 중 34 · 완료 27 ·
+            #   송출 중 1)이 아무 안내 없이 사라졌다. 완료·송출 중인 것까지 있어서
+            #   '이 달력이 전부' 라고 믿으면 안 되는데 그걸 알 방법이 없었다.
+            if _name_of(it, shared):     # 공정 티켓 말고 상품으로 보이는 것만
+                no_date += 1
             continue
         name = _name_of(it, shared)
         if not name:
@@ -270,8 +291,12 @@ def load_openings(brand: str = "all", force_refresh: bool = False) -> pd.DataFra
     #   _merge_same_product 가 옛 방식(표시 이름)으로 되돌아간다 — 실제로 그랬다.
     df = pd.DataFrame(rows, columns=cols + ["_상품"])
     if df.empty:
+        df.attrs["no_date"] = no_date
         return df
-    return _merge_same_product(df)
+    out = _merge_same_product(df)
+    # ★_merge_same_product 가 새 프레임을 돌려주므로 **그 위에** 다시 붙인다.
+    out.attrs["no_date"] = no_date
+    return out
 
 
 # 공정 순서 — 같은 상품이 여러 줄일 때 '제일 진행된' 상태를 대표로 삼는다.
