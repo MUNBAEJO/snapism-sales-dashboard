@@ -628,13 +628,28 @@ def _load_data(agg_mtime, cfg_mtime):
     if AGG_FILE.exists():
         try:
             table = pq.read_table(str(AGG_FILE))
+            # ★노출 대상만 남기고 캐시한다(원본 parquet 은 그대로 — 되살리려면
+            #   IP_GUBUN_SHOWN 만 고치면 된다).
+            #   ※예전 주석에 '행이 절반 이하가 된다'고 적혀 있었는데 **더는 사실이
+            #     아니다** — IP_GUBUN_SHOWN 이 6종(오리지널·렌탈 포함)으로 늘면서
+            #     이제 빠지는 건 '제외' 뿐이다. 2026-08-24 실측 7,119,881 → 7,118,824
+            #     (1,057행). 그래도 이 줄은 남긴다: 테스트·기타가 화면에 섞이면 안 된다.
+            # ★★거르기를 **pandas 앞(Arrow 단계)으로 옮겼다** (2026-08-24).
+            #   전엔 7.1M 행을 통째로 pandas 로 올린 **뒤에** 걸렀다 —
+            #   `df[df["IP구분"].isin(...)]` 이 프레임 전체를 한 번 더 복사하므로
+            #   로딩 순간 최고점이 두 배가 된다. 실제로 그 자리에서 죽었다:
+            #   `_ArrayMemoryError: Unable to allocate 6.79 MiB ... (7118824,) int8`
+            #   — 6.79MB 를 못 얻은 게 아니라 이미 바닥이라는 뜻이다.
+            #   Arrow 에서 먼저 거르면 **빠질 행은 pandas 에 아예 안 올라온다.**
+            #   결과는 같다 — 같은 값 목록으로 같은 행을 남긴다.
+            if "IP구분" in table.column_names:
+                import pyarrow as _pa
+                import pyarrow.compute as _pc
+                table = table.filter(_pc.is_in(
+                    table["IP구분"],
+                    value_set=_pa.array(list(ip_classify.IP_GUBUN_SHOWN))))
             df = table.to_pandas(strings_to_categorical=True)
-            # ★노출 대상만 남기고 캐시한다. @st.cache_data 는 반환값을 피클로 직렬화하는데,
-            #   373만행 전체(314MB)를 넘기면 그 직렬화에서 MemoryError 가 났다(실측).
-            #   어차피 화면엔 아티스트·캐릭터·PICK 만 쓰므로 여기서 거르면 행이 절반 이하가 된다.
-            #   (원본 parquet 은 그대로 — 되살리려면 IP_GUBUN_SHOWN 만 고치면 된다)
-            if "IP구분" in df.columns:
-                df = df[df["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
+            del table          # to_pandas 가 복사본을 만든다 — 원본은 바로 놓아준다
         except Exception as e:
             st.warning(f"집계 파일을 불러오지 못했어요. 파일을 다시 만든 뒤 새로고침해 주세요. (원인: {e})")
             return pd.DataFrame()
@@ -643,7 +658,13 @@ def _load_data(agg_mtime, cfg_mtime):
         return pd.DataFrame()
 
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
-    df = df[df["날짜"].notna()]
+    # ★버릴 행이 있을 때만 거른다 (2026-08-24). `df[df[...].notna()]` 는
+    #   버릴 게 하나도 없어도 **프레임을 통째로 복사한다** — 평소엔 날짜가
+    #   다 멀쩡하므로 그 복사는 늘 헛일이면서 로딩 최고점만 두 배로 올린다.
+    _bad = df["날짜"].isna()
+    if _bad.any():
+        df = df[~_bad]
+    del _bad
     df["취소 여부"] = df["취소 여부"].astype(bool)
     # int32 로 낮춘다 — 219만행 × 4컬럼이 int64면 67MB, int32면 33MB.
     # 캐시는 이 프레임을 피클로 들고 있어서 메모리 압박이 곧 OOM 으로 이어진다.
@@ -760,23 +781,36 @@ def _sidebar_options(agg_mtime):
 
     # 노출 대상 구분만 — '제외'·스티커머신의 IP명이 필터 목록에 남지 않게.
     # (렌탈은 2026-08-04 부터 노출 대상이라 여기 포함된다)
-    nonex = d[d["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
+    #
+    # ★★여기서 다시 거르지 않는다 (2026-08-24). 전엔
+    #     nonex = d[d["IP구분"].isin(IP_GUBUN_SHOWN)]
+    #   였는데, `_load_data` 가 **이미 같은 조건으로 걸러서** 준다 — 즉 한 행도 안
+    #   줄면서 14열 × 711만행을 통째로 복사했다(380MB). 실서버가 그 자리에서 죽었다:
+    #   `Unable to allocate 380. MiB ... (14, 7118824) int32`.
+    #   아래 반복문은 더 나빴다 — `nonex[nonex["IP구분"] == g]` 를 구분 수만큼
+    #   돌려 **복사를 여섯 번 더** 했다.
+    # ★필요한 건 (구분, IP명) 짝과 (국가, 매장) 짝뿐이다. 두 열만 뽑아 중복을 지우면
+    #   711만행이 수천 행으로 줄어든다 — 큰 프레임을 만질 일이 아예 없어진다.
+    def _clean(vals):
+        return sorted(v for v in (str(x) for x in vals)
+                      if v.strip() and v not in ("nan", ""))
 
-    def ip_list(frame):
-        return sorted(
-            v for v in (str(x) for x in frame["IP명"].dropna().unique())
-            if v.strip() and v not in ("nan", "")
-        )
-
-    ipmap = {"_ALL": ip_list(nonex)}
+    # ★결측 처리는 예전 식과 **정확히 같게** 맞춘다 — 여기서 한 칸 어긋나면
+    #   필터 목록에서 IP·매장이 조용히 사라진다.
+    _ip = d[["IP구분", "IP명"]].dropna(subset=["IP명"]).drop_duplicates()
+    _ip["IP구분"] = _ip["IP구분"].astype(str)
+    _ip["IP명"] = _ip["IP명"].astype(str)
+    ipmap = {"_ALL": _clean(_ip["IP명"].unique())}
     for g in ip_classify.IP_GUBUN_ORDER:
-        ipmap[g] = ip_list(nonex[nonex["IP구분"] == g])
+        ipmap[g] = _clean(_ip.loc[_ip["IP구분"] == g, "IP명"].unique())
 
     # 국가 → 매장 목록 (매장 필터를 선택 국가로 좁히기용)
-    sbc = {}
-    for c, grp in d.groupby("국가", observed=True):
-        vals = sorted(str(v) for v in grp["매장 이름"].dropna().unique())
-        sbc[str(c)] = [v for v in vals if v not in ("", "nan")]
+    # ★국가는 안 지운다 — 그 나라 매장이 전부 결측이어도 **키는 있어야** 한다
+    #   (예전 groupby 는 모든 국가를 돌면서 빈 목록을 넣어 줬다).
+    _st = d[["국가", "매장 이름"]].drop_duplicates()
+    _st["국가"] = _st["국가"].astype(str)
+    sbc = {c: _clean(g["매장 이름"].dropna())
+           for c, g in _st.groupby("국가", observed=True)}
 
     return {
         "countries": uniq("국가"),
@@ -796,7 +830,13 @@ def _load_hourly(mtime):
         table = pq.read_table(str(HOURLY_FILE))
         df = table.to_pandas()
         df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
-        df = df[df["날짜"].notna()]
+        # ★버릴 행이 있을 때만 거른다 (2026-08-24). `df[df[...].notna()]` 는
+        #   버릴 게 하나도 없어도 **프레임을 통째로 복사한다** — 평소엔 날짜가
+        #   다 멀쩡하므로 그 복사는 늘 헛일이면서 로딩 최고점만 두 배로 올린다.
+        _bad = df["날짜"].isna()
+        if _bad.any():
+            df = df[~_bad]
+        del _bad
         df["취소 여부"] = df["취소 여부"].astype(bool)
         return df
     except Exception:
@@ -825,7 +865,13 @@ def _load_orig(mtime, cfg_mtime):
         print(f"[오리지널 집계 읽기 실패] {e}", flush=True)
         return d
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
-    df = df[df["날짜"].notna()]
+    # ★버릴 행이 있을 때만 거른다 (2026-08-24). `df[df[...].notna()]` 는
+    #   버릴 게 하나도 없어도 **프레임을 통째로 복사한다** — 평소엔 날짜가
+    #   다 멀쩡하므로 그 복사는 늘 헛일이면서 로딩 최고점만 두 배로 올린다.
+    _bad = df["날짜"].isna()
+    if _bad.any():
+        df = df[~_bad]
+    del _bad
     for col in ["건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
     ex = load_exchange_rates()
@@ -2013,7 +2059,13 @@ sales = paid_sales(df)
 def _title_status_ph(agg_mtime, p0, p1, countries, brands, stores, gubuns, ips):
     from title_runs import title_status
     from jira_ip_dates import fetch_ip_dates
-    base = scope[~scope["취소 여부"].astype(bool)]
+    # ★★큰 프레임을 통째로 복사하지 않는다 (2026-08-24). title_status 는 타이틀·날짜
+    #   두 열만 쓰는데(title_runs:401), 전엔 scope 전체(14열 × 711만행, 날짜로도 안
+    #   좁힌 것)를 복사해 넘겼다 — 어제 고친 세 곳과 같은 병이다. 두 열만 뽑아 거른다.
+    #   `취소 여부` 는 _load_data 에서 이미 bool 이라 astype 도 뺐다(중복 복사였다).
+    #   실측: 새 base (7118824, 2) · title_status 결과 4,718키 옛것과 완전 일치.
+    _tcols = [c for c in ("타이틀", "날짜") if c in scope.columns]
+    base = scope.loc[~scope["취소 여부"], _tcols]
     try:
         # brand="all" — 브랜드 필드로 거르면 오히려 놓친다(스내피즘 쪽에서 확인된 사실).
         jira = fetch_ip_dates(brand="all", force_refresh=False)
