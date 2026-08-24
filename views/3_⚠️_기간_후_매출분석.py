@@ -20,6 +20,7 @@ sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))
 from guide_content import render_guide
 import auth
 import data_io
+import photoism_rules  # 포토이즘 매출 규칙(쿠폰·코인 가산 국가)
 import store_rules
 st.markdown("""
 <style>
@@ -111,7 +112,10 @@ def load_photo():
     기간후 분석은 '타이틀별·날짜별 매출 합계'면 충분하므로 집계본 사용 (1.2초/219MB).
     집계 행은 다수 거래의 묶음이므로 '건수' 컬럼으로 실거래 수를 보존한다."""
     import pyarrow.parquet as pq
+    # ★국가코드·서비스코인을 같이 읽는다 — 아래에서 photoism_rules 로 매출을
+    #   계산하는 데 필요하다(2026-08-24, 전수검사 low #17).
     need = ["날짜", "취소 여부", "결제 단위", "최종 결제 금액", "쿠폰 할인 금액",
+            "서비스코인", "국가코드",
             "타이틀명", "국가", "매장 이름", "건수", "결제 수단"]
     df = pd.DataFrame()
     for src in (PHOTO_AGG, PHOTO_PARQUET):
@@ -163,7 +167,20 @@ def load_photo():
     cou  = pd.to_numeric(df.get("쿠폰 할인 금액", 0), errors="coerce").fillna(0)
     df["KRW환산금액"] = (fin * rate).round(0).astype("int64")
     df["쿠폰KRW"]    = (cou * rate).round(0).astype("int64")
-    df["정산금액"]   = df["KRW환산금액"] + df["쿠폰KRW"]
+    # ★★매출 정의를 다른 화면과 맞춘다 (2026-08-24, 전수검사 low #17).
+    #   여기만 photoism_rules 를 안 쓰고 **쿠폰을 전 국가에 더하고 코인은 아예
+    #   안 더했다** — need 목록에 '서비스코인' 이 없어서 구조적으로 0이었다.
+    #   나라마다 정산 규칙이 다른데 한 화면만 다른 잣대를 쓰면, 같은 IP 를 놓고
+    #   이 화면과 포토이즘 화면이 다른 숫자를 낸다(칠레·페루는 여기서만 0이 된다).
+    #   ★규칙은 photoism_rules 한 곳에만 둔다 — 여기서 다시 적으면 또 갈린다.
+    if "국가코드" in df.columns:
+        df["서비스코인"] = pd.to_numeric(df.get("서비스코인", 0),
+                                         errors="coerce").fillna(0)
+        photoism_rules.add_revenue(df, ex)
+        df["정산금액"] = df["매출액"]
+    else:
+        # 국가코드가 없는 옛 집계본 — 예전 식으로 버틴다(재집계하면 낫는다).
+        df["정산금액"] = df["KRW환산금액"] + df["쿠폰KRW"]
     df["브랜드소스"] = "포토이즘"
     # 건수: 집계본엔 존재, 전체/CSV fallback이면 1건씩
     if "건수" in df.columns:
