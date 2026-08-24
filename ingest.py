@@ -160,37 +160,79 @@ def ingest():
         print(f"  -> {RAW_DIR} 에 어드민에서 다운받은 CSV를 넣어주세요.")
         return
 
-    new_dfs = []
+    # ★★raw/ 를 통째로 합친 뒤에 걸러내던 걸 그만뒀다 (2026-08-24).
+    #
+    #   전엔 210장 515MB 를 **전부** 올려 316만 행짜리 문자열(dtype=str) 프레임을
+    #   만들고 나서 중복을 뺐다. 그런데 살아남는 건 46만 행뿐이다 — 85%를 헛들었다.
+    #   파일이 쌓일수록 나빠지는 구조라 결국 커밋 한도(44.9GB)에 걸려 **적재가 죽었다**:
+    #     · 2026-08-22 09:03 · 08-24 05:02 · 08-24 09:09 — `_ArrayMemoryError`
+    #     · 마지막엔 3MB 짜리 할당을 못 얻고 죽었다(바닥에서 한 조각이 모자란 상태)
+    #     · 같은 압박에 대시보드(8503)도 사흘 연속 09:30 에 죽어 워치독이 살렸다
+    #   실패하면 원장이 통째로 안 바뀌므로 08-23 매출이 이틀간 화면에서 빠져 있었다.
+    #
+    #   그래서 **읽는 족족 접는다** — 일정량 쌓이면 그 자리에서 중복을 빼고 버린다.
+    #   결과는 전과 **완전히 같다**: keep="last" 는 나눠서 접어도 마지막 것이 이긴다
+    #   (읽는 순서를 그대로 보존하므로 각 키의 최종 승자가 바뀌지 않는다).
+    #
+    #   ★키를 여기서 **미리** 만들어 두는 게 핵심이다. `_dup_key_base` 는 금액 정제·
+    #     매장 개명·공백 제거를 자기 안에서 하므로, 아래 정제 **전에** 만들어도
+    #     정제 후에 만든 것과 글자 하나까지 같다. 그래서 순서를 바꿔도 안전하다.
+    FOLD_ROWS = 150_000     # 이만큼 쌓이면 접는다. 최고점 ≈ 누적(46만) + 이 값.
+
+    def _keyed(df: pd.DataFrame) -> pd.DataFrame:
+        """중복제거 키를 붙인다. 옛 master(순번 없음)는 0 으로 채운다 — 그 행들은
+        이미 옛 키로 1건씩만 남아 있어 신규 파일의 #0 과 정확히 맞물린다."""
+        if SEQ_COL not in df.columns:
+            df[SEQ_COL] = 0
+        df[SEQ_COL] = pd.to_numeric(df[SEQ_COL], errors="coerce").fillna(0).astype(int)
+        df["_key"] = _dup_key_base(df) + "#" + df[SEQ_COL].astype(str)
+        return df
+
+    combined = _keyed(master) if not master.empty else pd.DataFrame()
+    pending: list = []
+    pending_rows = read_rows = files_ok = 0
+
+    def _fold():
+        """쌓인 조각을 누적본에 접어 넣는다. 여기서 메모리가 다시 내려간다."""
+        nonlocal combined, pending, pending_rows
+        if not pending:
+            return
+        combined = pd.concat(([combined] if len(combined) else []) + pending,
+                             ignore_index=True)
+        combined = combined.drop_duplicates(subset=["_key"], keep="last")
+        pending = []
+        pending_rows = 0
+
     for f in csv_files:
         df = load_csv(f)
-        if df is not None:
-            # 파일명으로 소스(한국/중국) 자동 태깅
-            fname = Path(f).name.lower()
-            source = next(
-                (v for k, v in SOURCE_MAP.items() if fname.startswith(k)),
-                "한국",  # 기본값: 파일명 prefix 없으면 한국 어드민 데이터로 간주
-            )
-            df["소스"] = source
-            # ★순번은 **파일 단위**로 매겨야 한다. 전체를 합친 뒤에 매기면 겹쳐 들어온
-            #   같은 거래끼리도 #0 #1 로 갈라져 중복이 그대로 살아남는다.
-            df[SEQ_COL] = _assign_seq(df)
-            new_dfs.append(df)
-            _dup = int((df[SEQ_COL] > 0).sum())
-            print(f"  OK {Path(f).name}  ({len(df):,}건)  [{source}]"
-                  + (f"  동일키 {_dup:,}건 분리" if _dup else ""))
-        else:
+        if df is None:
             print(f"  NG {Path(f).name}  (인코딩 오류)")
+            continue
+        # 파일명으로 소스(한국/중국) 자동 태깅
+        fname = Path(f).name.lower()
+        source = next(
+            (v for k, v in SOURCE_MAP.items() if fname.startswith(k)),
+            "한국",  # 기본값: 파일명 prefix 없으면 한국 어드민 데이터로 간주
+        )
+        df["소스"] = source
+        # ★순번은 **파일 단위**로 매겨야 한다. 전체를 합친 뒤에 매기면 겹쳐 들어온
+        #   같은 거래끼리도 #0 #1 로 갈라져 중복이 그대로 살아남는다.
+        df[SEQ_COL] = _assign_seq(df)
+        _dup = int((df[SEQ_COL] > 0).sum())
+        print(f"  OK {Path(f).name}  ({len(df):,}건)  [{source}]"
+              + (f"  동일키 {_dup:,}건 분리" if _dup else ""))
+        files_ok += 1
+        read_rows += len(df)
+        pending.append(_keyed(df))
+        pending_rows += len(df)
+        if pending_rows >= FOLD_ROWS:
+            _fold()
+    _fold()
 
-    if not new_dfs:
+    if not files_ok:
         return
 
-    new_data = pd.concat(new_dfs, ignore_index=True)
-
-    combined = (
-        pd.concat([master, new_data], ignore_index=True)
-        if not master.empty
-        else new_data
-    )
+    removed = read_rows + len(master) - len(combined)
 
     # 금액 정제
     for col in ["상품 단가", "최종 결제 금액", "쿠폰 할인 금액"]:
@@ -238,21 +280,14 @@ def ingest():
         combined.loc[missing_unit, "결제 단위"] = combined.loc[missing_unit, "국가"].map(COUNTRY_CURRENCY)
     combined["결제 단위"] = combined["결제 단위"].fillna("KRW")
 
-    # 중복 제거 (결제일시+매장+상품+결제수단+승인번호 +파일 내 순번)
-    # ★순번을 왜 붙이는지는 파일 위쪽 SEQ_COL 주석 참고. 빼면 FREE·COIN 이 뭉개진다.
-    #   옛 master(순번 없음)를 읽었을 땐 0 으로 채운다 — 그 행들은 이미 옛 키로
-    #   1건씩만 남아 있어서 신규 파일의 #0 과 정확히 맞물린다(#1 이상은 새로 추가된다).
-    if SEQ_COL not in combined.columns:
-        combined[SEQ_COL] = 0
-    combined[SEQ_COL] = pd.to_numeric(combined[SEQ_COL], errors="coerce").fillna(0).astype(int)
-    combined["_key"] = _dup_key_base(combined) + "#" + combined[SEQ_COL].astype(str)
-    before = len(combined)
+    # 중복 제거(결제일시+매장+상품+결제수단+승인번호 +파일 내 순번)는 위에서
+    # **파일을 읽어 가며** 이미 끝냈다(_fold). 순번을 왜 붙이는지는 SEQ_COL 주석 참고 —
+    # 빼면 FREE·COIN 이 뭉개진다.
     # ★keep="last": 나중에 재수집된(=최신) 행이 이김 → 판매 후 발생한 취소·정정이 옛 행을 덮어씀.
-    #   (concat 순서가 [기존master, 신규]라 last=신규가 승리. 키 필드는 취소돼도 안 바뀌어 정확히 매칭됨.)
+    #   (읽는 순서가 [기존master, 파일 mtime 오름차순]이라 last=최신이 승리. 키 필드는
+    #    취소돼도 안 바뀌어 정확히 매칭됨.)
     #   과거엔 keep="first"라 취소 전 옛 행이 유지돼 취소가 영영 반영 안 됐음(대만 사례).
-    combined = combined.drop_duplicates(subset=["_key"], keep="last")
     combined = combined.drop(columns=["_key", "No"], errors="ignore")
-    removed = before - len(combined)
     if removed:
         print(f"  중복 제거(최신 우선): {removed:,}건")
 
