@@ -815,8 +815,15 @@ def _load_orig(mtime, cfg_mtime):
         return pd.DataFrame()
     try:
         df = pq.read_table(str(ORIG_FILE)).to_pandas(strings_to_categorical=True)
-    except Exception:
-        return pd.DataFrame()
+    except Exception as e:                            # noqa: BLE001
+        # ★빈 표를 조용히 돌려주면 '데이터가 없어요' 로만 보인다 (2026-08-24,
+        #   전수검사 low #6). 이 집계가 없어지면 사라지는 오리지널 2종은 최근
+        #   한 달 매출의 **54%** 다 — '아직 안 팔렸다' 와 '파일을 못 읽었다' 를
+        #   구분해 주지 않으면 절반이 빈 화면을 그대로 믿게 된다.
+        d = pd.DataFrame()
+        d.attrs["load_error"] = f"{type(e).__name__}: {e}"
+        print(f"[오리지널 집계 읽기 실패] {e}", flush=True)
+        return d
     df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
     df = df[df["날짜"].notna()]
     for col in ["건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인"]:
@@ -1187,8 +1194,14 @@ def _load_devices(mtime):
         d["국가코드"] = d["국가코드"].astype(str).str.lower().str.strip()
         d["설치일"] = pd.to_datetime(d["설치일"], errors="coerce")
         return d.reset_index(drop=True)
-    except Exception:
-        return pd.DataFrame()
+    except Exception as e:                            # noqa: BLE001
+        # ★스내피즘 쪽(views/0)은 진작 표식을 붙였는데 여기만 빠져 있었다
+        #   (2026-08-24, 전수검사 low #22). 이건 '1대당 매출' 의 **분모**다 —
+        #   비면 카드가 통째로 사라지거나 값이 튄다.
+        d = pd.DataFrame()
+        d.attrs["load_error"] = f"{type(e).__name__}: {e}"
+        print(f"[장비 목록 읽기 실패] {e}", flush=True)
+        return d
 
 
 def load_devices():
@@ -2546,6 +2559,11 @@ with tab_ip:
             _od = pd.DataFrame()
             if _orig_gubuns:
                 _od = load_orig()
+                # ★표식을 붙여 놨으면 **읽어야** 뜻이 있다(전수검사 low #22).
+                _oerr = getattr(_od, "attrs", {}).get("load_error")
+                if _oerr:
+                    st.error("오리지널 집계를 못 읽었어요 — 아래가 비어 보이는 건 "
+                             f"매출이 없어서가 아니에요. (원인: {_oerr})")
                 if not _od.empty and len(date_range) == 2:
                     _od = _od[(_od["날짜"] >= date_range[0]) & (_od["날짜"] <= date_range[1])]
                 if not _od.empty and sel_countries:
@@ -2683,7 +2701,7 @@ with tab_ip:
                     "· 한 줄이 **IP × 국가** 라 국가별로 나눠 보거나 피벗을 바로 돌릴 수 있어요\n"
                     "· 매출·건수는 **쉼표가 찍힌 숫자**로 들어가요(합계·수식 그대로 돼요)\n"
                     "· 건당 평균 · 국가 비중 · 매장수 · 첫/마지막 거래일도 같이 들어가요\n"
-                    "· 지금 화면의 **묶기 · 검색 · 기간 · 국가 · 매장** 조건이 그대로 반영돼요\n"
+                    "· 지금 화면의 **묶기 · 검색 · 기간 · 상품 · 구분 · 국가 · 매장** 조건이 그대로 반영돼요\n"
                     "· 시트가 **두 장**이에요 — `IP×국가` 와 "
                     "`테마·프레임`(줄을 눌러 보던 그 구성)\n"
                     "· 두 장은 출처가 달라요(원장 / CMS 프레임 리포트) — **더하지 마세요**")
@@ -2707,10 +2725,20 @@ with tab_ip:
                                help=_HELP if _CAN_DL else
                                "엑셀 다운로드는 팀장 권한이 있어야 해요."):
                     _d, _d2 = _slot_export(), _theme_export()
+                    # ★상품·IP구분도 적는다 (2026-08-24, 전수검사 low #7).
+                    #   이 두 필터는 내려받는 값에 **실제로 걸리는데** 첫 줄에는
+                    #   한 글자도 없었다 — 같은 기간·같은 묶기인데 상품만 달라도
+                    #   Box 2,796줄 ₩56.6억 ↔ Colored 545줄 ₩4.1억(13.9배)이라,
+                    #   파일 두 개를 나란히 놓으면 어느 쪽이 뭔지 알 길이 없었다.
+                    #   비어 있으면(=전체) 굳이 안 적는다 — 줄만 길어진다.
                     _cond = ("포토이즘 · 구좌별 상세  |  조회기간 "
                              + (f"{date_range[0]} ~ {date_range[1]}"
                                 if len(date_range) == 2 else "전체")
                              + f"  |  묶기 {_KEY}" + (f"  |  검색 '{_kw}'" if _kw else "")
+                             + (f"  |  상품 {', '.join(map(str, sel_brands))}"
+                                if sel_brands else "")
+                             + (f"  |  구분 {', '.join(map(str, sel_gubuns))}"
+                                if sel_gubuns else "")
                              + (f"  |  국가 {', '.join(sel_countries)}"
                                 if sel_countries else "")
                              + (f"  |  매장 {len(sel_stores)}곳 선택" if sel_stores else ""))
@@ -2941,6 +2969,10 @@ with tab_nat:
         # 분자·분모 모두 렌탈·팝업을 뺀다. 렌탈은 행사 기간만 도는 장비라 남겨두면
         # 분모가 계속 살아 있는 것으로 잡혀 대당 매출이 실제보다 낮게 나온다.
         _dev = load_devices()
+        _derr = getattr(_dev, "attrs", {}).get("load_error")
+        if _derr:
+            st.error("장비 목록을 못 읽었어요 — '1대당 매출'의 분모예요. "
+                     f"카드가 안 보이는 건 장비가 없어서가 아니에요. (원인: {_derr})")
         if not _dev.empty and len(date_range) == 2 and "국가코드" in sales.columns:
             _pkd = (date_range[1] - date_range[0]).days + 1
             # ★렌탈 제외는 **IP구분 기준**이다. 브랜드로만 거르면 IP구분='렌탈'인데

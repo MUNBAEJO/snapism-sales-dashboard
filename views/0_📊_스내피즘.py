@@ -1969,6 +1969,13 @@ with tab_nat:
 
         # ── 키오스크 1대당 매출 ────────────────────────────────
         _dev = load_devices()
+        # ★2026-08-20 에 표식(attrs['load_error'])을 붙였는데 **읽는 쪽이 없어서**
+        #   화면엔 영영 안 떴다(2026-08-24, 전수검사 low #22). 붙이기만 한 수정은
+        #   고친 게 아니다.
+        _derr = getattr(_dev, "attrs", {}).get("load_error")
+        if _derr:
+            st.error("장비 목록을 못 읽었어요 — '1대당 매출'의 분모예요. "
+                     f"카드가 안 보이는 건 장비가 없어서가 아니에요. (원인: {_derr})")
         if not _dev.empty and len(date_range) == 2:
             # 조회기간에 매출이 난 (국가, 매장) — '매출 발생 대수'의 근거.
             _sp = rev[["국가", "매장 이름"]].drop_duplicates()
