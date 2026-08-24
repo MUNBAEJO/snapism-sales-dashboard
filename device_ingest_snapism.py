@@ -36,10 +36,37 @@ def norm_key(s: str) -> str:
     return re.sub(r"[^0-9a-z가-힣一-鿿぀-ヿ]", "", s)
 
 
+
+def _latest_only(files, key):
+    """같은 대상의 날짜별 스냅샷 중 **가장 최근 것만** 남긴다.
+
+    ★파일명 끝 8자리(YYYYMMDD)가 수집일이다. 파일은 지우지 않는다 — 이력이
+      필요할 때가 있고, 되돌릴 여지도 남겨야 한다. 쓰는 것만 최신으로 고른다.
+    ★이번에 못 받은 대상은 지난번 파일이 그대로 쓰인다. 명부가 통째로 비는 것보다
+      낫지만 조용히 낡을 수 있어서, 어떤 날짜를 썼는지 아래에서 찍어 준다.
+    """
+    import re as _re
+    best = {}
+    for f in files:
+        m = _re.search(r"(\d{8})(?=\.[^.]+$)", f.name)
+        ymd = m.group(1) if m else ""
+        k = key(f)
+        if k not in best or ymd > best[k][0]:
+            best[k] = (ymd, f)
+    for k in sorted(best):
+        print(f"    {k}: {best[k][0]}")
+    return [v[1] for _, v in sorted(best.items())]
+
+
 def _read(pattern):
     files = sorted(DEV_DIR.glob(pattern))
     if not files:
         raise FileNotFoundError(f"{DEV_DIR}/{pattern} 없음. snapism_store_collect.py 먼저 실행하세요.")
+    # ★★사이트별로 **최신 수집분만** 쓴다 (2026-08-24). 전엔 날짜별 파일을 전부
+    #   concat 했다 — 중복 제거가 없어서 두 번째 수집을 돌리자마자 명부가
+    #   269 → 1,066 으로 불었다. 이건 '1대당 매출' 의 **분모**다.
+    print(f"  {pattern} 쓰는 스냅샷:")
+    files = _latest_only(files, lambda f: f.name.split("snapism_")[1][:2])
     out = []
     for f in files:
         x = pd.read_csv(f, dtype=str, encoding="utf-8-sig")

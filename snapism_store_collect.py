@@ -21,7 +21,9 @@ BASE_DIR    = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.json"
 DEST_DIR    = BASE_DIR / "data" / "devices"
 
-DEFAULT_SITES = ["kr"]
+# ★중국도 기본에 넣는다 (2026-08-24). 기본이 kr 뿐이라 스케줄러가 돌려도
+#   중국 명부는 영영 안 받았다 — 07-22 자 파일은 사람이 인자를 줘서 받은 것이다.
+DEFAULT_SITES = ["kr", "cn"]
 PAGE_DELAY = 3
 
 # 사이드바 메뉴 텍스트로 이동한다 — 경로가 바뀌어도 따라간다.
