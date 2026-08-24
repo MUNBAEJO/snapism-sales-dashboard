@@ -400,7 +400,28 @@ def make_panel():
     #   적어 둔 그 경우다 — 의도는 맞았는데 축을 잘못 골랐다.
     #   검색창 내용이 바뀌었을 때만 = 정말 '다른 건으로 옮겼을 때'만 다시 잡는다.
     _tsig = "‖".join(f"{b}:{st.session_state.get(f'tk_{b}', '')}" for b in sm.BRANDS)
-    _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}"
+    # ★★만들어 둔 PDF 를 버리는 기준에 **요율·파트너사·부가세**도 넣는다
+    #   (2026-08-24, 전수검사 low #12). 전엔 브랜드·티켓·타이틀·기간뿐이라,
+    #   정산서를 만든 뒤 ② 에서 요율 %만 고치고 💾 저장하면 `_sig` 가 그대로여서
+    #   **옛 요율로 만든 PDF 를 계속 들고 있었다.** 바로 위 ③ 금액 확인 KPI 는
+    #   새 요율로 다시 계산되니, 화면엔 새 금액이 뜨는데 첨부는 옛 문서였다.
+    #   그 상태로 '📧 보내기' 를 누르면 파트너사에 옛 요율 문서가 나간다.
+    #   ★저장값(get_rs/get_partner)을 축으로 쓴다 — PDF 를 만드는 sc.build_context
+    #     가 읽는 게 바로 그 값이라, 화면 위젯이 아니라 이쪽을 봐야 어긋나지 않는다.
+    def _rsig(b, tks):
+        out = []
+        for tk in tks:
+            try:
+                r = sc.get_rs(b, tk) or {}
+                p = sc.get_partner(b, tk) or {}
+            except Exception:                                   # noqa: BLE001
+                r, p = {}, {}
+            out.append(f"{tk}:{sorted(r.items(), key=str)}"
+                       f"/{p.get('agency_name','')}|{p.get('mgmt_name','')}"
+                       f"|{int(bool(p.get('vat', True)))}")
+        return ";".join(out)
+
+    _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}>{_rsig(b, tks)}"
                     for b, (tks, titles) in sorted(picks.items())) + f"‖{S}‖{E}"
     if st.session_state.get("_sig") != _sig:
         st.session_state["_sig"] = _sig
@@ -436,7 +457,18 @@ def make_panel():
                 need_save.append((b, t, tk))
         for tk in tks:                   # 체크를 뺀 타이틀은 확정도 푼다
             for t in sc.titles_for_ticket(b, tk):
-                if t not in titles:
+                # ★★`t in tmap` 을 반드시 같이 본다 (2026-08-24, 전수검사 low #11).
+                #   체크박스 목록은 **그 기간에 매출이 있는 타이틀**로만 만들어진다
+                #   (title_revenue 가 HAVING 매출액>0). 그래서 확정은 돼 있는데
+                #   이번 기간 매출이 0인 타이틀은 목록에 아예 안 뜨고, 그걸
+                #   '체크를 뺐다'로 읽어 **확정을 강제로 해제**하고 있었다.
+                #   게다가 need_save 가 남으면 '정산서 만들기' 가 잠기니, 실무자는
+                #   '확정' 을 누를 수밖에 없고 그 순간 매핑이 지워진다.
+                #   지금 데이터에선 후보로 되살아나 금액 영향이 0이지만, 후보로
+                #   안 잡히는 타이틀(접두어·표기가 지라 제목과 다른 것)이 걸리면
+                #   다음 정산에서 그 매출이 조용히 빠진다.
+                #   → **화면에 떠 있는데 체크를 뺀 것**만 해제한다.
+                if t not in titles and t in tmap:
                     need_save.append((b, t, None))
     if need_save and CAN_EDIT:
         if st.button(f"✔️ 위 구성으로 확정 ({len(need_save)}개 타이틀)",
