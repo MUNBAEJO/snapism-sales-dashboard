@@ -650,8 +650,10 @@ def _load_data(agg_mtime, cfg_mtime):
     # 현지통화 최댓값(VND 수백만)도 int32 상한(21.4억)에 한참 못 미친다.
     # ★취소금액·취소건수는 2026-07-30 집계에 추가된 열이다. 예전 집계 파일이 남아 있어도
     #   죽지 않게 없으면 0 으로 채운다(그 경우 취소 카드가 0원으로 나온다 → 재집계 안내).
+    #   `쿠폰코인건수` 도 나중에(2026-08-24, 전수검사 low #4) 붙은 열이라 같다 —
+    #   없으면 0 이 되고, 그 경우 아래 KPI 가 예전 식으로 버틴다.
     for col in ["건수", "최종 결제 금액", "쿠폰 할인 금액", "서비스코인",
-                "취소금액", "취소건수"]:
+                "취소금액", "취소건수", "쿠폰코인건수"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int32")
         else:
@@ -2058,7 +2060,12 @@ _dr = (f"{date_range[0]} ~ {date_range[1]}" if len(date_range) == 2 else "전체
 # 총매출 = 실결제(카드·현금) + 쿠폰·코인 정산분. ★취소는 음수 거래로 이미 차감돼 있다.
 pure_krw = int(sales["KRW환산금액"].sum())
 cc_krw = int((sales["쿠폰기여"] + sales["코인기여"]).sum())
-cc_cnt = int(sales[(sales["쿠폰기여"] > 0) | (sales["코인기여"] > 0)]["건수"].sum())
+# ★쿠폰·코인 **건수**는 집계본이 따로 세 준다(2026-08-24, 전수검사 low #4).
+#   `건수` 를 조건으로 걸러 더하면 집계 묶음이 통째로 딸려 와 30% 과대였다.
+#   집계본이 아직 그 열 없는 옛 파일이면 예전 식으로 버틴다 — 재집계 한 번이면 낫는다.
+_cc_exact = int(sales["쿠폰코인건수"].sum()) if "쿠폰코인건수" in sales.columns else 0
+cc_cnt = _cc_exact or int(
+    sales[(sales["쿠폰기여"] > 0) | (sales["코인기여"] > 0)]["건수"].sum())
 cancel_krw = int(sales["취소KRW"].sum())
 cancel_cnt = int(sales["취소건수"].sum())
 

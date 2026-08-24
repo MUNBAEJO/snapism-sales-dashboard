@@ -1968,8 +1968,29 @@ with tab_nat:
             per = pd.DataFrame()
             if not _dd.empty:
                 _dd["국가"] = _dd["국가코드"].map(CC_TO_NAT)
+                # ★★분자에서도 렌탈 매장을 뺀다 (2026-08-24, 전수검사 low #9).
+                #   분모는 진작 `_dev[~_dev["렌탈"]]` 로 렌탈을 빼고 있었는데 분자는
+                #   상단 필터만 걸린 rev 전체였다 — 카드 제목('팝업·렌탈 제외')과
+                #   도움말이 실제와 어긋나 있었다(실측 ₩694,000 · 한국 분자의 0.36%).
+                #   ★'렌탈 장비가 하나라도 있는 매장'이 아니라 **렌탈뿐인 매장**만 뺀다.
+                #     한 매장에 상시 장비와 렌탈 장비가 같이 있으면 상시분 매출까지
+                #     날아가 반대로 틀린다(분모에는 그 상시 장비가 남아 있다).
+                _rent = _dev[_dev["렌탈"]]
+                _rev_src = rev
+                if not _rent.empty and "매출매장명" in _rent.columns:
+                    def _keys(d):
+                        return set(zip(d["국가코드"].map(CC_TO_NAT),
+                                       d["매출매장명"].astype(str).str.strip()))
+                    _only_rent = _keys(_rent) - _keys(_dev[~_dev["렌탈"]])
+                    if _only_rent:
+                        _rk = list(zip(rev["국가"].astype(str).str.strip(),
+                                       rev["매장 이름"].astype(str).str.strip()))
+                        _drop = pd.Series([k in _only_rent for k in _rk],
+                                          index=rev.index)
+                        if _drop.any():
+                            _rev_src = rev[~_drop]
                 # 정산금액(실결제+쿠폰) 기준 — 다른 카드와 동일(rev).
-                _rev = (rev.groupby("국가")
+                _rev = (_rev_src.groupby("국가")
                         .agg(매출=("정산금액", "sum"), 건수=("정산금액", "size"))
                         .reset_index())
                 per = _dd.merge(_rev, on="국가", how="inner")

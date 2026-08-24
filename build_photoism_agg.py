@@ -19,6 +19,19 @@ from pathlib import Path
 
 import ip_classify  # IP구분/IP명 분류 공용 모듈
 import store_rules  # 테스트·본사 매장 가리기(장비 쪽과 같은 규칙)
+import photoism_rules  # 쿠폰·코인을 정산하는 나라(COUPON_CC/COIN_CC)
+
+# ── 쿠폰·코인을 '정산하는' 나라 (photoism_rules 와 한 곳에서) ──────────────
+# 아래 SQL 조각은 집계 쿼리(f-string) 안에서 쓴다. 나라 목록이 바뀌면
+# photoism_rules 만 고치면 되고, 다음 재집계에서 자동으로 따라온다.
+def _cc_in(names) -> str:
+    return ('LOWER(TRIM(CAST("국가코드" AS VARCHAR))) IN ('
+            + ",".join(f"'{c}'" for c in sorted(names)) + ")")
+
+
+_COUP_SQL = _cc_in(photoism_rules.COUPON_CC)
+_COIN_SQL = _cc_in(photoism_rules.COIN_CC)
+
 
 BASE_DIR      = Path(__file__).parent
 PARQ_IN       = BASE_DIR / "data" / "master_photoism.parquet"
@@ -140,6 +153,17 @@ def build_agg(con, parq: str):
                                                    AS BIGINT) AS "취소금액",
             CAST(COALESCE(SUM(CASE WHEN "_amt" < 0 THEN 1 ELSE 0 END),0)
                                                    AS BIGINT) AS "취소건수",
+            -- ★★쿠폰·코인이 **실제로 붙은 거래 수** (2026-08-24, 전수검사 low #4).
+            --   전엔 화면이 `건수` 를 조건으로 걸러 더했다: 집계 한 행은 (날짜×국가×
+            --   매장×타이틀×구좌…) 묶음이라 그 묶음에 쿠폰 거래가 **하나만** 있어도
+            --   묶음 전체 건수가 더해졌다 — 실측 20,448건(원장 실제 15,683건, 30.4%
+            --   과대). 금액(쿠폰기여+코인기여)은 맞고 건수만 틀렸다.
+            --   ★나라 규칙을 여기서 적용한다. `국가코드` 가 묶음 키라 한 묶음 안에서는
+            --     규칙이 변하지 않으므로, 화면은 나눌 것 없이 그냥 더하면 된다.
+            CAST(COALESCE(SUM(CASE WHEN "_amt" >= 0 AND (
+                     (COALESCE("_cpn",0)  > 0 AND {_COUP_SQL})
+                  OR (COALESCE("_coin",0) > 0 AND {_COIN_SQL})
+                 ) THEN 1 ELSE 0 END),0)            AS BIGINT) AS "쿠폰코인건수",
             CAST(COALESCE(SUM("_amt"),0)           AS BIGINT) AS "최종 결제 금액",
             CAST(COALESCE(SUM("_cpn"),0)           AS BIGINT) AS "쿠폰 할인 금액",
             CAST(COALESCE(SUM("_coin"),0)          AS BIGINT) AS "서비스코인"
@@ -159,7 +183,7 @@ def build_agg(con, parq: str):
             --   가짜 IP 로 화면에 뜬다(기존 pandas 방식의 잠복 버그).
             COALESCE(m."v", NULLIF(TRIM(g."IP명_raw"), ''), '') AS "_ip",
             g."날짜코드" AS "_date", g."접두어" AS "_pfx",
-            g."건수", g."취소금액", g."취소건수",
+            g."건수", g."취소금액", g."취소건수", g."쿠폰코인건수",
             g."최종 결제 금액", g."쿠폰 할인 금액", g."서비스코인"
         FROM grouped g
         LEFT JOIN alias_map m ON TRIM(g."IP명_raw") = m."k"
@@ -177,6 +201,7 @@ def build_agg(con, parq: str):
         CAST(SUM("건수")           AS BIGINT) AS "건수",
         CAST(SUM("취소금액")       AS BIGINT) AS "취소금액",
         CAST(SUM("취소건수")       AS BIGINT) AS "취소건수",
+        CAST(SUM("쿠폰코인건수")   AS BIGINT) AS "쿠폰코인건수",
         CAST(SUM("최종 결제 금액") AS BIGINT) AS "최종 결제 금액",
         CAST(SUM("쿠폰 할인 금액") AS BIGINT) AS "쿠폰 할인 금액",
         CAST(SUM("서비스코인")     AS BIGINT) AS "서비스코인"
