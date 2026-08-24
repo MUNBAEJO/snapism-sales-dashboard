@@ -676,6 +676,17 @@ def load_devices():
     return _load_devices(_m)
 
 
+def _dev_asof():
+    """장비 명부 parquet 을 **언제 만들었나**. 1대당 매출 카드에 적어 준다.
+
+    ★파일 수정시각을 쓴다 — 명부 안에는 '이 명부가 언제 것인지' 를 알려 주는
+      열이 없다(시작일 최댓값은 마지막으로 문 연 매장 날짜지 수집일이 아니다)."""
+    try:
+        return date.fromtimestamp(DEVICE_FILE.stat().st_mtime)
+    except Exception:
+        return None
+
+
 def device_days(dev, p0, p1, sold=None):
     """국가코드별 '대·일'(가동 키오스크 × 실가동일수)·대수·기간 내 신규/종료.
 
@@ -2006,8 +2017,20 @@ with tab_nat:
                 per = per.sort_values("대당월", ascending=False)
 
             if not per.empty:
-                with card("🎰 키오스크 1대당 매출 <span class='muted'>(팝업·렌탈 제외)</span>",
-                          key="scard-perkiosk"):
+                # ★분모가 **언제 받은 명부**인지 적는다 (2026-08-24, 전수검사 low #10).
+                #   분자(매출)는 매일 갱신되는데 이 명부는 갱신 작업 자체가 없어
+                #   2026-07-22 에 한 달 넘게 멈춰 있었다 — 새로 문 연 매장이 분모에
+                #   없으니 '1대당 매출' 이 조용히 부풀었고 화면은 그걸 안 알렸다.
+                #   지금은 주 1회 갱신하지만(scheduler.run_device_refresh), 그것도
+                #   멈출 수 있으니 오래되면 화면에서 보이게 둔다.
+                _devd = _dev_asof()
+                _stale = (_devd is not None
+                          and (date.today() - _devd).days > 10)
+                _dsub = (f" <span class='muted'>· 장비 명부 {_devd:%Y-%m-%d} 기준"
+                         + ("  ⚠️ 오래됐어요" if _stale else "") + "</span>"
+                         ) if _devd else ""
+                with card("🎰 키오스크 1대당 매출 <span class='muted'>(팝업·렌탈 제외)</span>"
+                          + _dsub, key="scard-perkiosk"):
                     # ★표본 하한 — 몇 대뿐인 나라는 매장 하나 성적이 그대로 국가 대표값이 돼
                     #   1위로 튄다(포토이즘에서 4대짜리 영국이 1위였다). 3대 고정은 한국 1,600대
                     #   옆에서 너무 얕아 최대 보유국의 1%(최소 3대)로 규모에 맞춘다.

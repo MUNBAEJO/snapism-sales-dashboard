@@ -435,6 +435,59 @@ def run_sm_backfill_once():
         log(f"SM PICK 백필 오류: {e}")
 
 
+# ── 장비 목록 갱신 (1대당 매출의 **분모**) ────────────────────────────────
+# ★★2026-08-24 추가 (전수검사 low #10·#21). 그전까지 이 목록은 **자동 갱신이
+#   아예 없었다** — data/devices/ 의 파일이 전부 2026-07-22 자 한 번 받은 것이고,
+#   그 뒤 한 달 넘게 새로 문 연 매장이 분모에 안 들어갔다. 분자(매출)는 매일
+#   갱신되니 **분자만 늘고 분모는 그대로** 인 상태로 '1대당 매출' 이 계속 부풀었다.
+#   화면은 그게 오래된 값인지 알려 주지도 않았다.
+#
+# 왜 주 1회인가: 장비 명부는 하루 단위로 변하지 않는다. 반면 이 수집은 국가마다
+#   로그인해서 엑셀을 받아 오는 거라 CMS 에 부담이 간다(device_collect 자체도
+#   국가 사이에 대기를 둔다). 매출 수집과 시간대를 벌려 수요일 새벽에 둔다.
+DEVICE_JOBS = [
+    ("포토이즘 장비 수집",   "device_collect.py",         1800),
+    ("포토이즘 장비 정규화", "device_ingest.py",           600),
+    ("스내피즘 매장 수집",   "snapism_store_collect.py",  1800),
+    ("스내피즘 장비 정규화", "device_ingest_snapism.py",   600),
+]
+
+
+def run_device_refresh():
+    """장비·매장 명부를 다시 받아 parquet 까지 새로 만든다."""
+    log("=== 장비 목록 갱신 시작 ===")
+    bad = []
+    for name, script, tmo in DEVICE_JOBS:
+        try:
+            r = subprocess.run(
+                [sys.executable, str(BASE_DIR / script)],
+                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=tmo,
+            )
+            tail = (r.stdout or "").strip().splitlines()[-1:] or ["(출력 없음)"]
+            log(f"  {name}: exit {r.returncode} · {tail[0][:160]}")
+            if r.returncode != 0:
+                bad.append(f"{name}(exit {r.returncode})")
+                # ★수집이 실패했으면 정규화를 돌려 봐야 옛 파일만 다시 굽는다.
+                #   그 자리에서 멈춰야 '갱신됐다'는 착각이 안 생긴다.
+                if script.endswith("_collect.py"):
+                    log(f"  → {name} 이 실패해서 뒤따르는 정규화는 건너뜁니다.")
+                    break
+        except subprocess.TimeoutExpired:
+            bad.append(f"{name}(타임아웃)")
+            log(f"  {name}: 타임아웃({tmo}초)")
+            break
+        except Exception as e:                                  # noqa: BLE001
+            bad.append(f"{name}({type(e).__name__})")
+            log(f"  {name}: 실행 오류 {type(e).__name__}: {str(e)[:160]}")
+            break
+    if bad:
+        # 다음 주까지 재시도가 없다 — 알리지 않으면 또 한 달이 조용히 지나간다.
+        fail("장비 목록 갱신",
+             "실패: " + " · ".join(bad)
+             + " — '1대당 매출'의 분모가 옛 명부 그대로입니다.")
+    else:
+        log("=== 장비 목록 갱신 완료 ===")
+
 LOG_MAX_MB = 5      # 이보다 커지면 넘긴다
 LOG_KEEP = 3        # 보관 세대 수 (.1 ~ .3)
 
@@ -517,6 +570,8 @@ def main():
     # 커버리지 점검 — 포토이즘 크롤(09:00~09:15)과 재시도(+1h)까지 끝난 뒤에 본다.
     schedule.every().day.at("11:00").do(run_coverage_audit)
     schedule.every().day.at("04:30").do(run_log_rotation)   # 수집이 안 도는 시간대
+    # 장비 목록 — 주 1회. 월요일은 딥 재수집(02:00·05:00)이 이미 물려 있어 수요일로.
+    schedule.every().wednesday.at("03:00").do(run_device_refresh)
     if not SM_BACKFILL_FLAG.exists():                              # [1회성] SM PICK 백필
         schedule.every().day.at("00:00").do(run_sm_backfill_once)
         log("→ [1회성] SM PICK 백필 예약됨: 오늘 자정 00:00 (완료 후 자동 비활성)")
