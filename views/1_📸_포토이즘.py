@@ -781,23 +781,36 @@ def _sidebar_options(agg_mtime):
 
     # 노출 대상 구분만 — '제외'·스티커머신의 IP명이 필터 목록에 남지 않게.
     # (렌탈은 2026-08-04 부터 노출 대상이라 여기 포함된다)
-    nonex = d[d["IP구분"].isin(ip_classify.IP_GUBUN_SHOWN)]
+    #
+    # ★★여기서 다시 거르지 않는다 (2026-08-24). 전엔
+    #     nonex = d[d["IP구분"].isin(IP_GUBUN_SHOWN)]
+    #   였는데, `_load_data` 가 **이미 같은 조건으로 걸러서** 준다 — 즉 한 행도 안
+    #   줄면서 14열 × 711만행을 통째로 복사했다(380MB). 실서버가 그 자리에서 죽었다:
+    #   `Unable to allocate 380. MiB ... (14, 7118824) int32`.
+    #   아래 반복문은 더 나빴다 — `nonex[nonex["IP구분"] == g]` 를 구분 수만큼
+    #   돌려 **복사를 여섯 번 더** 했다.
+    # ★필요한 건 (구분, IP명) 짝과 (국가, 매장) 짝뿐이다. 두 열만 뽑아 중복을 지우면
+    #   711만행이 수천 행으로 줄어든다 — 큰 프레임을 만질 일이 아예 없어진다.
+    def _clean(vals):
+        return sorted(v for v in (str(x) for x in vals)
+                      if v.strip() and v not in ("nan", ""))
 
-    def ip_list(frame):
-        return sorted(
-            v for v in (str(x) for x in frame["IP명"].dropna().unique())
-            if v.strip() and v not in ("nan", "")
-        )
-
-    ipmap = {"_ALL": ip_list(nonex)}
+    # ★결측 처리는 예전 식과 **정확히 같게** 맞춘다 — 여기서 한 칸 어긋나면
+    #   필터 목록에서 IP·매장이 조용히 사라진다.
+    _ip = d[["IP구분", "IP명"]].dropna(subset=["IP명"]).drop_duplicates()
+    _ip["IP구분"] = _ip["IP구분"].astype(str)
+    _ip["IP명"] = _ip["IP명"].astype(str)
+    ipmap = {"_ALL": _clean(_ip["IP명"].unique())}
     for g in ip_classify.IP_GUBUN_ORDER:
-        ipmap[g] = ip_list(nonex[nonex["IP구분"] == g])
+        ipmap[g] = _clean(_ip.loc[_ip["IP구분"] == g, "IP명"].unique())
 
     # 국가 → 매장 목록 (매장 필터를 선택 국가로 좁히기용)
-    sbc = {}
-    for c, grp in d.groupby("국가", observed=True):
-        vals = sorted(str(v) for v in grp["매장 이름"].dropna().unique())
-        sbc[str(c)] = [v for v in vals if v not in ("", "nan")]
+    # ★국가는 안 지운다 — 그 나라 매장이 전부 결측이어도 **키는 있어야** 한다
+    #   (예전 groupby 는 모든 국가를 돌면서 빈 목록을 넣어 줬다).
+    _st = d[["국가", "매장 이름"]].drop_duplicates()
+    _st["국가"] = _st["국가"].astype(str)
+    sbc = {c: _clean(g["매장 이름"].dropna())
+           for c, g in _st.groupby("국가", observed=True)}
 
     return {
         "countries": uniq("국가"),
