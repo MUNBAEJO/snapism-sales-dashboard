@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auth
 import settlement_calc as sc
 import theme_pick as tp  # 테마 축 · 멤버 축
+import member_match as mm  # 멤버 한/영 로마자 추천
 import settlement_fx as fx
 import settlement_mail as smail
 import settlement_map as sm
@@ -774,15 +775,42 @@ def make_panel():
     _un = sc.unmapped_names(_mem_all)
     if _un:
         _en = [m for m in sorted(set(_mem_all)) if m not in _un]
+        # ★로마자로 '짐작' 한 추천을 얹는다 — 단, **저장은 사람이 한다**(name_alias 철학).
+        #   로마자가 정확히 일치하는 짝만 '강함' 으로 미리 채우고 일괄 저장에 넣고,
+        #   나머지는 '확인 필요' 로만 보여 주고 기본값은 (고르기) 그대로 둔다. 추천이
+        #   틀려도 저장 전이라 매출이 조용히 옮겨 가지 않는다. (2026-08-24)
+        try:
+            _sug = mm.suggest(_un, _en)
+        except Exception:                                      # noqa: BLE001
+            _sug = {}
+        _strong = {k: v["en"] for k, v in _sug.items() if v.get("strong")}
         with st.expander(f"🔤 멤버 이름 정리 필요 {len(_un)}명 — 한글·영문이 "
                          "따로 잡혀 있어요", expanded=False):
             st.caption("같은 사람인데 한글 이름과 영문 이름이 각각 한 명으로 세어져요. "
                        "짝을 맞춰 두면 다음 발행부터 한 열로 합쳐져요. "
                        "**절사가 멤버 단위라 금액도 조금 달라져요.**")
+            if _strong and CAN_EDIT:
+                _cA, _cB = st.columns([3, 2])
+                if _cA.button(f"✅ 추천 {len(_strong)}명 한 번에 저장 "
+                              "(로마자 정확 일치)", key="mal_bulk"):
+                    for _k, _e in _strong.items():
+                        sc.set_member_alias(_k, _e)
+                    st.success(f"{len(_strong)}명 저장했어요.")
+                    st.rerun()
+                _cB.caption("아래에서 하나씩 확인해 저장해도 돼요.")
             for _i, _ko in enumerate(_un[:30]):
+                _s = _sug.get(_ko)
                 c1, c2, c3 = st.columns([2, 3, 1])
-                c1.markdown(f"**{_ko}**")
-                _pick = c2.selectbox("영문 이름", ["(고르기)"] + _en,
+                _lbl = f"**{_ko}**"
+                if _s:
+                    _lbl += (f"　↔ `{_s['en']}`"
+                             + ("" if _s.get("strong") else " · 확인 필요"))
+                c1.markdown(_lbl)
+                _opts = ["(고르기)"] + _en
+                # 강한 추천만 미리 고른다. 약한 추천은 라벨로만 알리고 기본은 (고르기).
+                _idx = (_opts.index(_s["en"]) if (_s and _s.get("strong")
+                                                  and _s["en"] in _opts) else 0)
+                _pick = c2.selectbox("영문 이름", _opts, index=_idx,
                                      key=f"mal_{_ko}", label_visibility="collapsed")
                 if c3.button("저장", key=f"malb_{_ko}", disabled=not CAN_EDIT
                              or _pick == "(고르기)"):
