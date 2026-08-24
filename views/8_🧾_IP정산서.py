@@ -30,6 +30,7 @@ from streamlit.errors import StreamlitAPIException
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auth
 import settlement_calc as sc
+import theme_pick as tp  # 테마 축 · 멤버 축
 import settlement_fx as fx
 import settlement_mail as smail
 import settlement_map as sm
@@ -353,16 +354,30 @@ def _rev_index(brand):
 # ★키에 dataver 를 반드시 넣는다. 대외 문서를 만드는 화면이라 캐시가 옛 매출을
 #   물고 있으면 slow 보다 훨씬 나쁘다.
 @st.cache_data(ttl=900, max_entries=16, show_spinner=False)
-def _members_cached(brand, titles_key, start, end, dataver):
+def _members_cached(brand, titles_key, start, end, dataver, frames_key=None):
     """멤버 이름 목록 — 매핑 안내용. 키에 dataver 를 넣는 이유는 아래와 같다."""
-    return sc.member_names(brand, list(titles_key), start, end)
+    return sc.member_names(brand, list(titles_key), start, end,
+                           frames=list(frames_key) if frames_key is not None else None)
 
 
 @st.cache_data(ttl=900, max_entries=16, show_spinner=False)
-def _detail_cached(brand, titles_key, start, end, fx_key, dataver):
+def _axes_cached(titles_key, start, end, dataver):
+    """테마 축 · 멤버 축 목록. 테마 수집본(theme_daily)에서 뽑는다.
+
+    ★원장에는 테마가 없다 — 대·중·소분류는 매장 유형이다. 테마는 CMS 테마
+      수집본에만 있고, 두 곳 금액이 (타이틀×국가×프레임) 단위로 0.0012% 안에서
+      맞는다(2026-07 전량 대조). 그래서 **고를 것은 테마본이 정하고 금액은 원장이 낸다.**
+    """
+    return tp.axes(list(titles_key), start, end)
+
+
+@st.cache_data(ttl=900, max_entries=16, show_spinner=False)
+def _detail_cached(brand, titles_key, start, end, fx_key, dataver, frames_key=None):
     rates, _, _ = _rates(end, fx_key)
-    return sc.fill_open(sc.country_detail(brand, list(titles_key), start, end, rates),
-                        sc.open_countries(brand, start, end))
+    return sc.fill_open(
+        sc.country_detail(brand, list(titles_key), start, end, rates,
+                          frames=list(frames_key) if frames_key is not None else None),
+        sc.open_countries(brand, start, end))
 
 
 @st.cache_data(ttl=900, max_entries=16, show_spinner=False)
@@ -382,6 +397,57 @@ def make_panel():
     if not any(t for t, _ in picks.values()):
         st.info("위에 티켓번호나 IP명을 넣어 주세요. 포토이즘·스내피즘 중 한쪽만 있어도 돼요.")
         return
+
+
+    # ── 테마 · 멤버로 좁히기 ───────────────────────────────────────────
+    # ★★한 타이틀 안에서 **테마 축**과 **멤버(프레임) 축**을 따로 고른다
+    #   (2026-08-24, 사용자 확정). 트리로 파고들지 않는 이유:
+    #   테마의 뜻이 타이틀마다 다르다 — `260710 에이티즈` 는 테마가 곧 멤버지만
+    #   `260505 코르티스` 는 테마 5(버전) × 멤버 5 의 **격자**라, 트리로 그리면
+    #   같은 멤버를 다섯 번 체크해야 한다. 금액의 86.4% 가 격자 쪽이다.
+    # ★기본은 두 축 다 '전체' 다. 그러면 아래로 넘어가는 frames 가 None 이 되어
+    #   **지금까지와 1원도 다르지 않다**(검증 기준). 실제로 세 타이틀에서 확인함.
+    frames_by_brand = {}
+    _axes_by_brand = {}
+    for b, (tks, titles) in picks.items():
+        if not titles:
+            continue
+        ax = _axes_cached(tuple(titles), S, E, sc.data_version())
+        _axes_by_brand[b] = ax
+        if not ax["frames"]:
+            continue                      # 테마 수집 대상이 아닌 IP — 축을 안 그린다
+        _thn = [x["이름"] for x in ax["themes"]]
+        _frn = [x["이름"] for x in ax["frames"]]
+        _amt = {x["이름"]: x["금액"] for x in ax["frames"]}
+        with st.expander(
+                f"{sm.BRAND_LABEL.get(b, b)} — 테마 · 멤버로 좁히기"
+                f"  ({len(_thn)}개 테마 · {len(_frn)}명)", expanded=False):
+            st.caption("비워 두면 **전체**예요. 테마와 멤버를 같이 고르면 겹치는 것만 잡아요.")
+            c1, c2 = st.columns(2)
+            with c1:
+                _th = st.multiselect("테마", _thn, default=[], key=f"pk_th_{b}",
+                                     format_func=lambda x: x)
+            with c2:
+                _fr = st.multiselect("멤버", _frn, default=[], key=f"pk_fr_{b}",
+                                     format_func=lambda x: f"{x}  ({_amt.get(x, 0):,})")
+            r = tp.resolve(titles, S, E,
+                           sel_themes=_th or None, sel_frames=_fr or None)
+            if r["frames"] is not None:
+                frames_by_brand[b] = r["frames"]
+                st.caption(f"고른 멤버 {len(r['frames'])}명 — "
+                           + (", ".join(r["frames"][:8]) or "없음")
+                           + (" 외" if len(r["frames"]) > 8 else ""))
+            # ★★비율로 나눠 담지 않는다. 원장에는 테마가 없어서 한 멤버가 여러 테마에
+            #   걸쳐 있으면 **반쪽만 가져올 방법이 없다.** 조용히 반올림하면 대외 문서가
+            #   틀린다 — 그래서 그대로 알려 주고 사람이 정하게 한다.
+            if r["straddling"]:
+                _tot = sum(x["전체 금액"] for x in r["straddling"])
+                st.warning(
+                    f"이 {len(r['straddling'])}명은 고른 테마와 다른 테마에 **걸쳐 있어요** — "
+                    f"원장에는 테마가 없어서 반쪽만 떼어낼 수가 없어요(합 {_tot:,}). "
+                    "멤버 축에서 직접 고르거나, 테마를 다 골라 주세요.\n\n"
+                    + " · ".join(f"{x['이름']} {x['고른 테마 금액']:,}/{x['전체 금액']:,}"
+                                 for x in r["straddling"][:6]))
 
     # ── 대상이 바뀌면 앞 건의 흔적을 지운다 ────────────────────────────
     # ★★안 지우면 **다른 IP 문서를 그대로 물고 간다**(2026-08-13 발견).
@@ -421,7 +487,10 @@ def make_panel():
                        f"|{int(bool(p.get('vat', True)))}")
         return ";".join(out)
 
+    # ★고른 멤버도 축에 넣는다 — 안 넣으면 대상을 좁혀 놓고 '만들기' 를 다시 안 눌렀을 때
+    #   **넓은 범위로 만든 옛 PDF** 가 그대로 첨부된다(low #12 와 같은 병).
     _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}>{_rsig(b, tks)}"
+                    f">{','.join(frames_by_brand.get(b) or [])}"
                     for b, (tks, titles) in sorted(picks.items())) + f"‖{S}‖{E}"
     if st.session_state.get("_sig") != _sig:
         st.session_state["_sig"] = _sig
@@ -622,7 +691,9 @@ def make_panel():
     for b, (tks, titles) in picks.items():
         if not tks or not titles:
             continue
-        d = _detail_cached(b, tuple(titles), S, E, fx.version(), sc.data_version())
+        _fk = frames_by_brand.get(b)
+        d = _detail_cached(b, tuple(titles), S, E, fx.version(), sc.data_version(),
+                           tuple(_fk) if _fk is not None else None)
         if d.empty:                 # 그 기간 매출 행이 없으면 문서에도 안 들어간다
             continue
         shown.append(b)
@@ -775,7 +846,8 @@ def make_panel():
             # 티켓 목록을 그대로 넘긴다 — build_context 가 타이틀을 합쳐 한 장으로 만든다.
             ctx = sc.build_context({b: t for b, (t, _) in picks.items() if t},
                                    S, E, ipn, RATES, EFF or E,
-                                   date.today().isoformat(), SRC)
+                                   date.today().isoformat(), SRC,
+                                   frames=frames_by_brand)
             # ★★먼저 만들어 보고, 성공했을 때만 발행 기록을 남긴다 (2026-08-05).
             #   전엔 record_issue 가 앞에 있어서, 한 부도 못 만들어도 버전이 올라갔다.
             #   실제로 대한축구협회가 v1~v4 까지 쌓이는 동안 PDF 는 0부였다.

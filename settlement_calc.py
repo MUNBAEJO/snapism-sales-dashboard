@@ -266,11 +266,23 @@ def _title_map(start: str, end: str) -> dict:
     return out
 
 
-def _title_pred(titles: list[str], start: str, end: str) -> str:
+def _title_pred(titles: list[str], start: str, end: str,
+                frames=None) -> str:
     """원거래를 그 타이틀의 행으로 좁히는 WHERE 조각. 근거는 `_title_map` 주석 참고.
 
     타이틀명으로 잡고, **타이틀명이 빈 행은 프레임 이름으로** 잡는다.
     둘 다 값 목록이라 parquet 단계에서 걸러진다.
+
+    frames — 고른 멤버(프레임 이름) 목록. **None 이면 안 거른다**(=전부).
+      ★★`None` 과 `[]` 는 다르다. None = 축을 안 건드림, [] = 하나도 안 고름.
+        섞이면 '전부'가 '아무것도 아님'이 돼 문서가 0원으로 나온다.
+      ★여기 한 곳만 고치면 아래 5개 쿼리(국가별 상세·멤버 목록·멤버 피벗·단가표·
+        취소차감)에 한꺼번에 먹는다. 쿼리마다 따로 붙이면 한 곳을 빠뜨렸을 때
+        같은 문서 안에서 금액과 수량이 서로 다른 모집단이 된다.
+      ★BASIC 구좌는 `프레임 이름` 이 멤버가 아니라 타이틀 문자열이다
+        (`L 260601 빤쮸토끼`). 그래서 멤버를 골라 좁히면 BASIC 분은 자연히 빠진다 —
+        멤버가 없는 매출이라 어느 멤버에게도 붙일 수 없으니 그게 맞다.
+        빠지는 금액은 화면(② 무엇을 정산할지)이 미리보기로 보여 준다.
     """
     if not titles:
         return "AND FALSE"
@@ -289,6 +301,11 @@ def _title_pred(titles: list[str], start: str, end: str) -> str:
                      f' AND CAST("프레임 이름" AS VARCHAR) IN ({_sqlist(sorted(fr))}))')
     if not parts:
         return "AND FALSE"
+    if frames is not None:
+        if not frames:
+            return "AND FALSE"
+        return (f"AND (({' OR '.join(parts)}))"
+                f' AND CAST("프레임 이름" AS VARCHAR) IN ({_sqlist(sorted(frames))})')
     return "AND (" + " OR ".join(parts) + ")"
 
 
@@ -404,7 +421,7 @@ def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
 
 # ── 국가별 상세 ────────────────────────────────────────────────────────────
 def country_detail(brand: str, titles: list[str], start: str, end: str,
-                   rates: dict) -> pd.DataFrame:
+                   rates: dict, frames=None) -> pd.DataFrame:
     """국가 · 통화 · 수량 · 현지매출 · 매출(KRW). 수량은 현지통화끼리 나눈다."""
     if not titles:
         return pd.DataFrame(columns=["국가", "unit", "수량", "현지", "매출액", "건수"])
@@ -431,7 +448,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
               --   장비 목록은 진작 빼고 있었는데 매출만 남아
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
-                    {_title_pred(titles, start, end)}
+                    {_title_pred(titles, start, end, frames)}
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
@@ -605,7 +622,7 @@ def unmapped_members(*pivots) -> list[str]:
     return sorted(out)
 
 
-def member_names(brand: str, titles: list[str], start: str, end: str) -> list[str]:
+def member_names(brand: str, titles: list[str], start: str, end: str, frames=None) -> list[str]:
     """그 타이틀들의 **멤버 이름만** (정규화 후, 금액 안 셈). 매핑 화면용.
 
     ★`member_pivot` 을 부르면 금액 배분까지 돌아 무겁다. 이름만 필요하므로
@@ -622,7 +639,7 @@ def member_names(brand: str, titles: list[str], start: str, end: str) -> list[st
                 FROM read_parquet('{PH_RAW.as_posix()}')
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                   {store_rules.not_test_sql()}
-                  {_title_pred(titles, start, end)}
+                  {_title_pred(titles, start, end, frames)}
                   {_gubun_filter()}
             """
         else:
@@ -733,7 +750,7 @@ def _allocate(df: "pd.DataFrame", targets: dict | None = None) -> "pd.Series":
 
 def member_pivot(brand: str, titles: list[str], start: str, end: str,
                  rates: dict,
-                 targets: dict | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+                 targets: dict | None = None, frames=None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """국가 × 멤버의 **(수량, 매출KRW)** 두 표. 두 브랜드 다 나온다 —
     포토이즘은 '프레임 이름', 스내피즘은 '상품 이름' 이 멤버다.
 
@@ -765,7 +782,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
               --   장비 목록은 진작 빼고 있었는데 매출만 남아
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
-                    {_title_pred(titles, start, end)}
+                    {_title_pred(titles, start, end, frames)}
                     {_gubun_filter()}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
@@ -820,7 +837,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                                        fill_value=0)
 
 
-def price_table(brand: str, titles: list[str], start: str, end: str) -> pd.DataFrame:
+def price_table(brand: str, titles: list[str], start: str, end: str, frames=None) -> pd.DataFrame:
     """국가별 평균 단가. 스내피즘은 **상품 형태마다 단가가 다르다** → 형태까지 쪼갠다.
     ★0원 거래는 평균에서 뺀다(AVG(NULLIF(...,0))). 넣으면 실제보다 낮아진다."""
     if not titles:
@@ -837,7 +854,7 @@ def price_table(brand: str, titles: list[str], start: str, end: str) -> pd.DataF
               --   장비 목록은 진작 빼고 있었는데 매출만 남아
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
-                  {_title_pred(titles, start, end)}
+                  {_title_pred(titles, start, end, frames)}
                   {_gubun_filter()}
                   AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 GROUP BY 1,3
@@ -945,7 +962,7 @@ def set_partner(brand: str, ticket: str, agency_name: str, mgmt_name: str,
 
 
 def cancel_amount(brand: str, titles: list[str], start: str, end: str,
-                  rates: dict) -> int:
+                  rates: dict, frames=None) -> int:
     """그 기간 취소 금액(원화, 양수). 정산서 표지에 '취소 금액'으로 적는다.
 
     취소는 음수 거래로 들어온다. 매출액에는 이미 차감돼 있고, 이 값은
@@ -979,7 +996,7 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
               --   장비 목록은 진작 빼고 있었는데 매출만 남아
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
-                  {_title_pred(titles, start, end)} {_gubun_filter()}
+                  {_title_pred(titles, start, end, frames)} {_gubun_filter()}
                   AND CAST("최종 결제 금액" AS BIGINT) < 0"""
         else:
             q = f"""
@@ -1062,14 +1079,22 @@ def store_versions() -> tuple[float, float, float]:
 
 def build_context(picks: dict, start: str, end: str, ip_name: str,
                   rates: dict, rate_date: str, issued: str,
-                  rate_source: str = "") -> dict:
+                  rate_source: str = "", frames: dict | None = None) -> dict:
     """PDF 한 부를 만드는 데 필요한 값을 한 번에 모은다.
 
     picks = {brand: ticket 또는 [ticket, ...]}.
     ★티켓을 여러 장 넘길 수 있다 — 한 IP를 회차별로 나눠 등록한 경우 합쳐서 한 장으로
       정산해야 한다. 타이틀은 전부 합치고 요율·MG 는 첫 티켓 기준으로 잡는다
       (요율이 서로 다르면 화면에서 미리 경고한다).
+
+    frames — {브랜드: [프레임 이름]} · 그 브랜드에서 **고른 멤버만** 정산한다.
+      화면 ① 의 '테마 · 멤버로 좁히기' 에서 넘어온다. 브랜드가 빠져 있거나 값이
+      None 이면 그 브랜드는 **전부**다(지금 동작 그대로).
+      ★한 문서 안에서 금액·수량·단가·취소가 전부 같은 모집단이어야 하므로 아래
+        네 갈래(country_detail·member_pivot·price_table·cancel_amount)에 **같은 값**을
+        넘긴다. 한 곳만 빠뜨리면 표끼리 안 맞는 문서가 나간다.
     """
+    _fr = frames or {}
     ctx = {"ip": ip_name, "start": start, "end": end, "issued": issued,
            "rate_date": rate_date, "rate_source": rate_source,
            "details": {}, "pivots": {}, "pivots_rev": {}, "prices": {},
@@ -1085,7 +1110,8 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
         if not titles:
             continue
         ticket = tickets[0]
-        d = fill_open(country_detail(brand, titles, start, end, rates),
+        _bf = _fr.get(brand)
+        d = fill_open(country_detail(brand, titles, start, end, rates, frames=_bf),
                       open_countries(brand, start, end))
         ctx["details"][brand] = d
         # 별첨 합계를 본문 국가 소계에 맞춘다 — 같은 문서에서 두 숫자가 다르면 안 된다.
@@ -1096,7 +1122,7 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
             q, k = _tg.get(r["국가"], (0, 0))
             _tg[r["국가"]] = (q + int(r["수량"]), k + int(r["매출액"]))
         ctx["pivots"][brand], ctx["pivots_rev"][brand] = member_pivot(
-            brand, titles, start, end, rates, _tg)
+            brand, titles, start, end, rates, _tg, frames=_bf)
         ctx["titles"][brand] = titles
         ctx["rs"][brand] = get_rs(brand, ticket)
         ctx["mg"][brand] = get_mg(brand, ticket)
@@ -1125,7 +1151,7 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
             ctx["tickets"][brand] = None
         for _, r in d.iterrows():
             ctx["units"].setdefault(r["국가"], r["unit"])
-        pt = price_table(brand, titles, start, end)
+        pt = price_table(brand, titles, start, end, frames=_bf)
         ctx["prices"][brand] = {
             nat: dict(zip(g["형태"], g["단가"])) for nat, g in pt.groupby("국가")
         }
