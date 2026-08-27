@@ -96,7 +96,16 @@ def collect(sites):
         browser.close()
 
     log(f"\n완료: 성공 {len(ok)} ({', '.join(ok)}) / 실패 {len(fail)} ({', '.join(fail)})")
+    return ok, fail
 
 
 if __name__ == "__main__":
-    collect([s.lower() for s in sys.argv[1:]] or DEFAULT_SITES)
+    _ok, _fail = collect([s.lower() for s in sys.argv[1:]] or DEFAULT_SITES)
+    # ★★부분 실패도 조용히 넘어가면 안 된다 (2026-08-27). 전엔 종료코드가 늘 0 이라
+    #   CN 로그인 실패(SPA /login 404)가 묻혀 스케줄러가 경고를 못 쐈고, '1대당 매출'
+    #   의 CN 분모가 07-22 에 멈춰 있었다. device_collect.py 와 같은 규약 —
+    #   하나라도 실패하면 exit 1 → run_device_refresh 가 fail()(관리자 메일)을 부른다.
+    if _fail:
+        print(f"[실패] {len(_fail)}건 수집 실패: {', '.join(_fail)} "
+              f"— '1대당 매출'의 분모가 낡은 채로 남습니다.")
+        sys.exit(1)
