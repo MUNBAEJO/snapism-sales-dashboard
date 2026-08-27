@@ -53,6 +53,17 @@ def login(page, url, username, password, site_key):
         try:
             page.goto(f"{url}/login", timeout=timeout)
             page.wait_for_load_state("networkidle")
+            # ★서버에 /login 라우트가 없는 SPA(중국 admin 은 Vite/React·Tengine)면 여기가
+            #   404 라 로그인 폼이 없다 — 폼은 루트 '/'로 들어가야 SPA 가 클라이언트
+            #   라우팅으로 그린다(2026-08-27 확인). 폼이 안 뜨면 루트로 재진입한다.
+            #   ★KR 은 /login 이 폼을 바로 주므로 아래 대기가 즉시 통과 → 재진입을 안 탄다
+            #     (두 곳의 필드·버튼 셀렉터가 완전히 같다: user_id·password·submit).
+            try:
+                page.wait_for_selector('input[name="user_id"]', timeout=6000)
+            except PWTimeout:
+                log(f"  {url}/login 에 로그인 폼 없음 → 루트로 재진입")
+                page.goto(f"{url}/", timeout=timeout)
+                page.wait_for_load_state("networkidle")
             page.fill('input[name="user_id"]', username)
             page.fill('input[name="password"]', password)
             with page.expect_navigation(timeout=15000 * (i + 1)):
