@@ -283,14 +283,18 @@ def _ticket_box(brand: str):
             return f"{x} · {p} · {(e.get('startdate') or '?')[5:]}~{(e.get('duedate') or '?')[5:]}"
 
         idx = cands.index(fixed) if fixed in cands else 0
+        # ★후보 수는 고르는 칸 **위**에 적는다. 전엔 아래에 caption 으로 달았는데
+        #   '후보 2장' 이 다음 줄의 제목처럼 읽혀서, 뒤에 아무것도 없으니 화면이
+        #   잘린 줄 알았다는 지적을 받았다(2026-08-28). 나머지 후보는 드롭다운
+        #   안에 있으니, 어디를 열어야 보이는지까지 문구에 담는다.
+        if len(cands) > 1:
+            st.caption(f"　└ 후보 티켓 {len(cands)}장 — 아래 칸을 열어 골라요")
         pick = st.selectbox("담을 티켓", cands, index=idx, format_func=_lab,
                             key=f"tkpick_{brand}_{t}", disabled=not CAN_EDIT,
                             label_visibility="collapsed",
                             help="이 타이틀 매출을 어느 티켓으로 정산할지 골라요. "
                                  "후보가 여럿이면 계약 티켓이 아니라 실제 상품 "
                                  "티켓을 고르세요.")
-        if len(cands) > 1:
-            st.caption(f"　　후보 {len(cands)}장")
         if on:
             chosen.append(t)
             tmap[t] = pick
