@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import date, timedelta
 
 import pandas as pd
+import pyarrow.parquet as pq   # _LOAD_COLS 존재 확인용(스키마만 읽는다)
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -563,16 +564,44 @@ except Exception as _e:                                   # noqa: BLE001
 # ★★cache_resource 다 — 반환 프레임을 **절대 in-place 로 수정하지 말 것**.
 #   같은 객체가 전 사용자에게 공유되므로 한 곳에서 열을 붙이면 모두에게 번진다.
 #   '필터 적용' 절 첫 줄의 `df = df_all.copy()` 가 유일한 격리막이니 지우지 말 것.
+# ★★원장 41열 중 화면이 쓰는 15열만 읽는다 (2026-08-28 실측). 전엔 전량을 읽어
+#   캐시 프레임이 788MB 였는데 그중 451MB 가 화면 어디에도 안 나오는 열이었다
+#   (승인번호·전문관리번호·매입사 이름·쿠폰명 …). 이 서버는 커밋 한도(32GB)로
+#   적재가 죽은 이력이 있어 그냥 둘 양이 아니다.
+#   ※중복제거용 매출 ID·승인번호는 ingest 가 CSV 원본에서 따로 읽는다 — 여기서
+#     빼도 무관하다(소비자 전수 확인: views/0 + trend_chart/xlsx_export/
+#     title_runs/store_rules, 2026-08-28).
+#   ※새 화면이 새 열을 쓰게 되면 **이 목록에 먼저 넣어야 한다** — 빠뜨리면
+#     예외가 아니라 `df.get()`/`in df.columns` 가드에 걸려 조용히 빈 화면이 된다.
+_LOAD_COLS = ["결제일시", "날짜", "매장 이름", "상품 카테고리", "상품 이름",
+              "상품 단가", "최종 결제 금액", "쿠폰 할인 금액", "결제 단위",
+              "결제 수단", "취소 여부", "프레임 이름", "카테고리", "국가", "시간대"]
+
+
 @st.cache_resource(ttl=900, max_entries=1)   # 파일 버전 키 → 최신 1개만 유효
 def _load_data(v):
     if not MASTER_FILE.exists():
         return pd.DataFrame()
-    df = data_io.read_master(MASTER_FILE)
+    # 옛 parquet 에 없는 열이 목록에 있으면 read_parquet 이 죽는다 — 있는 것만 청한다.
+    _have = set(pq.read_schema(str(MASTER_FILE.with_suffix(".parquet"))).names) \
+        if MASTER_FILE.with_suffix(".parquet").exists() else set(_LOAD_COLS)
+    df = data_io.read_master(MASTER_FILE,
+                             columns=[c for c in _LOAD_COLS if c in _have])
     # ★테스트 매장은 매출에서 뺀다 — 장비 목록(device_ingest_snapism)은
     #   진작 빼고 있었다. 'KC 시험 기관용' 124행 507,000원(2026-08-21).
     if "매장 이름" in df.columns:
         df = df[~store_rules.is_test(df["매장 이름"])].reset_index(drop=True)
-    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
+    _dt = pd.to_datetime(df["날짜"], errors="coerce")
+    df["날짜"] = _dt.dt.date
+    # ★날짜i = date.toordinal() 과 같은 정수 (2026-08-28). `날짜` 열은
+    #   datetime.date 객체 45만 개(object)라 범위 비교가 파이썬 루프다.
+    #   기간 필터는 이 정수 열로 한다 — datetime64 전면 전환(pandas 2.x 가
+    #   `datetime64 >= date` 를 TypeError 로 거절)을 피하면서 비교만 빨라진다.
+    #   결측은 -1 — 실제 toordinal 은 항상 양수라 어떤 기간에도 안 잡힌다.
+    #   (옛 동작과 같다: NaT >= date 도 False 였다)
+    df["날짜i"] = ((_dt - pd.Timestamp("1970-01-01")).dt.days + 719163) \
+        .fillna(-1).astype("int32")
+    del _dt
     df["결제일시"] = pd.to_datetime(df["결제일시"], format="%Y.%m.%d %H:%M", errors="coerce")
     df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true", "1", "yes"])
     for col in ["최종 결제 금액", "상품 단가", "쿠폰 할인 금액"]:
@@ -1258,7 +1287,9 @@ if sel_ip:
     df = df[df["프레임 이름"].isin(sel_ip)]
 scope = df                      # 날짜 외 모든 필터
 if len(date_range) == 2:
-    df = df[(df["날짜"] >= date_range[0]) & (df["날짜"] <= date_range[1])]
+    # ★`날짜`(object) 비교 대신 정수 열로 거른다 — 결과 동일, 파이썬 루프 회피.
+    df = df[(df["날짜i"] >= date_range[0].toordinal())
+            & (df["날짜i"] <= date_range[1].toordinal())]
 
 sales = paid_sales(df)          # 실결제(카드·현금) 거래 — KPI '실결제' 카드 전용
 coupons = coupon_txns(df)       # 전액 쿠폰 결제 거래

@@ -607,7 +607,8 @@ def _file_mtime(p):
         return 0.0
 
 
-# max_entries=1 — 반환 DataFrame 이 370만행·314MB 다. 캐시 키가 파일 mtime 이라
+# max_entries=1 — 반환 DataFrame 이 716만행·767MB 다(2026-08-28 실측 — 예전 주석의
+# '370만행·314MB' 에서 데이터가 배로 컸다). 캐시 키가 파일 mtime 이라
 # 파일이 바뀌면 옛 항목은 쓸모없는데, 상한이 없으면 그대로 메모리에 남아 쌓인다.
 #
 # ★ 인자 이름에 밑줄(_)을 붙이면 안 된다 — st.cache_data 는 **밑줄로 시작하는 인자를
@@ -657,11 +658,21 @@ def _load_data(agg_mtime, cfg_mtime):
         st.error("집계 데이터가 아직 없어요. 아래 명령으로 집계 파일을 먼저 만들어 주세요.")
         return pd.DataFrame()
 
-    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce").dt.date
+    _dt = pd.to_datetime(df["날짜"], errors="coerce")
+    df["날짜"] = _dt.dt.date
+    # ★날짜i = date.toordinal() 과 같은 정수 (2026-08-28 실측). `날짜` 는
+    #   datetime.date 객체 716만 개(object)라 기간 필터의 범위 비교 두 번이
+    #   **재실행마다 0.5초**였다(파이썬 루프). int32 비교면 0.09초.
+    #   datetime64 전면 전환(pandas 2.x 가 `datetime64 >= date` 를 TypeError 로
+    #   거절 — 아래 _date_bounds 주석)을 피하면서 필터만 빨라진다.
+    #   표시·groupby 는 여전히 `날짜` 를 쓴다. 결측은 -1(어떤 기간에도 안 잡힘).
+    df["날짜i"] = ((_dt - pd.Timestamp("1970-01-01")).dt.days + 719163) \
+        .fillna(-1).astype("int32")
     # ★버릴 행이 있을 때만 거른다 (2026-08-24). `df[df[...].notna()]` 는
     #   버릴 게 하나도 없어도 **프레임을 통째로 복사한다** — 평소엔 날짜가
     #   다 멀쩡하므로 그 복사는 늘 헛일이면서 로딩 최고점만 두 배로 올린다.
-    _bad = df["날짜"].isna()
+    _bad = _dt.isna()
+    del _dt
     if _bad.any():
         df = df[~_bad]
     del _bad
@@ -1322,9 +1333,14 @@ _DETAIL_EXPR = {
 
 # max_entries=32 — 파라미터가 7개라 필터 조합마다 새 항목이 생긴다.
 # 상한이 없으면 사용자가 필터를 만질수록(여러 명이면 곱으로) 무한정 쌓인다.
-@st.cache_data(ttl=60, max_entries=32)
+# ★ttl 60 → 1800 (2026-08-28). 예전엔 신선도를 ttl 로 샀다 — 원장은 하루 한 번
+#   바뀌는데 60초마다 716만 행 DuckDB 스캔(웜 0.5s·콜드 1.3s)을 다시 했다.
+#   dataver(원장 mtime)가 키에 들어가므로 재적재 즉시 캐시가 갈리고,
+#   그 사이엔 같은 필터 조합이 그대로 히트한다 — 다른 캐시들과 같은 패턴.
+@st.cache_data(ttl=1800, max_entries=32)
 def load_sales_detail(group_col, start_date, end_date, ip_list=None,
-                      countries=(), stores=(), brands=(), gubuns=()):
+                      countries=(), stores=(), brands=(), gubuns=(),
+                      dataver=0.0):
     """전체 parquet에서 세부 판매 항목(IP명/프레임/테마 등) DuckDB on-demand 집계.
     countries/stores/brands 는 다중선택 리스트(빈 값=전체)."""
     if group_col not in DETAIL_DIMS.values() or not PARQUET_FILE.exists():
@@ -2046,7 +2062,11 @@ if selected_ips:
 
 df = scope
 if len(date_range) == 2:
-    df = scope[(scope["날짜"] >= date_range[0]) & (scope["날짜"] <= date_range[1])]
+    # ★`날짜`(object) 비교 대신 정수 열(날짜i)로 거른다 — 결과 동일(재실행마다
+    #   0.5s → 0.09s 실측). 원본상세(_od)·시간대(df_hourly)는 별도 작은 프레임이라
+    #   날짜i 가 없다 — 거긴 그대로 둔다.
+    df = scope[(scope["날짜i"] >= date_range[0].toordinal())
+               & (scope["날짜i"] <= date_range[1].toordinal())]
 
 sales = paid_sales(df)
 
@@ -3322,6 +3342,7 @@ if SHOW_TAB_DETAIL:
                     ip_list=selected_ips or None,
                     countries=tuple(sel_countries), stores=tuple(sel_stores),
                     brands=tuple(sel_brands), gubuns=tuple(sel_gubuns),
+                    dataver=_file_mtime(PARQUET_FILE),
                 )
             else:
                 detail_df = pd.DataFrame()
