@@ -395,6 +395,9 @@ def _notify(to: str, subject: str, lines: list[str], cta: str = "approve") -> No
             if cta == "open":                       # 신청자에게 가는 승인 완료 메일
                 body.append(f"들어가기: {url}" if url
                             else "대시보드 주소로 접속해 구글 계정으로 로그인해 주세요.")
+            elif cta == "inquiry":                  # 담당자에게 가는 문의 접수 알림
+                body.append(f"문의함 열기: {url}" if url
+                            else "대시보드 → 🔐 접속·계정 관리 → 문의함 에서 볼 수 있어요.")
             else:                                   # 승인자에게 가는 요청 메일
                 body.append(f"승인하러 가기: {url}" if url
                             else "대시보드 → 🔐 접속·계정 관리 → 계정 승인 에서 처리해 주세요.")
@@ -417,6 +420,15 @@ def _notify(to: str, subject: str, lines: list[str], cta: str = "approve") -> No
         threading.Thread(target=_run, daemon=True).start()
     except Exception:
         pass
+
+
+def notify(to: str, subject: str, lines: list[str], cta: str = "approve") -> None:
+    """알림 메일 공개 창구 — 다른 모듈(inquiry 등)도 같은 경로를 타게.
+
+    직접 SMTP 를 열지 말고 이걸 쓴다. 스레드 발송·실패 무시·개발서버 차단이
+    한 곳에 모여 있어서, 새 알림을 만들 때마다 그 셋을 다시 챙길 필요가 없다.
+    """
+    _notify(to, subject, lines, cta)
 
 
 def _add_pending(email: str, team: str = "", note: str = "") -> None:
@@ -976,7 +988,23 @@ def render_admin_console() -> None:
     st.markdown('<div class="section-title">🔐 접속·계정 관리</div>', unsafe_allow_html=True)
     st.caption("접속 로그 열람과 계정 승인은 소유자(나)만 가능합니다.")
 
-    tab_users, tab_teams, tab_logs = st.tabs(["👥 계정 승인", "🗂 팀·권한", "📜 활동 로그"])
+    # 문의함 이름표에 안 끝난 건수를 달아 둔다 — 탭을 열어 봐야 아는 건
+    # 안 열어 보게 되고, 그러면 창구를 만든 의미가 없다.
+    try:
+        import inquiry
+        _open = inquiry.open_count()
+    except Exception:                       # 문의 모듈이 죽어도 관리 화면은 열려야 한다
+        inquiry, _open = None, 0
+    _inq_label = f"💬 문의함 ({_open})" if _open else "💬 문의함"
+
+    tab_users, tab_teams, tab_logs, tab_inq = st.tabs(
+        ["👥 계정 승인", "🗂 팀·권한", "📜 활동 로그", _inq_label])
+
+    with tab_inq:
+        if inquiry is None:
+            st.error("문의함을 불러오지 못했어요.")
+        else:
+            inquiry.render_admin(email)
 
     # ── 계정 승인 ──
     _ROLE_LABEL = {"editor": "✏️ 에디터(편집)", "viewer": "👁 뷰어(열람)"}

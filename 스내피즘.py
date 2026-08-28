@@ -278,6 +278,15 @@ pg = st.navigation(pages)
 # 활동로그 — 어떤 페이지를 열었는지. 페이지가 바뀔 때만 남긴다(매 rerun 마다 쌓이면 못 읽는다).
 auth.log_page_view(_email or "", pages_registry.URL_TO_KEY.get(pg.url_path, pg.url_path))
 
+# 문의 버튼 — 어느 화면에서든 같은 자리(사이드바 맨 아래, 계정 바 바로 위).
+# ★여기서 그리는 이유: 지금 보고 있는 화면 이름을 아는 건 라우터뿐이다. 화면마다
+#   붙이면 11장을 다 고쳐야 하고, 새 화면을 만들 때 빠뜨린다.
+try:
+    import inquiry
+    inquiry.render_sidebar(_email or "", pg.title)
+except Exception:      # 문의 창구가 고장 나도 대시보드는 열려야 한다
+    pass
+
 # 사이드바 좌하단 고정: 계정 표시 + 로그아웃
 auth.render_sidebar_account()
 
