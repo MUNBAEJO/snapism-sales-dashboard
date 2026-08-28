@@ -273,15 +273,22 @@ def _title_pred(titles: list[str], start: str, end: str,
     타이틀명으로 잡고, **타이틀명이 빈 행은 프레임 이름으로** 잡는다.
     둘 다 값 목록이라 parquet 단계에서 걸러진다.
 
-    frames — 고른 멤버(프레임 이름) 목록. **None 이면 안 거른다**(=전부).
-      ★★`None` 과 `[]` 는 다르다. None = 축을 안 건드림, [] = 하나도 안 고름.
+    frames — 고른 멤버. **None 이면 안 거른다**(=전부). None 이 아니면
+      `((타이틀명, (프레임…)), …)` 짝 목록이다(theme_pick.resolve 의 `title_frames`).
+      ★★`None` 과 `()` 는 다르다. None = 축을 안 건드림, () = 하나도 안 고름.
         섞이면 '전부'가 '아무것도 아님'이 돼 문서가 0원으로 나온다.
+      ★★**타이틀과 프레임을 짝지어 건다** (2026-08-28 수정). 전엔 평평한 이름 목록이라
+        `타이틀 IN (…) AND 프레임 IN (…)` 이었다 — 회차가 여럿이면 한 회차에서 고른
+        멤버가 **다른 회차의 안 고른 테마까지 물고 왔다.** 그래서 theme_pick 은
+        "못 가른다"고 막을 수밖에 없었고, 실제로 루네이트에서 깨끗하게 떨어지는
+        844,844원이 통째로 막혀 있었다.
       ★여기 한 곳만 고치면 아래 5개 쿼리(국가별 상세·멤버 목록·멤버 피벗·단가표·
         취소차감)에 한꺼번에 먹는다. 쿼리마다 따로 붙이면 한 곳을 빠뜨렸을 때
         같은 문서 안에서 금액과 수량이 서로 다른 모집단이 된다.
       ★BASIC 구좌는 `프레임 이름` 이 멤버가 아니라 타이틀 문자열이다
-        (`L 260601 빤쮸토끼`). 그래서 멤버를 골라 좁히면 BASIC 분은 자연히 빠진다 —
-        멤버가 없는 매출이라 어느 멤버에게도 붙일 수 없으니 그게 맞다.
+        (`L 260601 빤쮸토끼`). 그래서 멤버를 골라 좁히면 BASIC 분은 빠진다 —
+        멤버가 없는 매출이라 어느 멤버에게도 붙일 수 없으니 그게 맞다(옛 평면 필터도
+        결과가 같았다: BASIC 의 프레임 이름은 멤버 목록에 없다).
         빠지는 금액은 화면(② 무엇을 정산할지)이 미리보기로 보여 준다.
     """
     if not titles:
@@ -293,6 +300,18 @@ def _title_pred(titles: list[str], start: str, end: str,
         a, b = m.get(t, (set(), set()))
         tn |= a
         fr |= b
+    if frames is not None:
+        if not frames:
+            return "AND FALSE"
+        # 타이틀별로 (타이틀명 = T AND 프레임 IN (…)) 를 OR 로 잇는다.
+        # ★정산 대상 타이틀(tn) 안에 있는 것만 쓴다 — 테마 수집본에 딴 타이틀이
+        #   섞여 들어와도 정산 범위가 넓어지지 않게.
+        subs = [f'("타이틀명" = {_sqlist([t])}'
+                f' AND CAST("프레임 이름" AS VARCHAR) IN ({_sqlist(sorted(fs))}))'
+                for t, fs in frames if t in tn and fs]
+        if not subs:
+            return "AND FALSE"
+        return "AND (" + " OR ".join(subs) + ")"
     parts = []
     if tn:
         parts.append(f'"타이틀명" IN ({_sqlist(sorted(tn))})')
@@ -301,11 +320,6 @@ def _title_pred(titles: list[str], start: str, end: str,
                      f' AND CAST("프레임 이름" AS VARCHAR) IN ({_sqlist(sorted(fr))}))')
     if not parts:
         return "AND FALSE"
-    if frames is not None:
-        if not frames:
-            return "AND FALSE"
-        return (f"AND (({' OR '.join(parts)}))"
-                f' AND CAST("프레임 이름" AS VARCHAR) IN ({_sqlist(sorted(frames))})')
     return "AND (" + " OR ".join(parts) + ")"
 
 
@@ -1087,7 +1101,9 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
       정산해야 한다. 타이틀은 전부 합치고 요율·MG 는 첫 티켓 기준으로 잡는다
       (요율이 서로 다르면 화면에서 미리 경고한다).
 
-    frames — {브랜드: [프레임 이름]} · 그 브랜드에서 **고른 멤버만** 정산한다.
+    frames — {브랜드: ((타이틀명, (프레임…)), …)} · 그 브랜드에서 **고른 멤버만** 정산한다.
+             값은 theme_pick.resolve 의 `title_frames` 를 그대로 넘긴다(타이틀과 짝지어야
+             회차를 건너 남의 테마를 물고 오지 않는다 — _title_pred 주석 참고).
       화면 ① 의 '테마 · 멤버로 좁히기' 에서 넘어온다. 브랜드가 빠져 있거나 값이
       None 이면 그 브랜드는 **전부**다(지금 동작 그대로).
       ★한 문서 안에서 금액·수량·단가·취소가 전부 같은 모집단이어야 하므로 아래

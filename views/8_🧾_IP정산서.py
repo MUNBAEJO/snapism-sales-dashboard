@@ -437,9 +437,13 @@ def make_panel():
                                      format_func=lambda x: f"{x}  ({_amt.get(x, 0):,})")
             r = tp.resolve(titles, S, E,
                            sel_themes=_th or None, sel_frames=_fr or None)
-            if r["frames"] is not None:
-                frames_by_brand[b] = r["frames"]
-                st.caption(f"고른 멤버 {len(r['frames'])}명 — "
+            # ★원장에 거는 값은 **타이틀과 짝지어진** title_frames 다. frames 는
+            #   이름만 모은 표시용이라 필터로 쓰면 회차를 건너 남의 테마를 물고 온다.
+            if r["title_frames"] is not None:
+                frames_by_brand[b] = r["title_frames"]
+                _n = sum(len(fs) for _, fs in r["title_frames"])
+                st.caption(f"고른 멤버 {len(r['frames'])}명 · 타이틀 "
+                           f"{len(r['title_frames'])}개에서 {_n}자리 — "
                            + (", ".join(r["frames"][:8]) or "없음")
                            + (" 외" if len(r["frames"]) > 8 else ""))
             # ★★비율로 나눠 담지 않는다. 원장에는 테마가 없어서 한 멤버가 여러 테마에
@@ -494,8 +498,13 @@ def make_panel():
 
     # ★고른 멤버도 축에 넣는다 — 안 넣으면 대상을 좁혀 놓고 '만들기' 를 다시 안 눌렀을 때
     #   **넓은 범위로 만든 옛 PDF** 가 그대로 첨부된다(low #12 와 같은 병).
+    # 서명에 넣는 프레임은 (타이틀, 프레임…) 짝이라 문자열로 펴서 넣는다.
+    def _fsig(b):
+        tf = frames_by_brand.get(b)
+        return "" if tf is None else ";".join(f"{t}={','.join(fs)}" for t, fs in tf)
+
     _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}>{_rsig(b, tks)}"
-                    f">{','.join(frames_by_brand.get(b) or [])}"
+                    f">{_fsig(b)}"
                     for b, (tks, titles) in sorted(picks.items())) + f"‖{S}‖{E}"
     if st.session_state.get("_sig") != _sig:
         st.session_state["_sig"] = _sig
@@ -696,9 +705,9 @@ def make_panel():
     for b, (tks, titles) in picks.items():
         if not tks or not titles:
             continue
-        _fk = frames_by_brand.get(b)
+        _fk = frames_by_brand.get(b)      # 이미 해시 가능한 (타이틀, 프레임…) 튜플
         d = _detail_cached(b, tuple(titles), S, E, fx.version(), sc.data_version(),
-                           tuple(_fk) if _fk is not None else None)
+                           _fk)
         if d.empty:                 # 그 기간 매출 행이 없으면 문서에도 안 들어간다
             continue
         shown.append(b)

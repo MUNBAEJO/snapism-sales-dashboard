@@ -80,20 +80,29 @@ def _variants(titles, start: str, end: str) -> list[str]:
 
 
 def _rows(titles, start: str, end: str) -> pd.DataFrame:
-    """그 기간·그 타이틀의 (테마 × 프레임) 금액. 없으면 빈 표."""
+    """그 기간·그 타이틀의 (타이틀 × 테마 × 프레임) 금액. 없으면 빈 표.
+
+    ★★타이틀을 **버리면 안 된다** (2026-08-28 수정). 전엔 `GROUP BY 테마, 프레임` 이라
+      타이틀이 뭉개졌고, 그래서 같은 멤버가 여러 회차에 나오면 회차를 건너 한 덩어리가
+      됐다. 실제 사고: `루네이트` 4개 타이틀 중 `260722` 두 개는 테마가 하나뿐이라
+      통째로 골라낼 수 있는데, `260729`(ON·OFF 두 테마)의 같은 멤버와 뭉쳐지면서
+      **844,844원이 '못 가른다'로 막혀** 있었다. 원장은 타이틀명을 갖고 있으므로
+      (타이틀 × 프레임) 이면 정확히 걸 수 있다.
+    """
     if not titles or not available():
-        return pd.DataFrame(columns=["테마", "프레임", "금액"])
+        return pd.DataFrame(columns=["타이틀", "테마", "프레임", "금액"])
     titles = _variants(titles, start, end)
     con = duckdb.connect(config={"memory_limit": "600MB", "threads": 2})
     try:
         return con.execute(f"""
-            SELECT COALESCE(NULLIF(TRIM(CAST("테마" AS VARCHAR)), ''), '(테마 없음)') AS "테마",
+            SELECT CAST("타이틀" AS VARCHAR)                                        AS "타이틀",
+                   COALESCE(NULLIF(TRIM(CAST("테마" AS VARCHAR)), ''), '(테마 없음)') AS "테마",
                    CAST("프레임" AS VARCHAR)                                        AS "프레임",
                    CAST(COALESCE(SUM("최종결제금액"), 0) AS BIGINT)                  AS "금액"
             FROM read_parquet('{THEME_FILE.as_posix()}')
             WHERE CAST("타이틀" AS VARCHAR) IN ({_sqlist(titles)})
               AND TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-            GROUP BY 1, 2
+            GROUP BY 1, 2, 3
             HAVING SUM("최종결제금액") > {_MIN_AMT}
         """).df()
     finally:
@@ -129,20 +138,27 @@ def axes(titles, start: str, end: str) -> dict:
 
 def resolve(titles, start: str, end: str,
             sel_themes=None, sel_frames=None) -> dict:
-    """고른 두 축 → 원장에 걸 **프레임 이름 목록**.
+    """고른 두 축 → 원장에 걸 **(타이틀별) 프레임 이름 목록**.
 
     돌려주는 값
-      frames      : 원장에 걸 프레임 이름. **None 이면 거르지 않는다**(=전부).
+      title_frames: 원장에 걸 필터. `((타이틀, (프레임…)), …)` 로 정렬된 튜플.
+                    **None 이면 거르지 않는다**(=전부). 캐시 키·서명에 그대로 쓰려고
+                    해시 가능한 튜플로 돌려준다.
+      frames      : 위의 프레임을 이름만 모은 평평한 목록(**표시용**). 필터로 쓰지 말 것 —
+                    타이틀 짝이 사라져서, 회차를 건너 남의 테마까지 물고 온다.
       straddling  : 고른 테마와 안 고른 테마에 **걸쳐 있어** 원장에서 못 가른 멤버.
                     금액과 함께 돌려준다 — 화면이 이걸 그대로 보여 줘야 한다.
       dropped_amt : 안 고른 축 때문에 빠지는 금액(테마 수집본 기준, 참고값)
 
-    ★`None` 과 `[]` 는 다르다. None = 축을 안 건드림(전부), [] = 하나도 안 고름.
+    ★`None` 과 `()` 는 다르다. None = 축을 안 건드림(전부), () = 하나도 안 고름.
       이걸 섞으면 '전부'가 '아무것도 아님'이 돼 문서가 0원으로 나온다.
+    ★★판정 단위는 **(타이틀 × 프레임)** 이다. 프레임만으로 묶으면 회차가 뭉개져,
+      한 회차에서 깨끗하게 떨어지는 멤버까지 다른 회차 때문에 걸침이 된다(위 _rows 주석).
     """
     d = _rows(titles, start, end)
     if d.empty:
-        return {"frames": None, "straddling": [], "dropped_amt": 0}
+        return {"frames": None, "title_frames": None,
+                "straddling": [], "dropped_amt": 0}
 
     all_th = set(d["테마"])
     all_fr = set(d["프레임"])
@@ -151,10 +167,13 @@ def resolve(titles, start: str, end: str,
 
     # 두 축 다 전부면 아무것도 거르지 않는다 — 지금 동작 그대로여야 한다(검증 기준).
     if th_pick >= all_th and fr_pick >= all_fr:
-        return {"frames": None, "straddling": [], "dropped_amt": 0}
+        return {"frames": None, "title_frames": None,
+                "straddling": [], "dropped_amt": 0}
 
-    keep, strad = [], []
-    for f, g in d.groupby("프레임"):
+    keep: dict[str, list[str]] = {}
+    strad: dict[str, dict] = {}
+    picked_amt = 0
+    for (t, f), g in d.groupby(["타이틀", "프레임"]):
         if f not in fr_pick:                       # 멤버 축에서 빠진 멤버
             continue
         mine = set(g["테마"])
@@ -162,16 +181,17 @@ def resolve(titles, start: str, end: str,
         if not inside:                             # 고른 테마에 아예 없음
             continue
         if mine <= th_pick:                        # 통째로 들어옴 → 원장에서 정확히 잡힌다
-            keep.append(f)
+            keep.setdefault(t, []).append(f)
+            picked_amt += int(g["금액"].sum())
             continue
         # 걸쳐 있다 — 원장은 테마를 모르므로 이 멤버를 반쪽만 가져올 수가 없다.
-        strad.append({
-            "이름": f,
-            "고른 테마 금액": int(g[g["테마"].isin(inside)]["금액"].sum()),
-            "전체 금액": int(g["금액"].sum()),
-        })
+        # 같은 멤버가 여러 회차에서 걸치면 합쳐서 한 줄로 보여 준다.
+        e = strad.setdefault(f, {"이름": f, "고른 테마 금액": 0, "전체 금액": 0})
+        e["고른 테마 금액"] += int(g[g["테마"].isin(inside)]["금액"].sum())
+        e["전체 금액"] += int(g["금액"].sum())
 
-    picked_amt = int(d[d["프레임"].isin(keep)]["금액"].sum())
-    return {"frames": sorted(keep),
-            "straddling": sorted(strad, key=lambda x: -x["전체 금액"]),
+    tf = tuple(sorted((t, tuple(sorted(fs))) for t, fs in keep.items()))
+    return {"frames": sorted({f for fs in keep.values() for f in fs}),
+            "title_frames": tf,
+            "straddling": sorted(strad.values(), key=lambda x: -x["전체 금액"]),
             "dropped_amt": int(d["금액"].sum()) - picked_amt}
