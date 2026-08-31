@@ -2313,7 +2313,14 @@ with tab_home:
         # ★창은 **프리셋이 정한다**(2026-08-21) — 연도를 고르면 그 해만 자른다.
         #   위젯을 그리기 전에 잘라야 해서 세션 상태에서 미리 읽는다(current).
         #   2년을 통째로 들고 있으면 아래 복사 비용이 두 배가 된다.
-        _opts = trend_chart.presets(first_date, last_date)
+        # ★★이름을 `_opts` 로 두면 안 된다 (2026-08-31). 필터바가 읽는 전역
+        #   `_opts`(= _sidebar_options 의 **dict**)를 여기서 **list 로 덮어쓴다.**
+        #   `with` 는 이름 범위를 만들지 않으므로 모듈 전역이 바뀐다.
+        #   전체 실행에서는 _filterbar() 가 이 줄보다 먼저 돌아 티가 안 나지만,
+        #   _filterbar 는 @st.fragment 라 **혼자 다시 돌 때**(필터 체크박스를 누를 때)
+        #   이미 list 가 된 전역을 읽는다 → `_opts["countries"]` 가
+        #   TypeError: list indices must be integers 로 죽는다.
+        _tp_opts = trend_chart.presets(first_date, last_date)
         _cur = trend_chart.current(st, "ph_trend", first_date, last_date)
         _t_start, _t_end = trend_chart.window(_cur, first_date, last_date)
         # ★★쓰는 컬럼만 떼어 복사한다 (2026-08-11, OOM 대응).
@@ -2332,7 +2339,7 @@ with tab_home:
             # ★st.info 로 끝내면 안 된다 — 데이터 없는 해를 고르면 토글까지
             #   사라져 되돌아올 방법이 없다. render 가 토글을 그려 준다.
             trend_chart.render(st, pd.DataFrame({"total": []}), key="ph_trend",
-                               color="#4f46e5", preset=_cur, options=_opts)
+                               color="#4f46e5", preset=_cur, options=_tp_opts)
         else:
             # ★구분 목록은 **1년 창에서** 뽑는다. present 는 조회 기간 기준이라,
             #   이번 달에만 안 팔린 구분이 1년 차트에서 통째로 빠진다.
@@ -2356,7 +2363,7 @@ with tab_home:
             # 빈 날을 0으로 — 안 채우면 이동평균·주 집계가 날짜를 건너뛴다.
             _g = _g.asfreq("D").fillna(0) if len(_g) > 1 else _g
             trend_chart.render(st, _g, key="ph_trend", color="#4f46e5",
-                               parts_cols=_tpresent, preset=_cur, options=_opts, data_last=last_date,
+                               parts_cols=_tpresent, preset=_cur, options=_tp_opts, data_last=last_date,
                                # 구성 목록 — '구성 고르기' 선택지이자 툴팁의 구분
                                # 이다(쌓지는 않는다). 색은 도넛과 같은 _GUB_COLORS.
                                stack_cols=_tpresent,
