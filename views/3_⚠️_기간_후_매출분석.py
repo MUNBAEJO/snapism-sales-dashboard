@@ -51,7 +51,8 @@ hr { margin: 1.4rem 0 1.2rem; border: none; border-top: 1px solid #e9edf5; }
 
 BASE_DIR      = Path(__file__).parent.parent
 SNAP_MASTER   = BASE_DIR / "data" / "master.csv"
-PHOTO_MASTER  = BASE_DIR / "data" / "master_photoism.csv"          # 레거시 (최종 fallback)
+# (PHOTO_MASTER 는 지웠다 — 2026-08-31. 아래 134행 주석대로 이미 안 읽고 있었고,
+#  2GB CSV 파일 자체도 삭제했다.)
 PHOTO_PARQUET = BASE_DIR / "data" / "master_photoism.parquet"      # 401 MB (중간 fallback)
 PHOTO_AGG     = BASE_DIR / "data" / "master_photoism_agg.parquet"  # 53 MB (우선 사용)
 # ※ _DATE_RE 는 참조가 0이라 지웠다(2026-08-03). title_runs.py:26 의 동명 상수는

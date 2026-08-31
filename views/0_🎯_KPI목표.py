@@ -113,7 +113,6 @@ hr{ margin:1.2rem 0 !important; border:none !important; border-top:1px solid var
 
 # ── 경로 상수 ─────────────────────────────────────────────────
 BASE_DIR      = Path(__file__).parent.parent
-MASTER_FILE   = BASE_DIR / "data" / "master_photoism.csv"
 AGG_FILE      = BASE_DIR / "data" / "master_photoism_agg.parquet"   # 7.2 MB 집계
 PARQ_FILE     = BASE_DIR / "data" / "master_photoism.parquet"       # 114 MB 전체 (드릴다운용)
 KPI_FILE      = BASE_DIR / "data" / "kpi_targets.csv"
@@ -155,33 +154,10 @@ def load_exchange_rates():
     return data_io.load_exchange_rates(CONFIG_FILE)
 
 
-def _calc_revenue_from_cms(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    for col in ["최종 결제 금액", "쿠폰 할인 금액"]:
-        df[col] = pd.to_numeric(df.get(col, 0), errors="coerce").fillna(0)
-    # ★음수 행을 버리지 않는다 — 포토이즘 취소는 음수 거래로 들어오므로 여기서
-    #   걸러내면 실적이 취소분만큼 부풀어 오른다(포토이즘 대시보드와 어긋났던 원인).
-    #   위 agg 경로는 원래 안 걸렀고, 이 CSV 폴백만 기준이 달랐다.
-    ex = load_exchange_rates()
-    df["결제 단위"]     = df["결제 단위"].fillna("KRW").astype(str).str.strip()
-    df["환율"]          = df["결제 단위"].map(ex).fillna(1)
-    df["KRW환산금액"]   = (df["최종 결제 금액"] * df["환율"]).round(0)
-    df["쿠폰KRW"]       = (df["쿠폰 할인 금액"] * df["환율"]).round(0)
-    df["서비스코인KRW"] = (
-        pd.to_numeric(df.get("서비스코인", 0), errors="coerce").fillna(0) * df["환율"]
-    ).round(0)
-    _cc = df["국가코드"].astype(str).str.lower().fillna("")
-    df["매출액"] = (
-        df["KRW환산금액"]
-        + df["쿠폰KRW"]       * _cc.isin(_COUPON_CC).astype(int)
-        + df["서비스코인KRW"] * _cc.isin(_COIN_CC).astype(int)
-    )
-    monthly = (
-        df.groupby(["연도", "월"])["매출액"].sum()
-        .reset_index().rename(columns={"매출액": "실제매출"})
-    )
-    monthly["실제매출"] = monthly["실제매출"].astype(int)
-    return monthly
+# ※ `_calc_revenue_from_cms` 는 지웠다 (2026-08-31) — 유일한 호출부였던 CSV 폴백을
+#   걷어내면서 같이 뺐다. 그 함수가 지키던 교훈("포토이즘 취소는 음수 거래라 음수 행을
+#   버리면 실적이 부풀어 오른다")은 아래 agg 경로가 이미 같은 방식으로 지키고 있다 —
+#   `취소 여부` 플래그로만 거르고 음수 행은 그대로 합산한다.
 
 
 @st.cache_data(ttl=30)
@@ -229,32 +205,25 @@ def load_monthly_actual(seg: str = "TTL"):
             )
             cms_monthly["실제매출"] = cms_monthly["실제매출"].astype(int)
         except Exception as e:                        # noqa: BLE001
-            # ★★그냥 비우면 아래 "② fallback: CSV" 로 넘어가는데, 그쪽은
-            #   `_calc_revenue_from_cms` 라는 **다른 산식**을 쓴다 — 실적이 조용히
-            #   다른 기준으로 바뀌고 달성률이 통째로 어긋난다. 폴백은 "집계 파일이
-            #   아직 없을 때" 를 위한 것이지 "있는데 읽다 실패" 를 위한 게 아니다.
-            #   (2026-08-20)
+            # ★★읽다 실패하면 **멈춘다**. 그냥 비우고 넘어가면 실적이 조용히 다른
+            #   기준으로 바뀌어 달성률이 통째로 어긋난다. (2026-08-20에 세운 원칙 —
+            #   그때는 아래에 산식이 다른 CSV 폴백이 있어서 더 위험했다. 그 폴백은
+            #   2026-08-31에 걷어냈지만, "읽다 실패하면 멈춘다" 는 그대로 둔다.)
             st.error("📊 집계 파일에서 월별 실적을 읽지 못했어요 — " + str(e)
                      + "  \n다른 산식의 CSV 로 넘어가면 달성률이 어긋나므로 "
                        "여기서 멈춰요. `python build_photoism_agg.py` 로 집계를 "
                        "다시 만든 뒤 새로고침해 주세요.")
             st.stop()
 
-    # ② fallback: CSV (agg 없을 때만)
-    if cms_monthly.empty and MASTER_FILE.exists():
-        df = pd.read_csv(MASTER_FILE, encoding="utf-8-sig", low_memory=False)
-        df["날짜"]      = pd.to_datetime(df["날짜"], errors="coerce").dt.date
-        df              = df[df["날짜"].notna()]
-        df["취소 여부"] = df["취소 여부"].astype(str).str.lower().isin(["true","1","yes"])
-        df              = df[~df["취소 여부"]]
-        df["연도"]      = pd.to_datetime(df["날짜"]).dt.year
-        df["월"]        = pd.to_datetime(df["날짜"]).dt.month
-        _cc = df["국가코드"].astype(str).str.lower().fillna("")
-        if seg == "국내":
-            df = df[_cc == "kr"]
-        elif seg == "해외":
-            df = df[_cc != "kr"]
-        cms_monthly = _calc_revenue_from_cms(df)
+    # ② ~~fallback: CSV~~ — 걷어냈다 (2026-08-31).
+    #   `data/master_photoism.csv`(2GB)는 **2026-06-09 이후 갱신되지 않는 레거시**인데,
+    #   집계가 없으면 이 파일을 통째로 읽어 **석 달 묵은 실적**을 '📸 포토이즘 CMS'
+    #   라는 멀쩡한 이름표로 내보내고 있었다. 느린 것보다 이게 문제였다.
+    #   (산식까지 달랐던 건 위 except 주석 참고.)
+    #   이제 집계가 없으면 cms_monthly 를 빈 채로 두고, 아래에서 IPX 엑셀로 넘어가거나
+    #   '없음' 으로 정직하게 표시된다. CSV 파일 자체는 삭제했다 —
+    #   `master_photoism.parquet`(39.4M행·2025-01-01~)이 그 CSV(10.9M행·~2026-06-09)를
+    #   날짜 기준으로 전부 품는 것을 확인하고 지웠다.
 
     excel_monthly = pd.DataFrame()
     if ACTUALS_FILE.exists():

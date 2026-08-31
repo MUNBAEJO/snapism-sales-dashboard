@@ -18,6 +18,8 @@ DATA_DIR     = BASE_DIR / "data"
 CONFIG_FILE  = BASE_DIR / "config.json"
 INSIGHT_FILE = DATA_DIR / "weekly_insight.json"
 MASTER_SNAP  = DATA_DIR / "master.csv"
+# ★이 CSV 는 없다 — read_master 가 짝 parquet(`master_photoism.parquet`)을 찾는
+#   **이름 키**로만 쓴다(`data_io._parquet_for` = suffix 교체). 2026-08-31 삭제.
 MASTER_PHOTO = DATA_DIR / "master_photoism.csv"
 ALIAS_FILE   = DATA_DIR / "frame_alias.json"
 
@@ -149,11 +151,16 @@ def _clean_photo_title(title: str) -> str:
 
 def load_photoism(ip_only: bool = True) -> pd.DataFrame:
     """
-    master_photoism.csv 로드
+    포토이즘 원장 로드 (master_photoism.parquet)
     IP = 타이틀명 (날짜 prefix 제거)  + frame_alias.json 적용
     ip_only=True: 타이틀명 없는 건 제외 (커스텀 상당)
     """
-    if not MASTER_PHOTO.exists():
+    # ★CSV 존재 여부로 막지 않는다 (2026-08-31). `MASTER_PHOTO` 는 read_master 가
+    #   짝 parquet 을 찾는 **이름 키**일 뿐이고, 2GB 레거시 CSV 는 지웠다.
+    #   전엔 `MASTER_PHOTO.exists()` 로 막아서, 그 CSV 만 없어도 원장이 멀쩡한데
+    #   주간 인사이트가 조용히 빈 표로 나가게 돼 있었다.
+    #   file_version 은 csv·parquet 중 더 최신을 보고, 둘 다 없을 때만 0.0 이다.
+    if data_io.file_version(MASTER_PHOTO) == 0.0:
         return pd.DataFrame()
 
     cfg   = load_config()

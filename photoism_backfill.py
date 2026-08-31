@@ -363,7 +363,7 @@ def run_ingest(since_date=None):
     args = [sys.executable, str(BASE_DIR / "photoism_ingest.py")]
     if since_date:
         args.append(str(since_date))
-    log(f"ingest 시작 (raw_photoism -> master_photoism.csv){' since ' + str(since_date) if since_date else ''}...")
+    log(f"ingest 시작 (raw_photoism -> master_photoism.parquet){' since ' + str(since_date) if since_date else ''}...")
     try:
         result = subprocess.run(
             args,

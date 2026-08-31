@@ -11,8 +11,9 @@
      → 같은 날 재실행해도 중복이 쌓이지 않고(idempotent), 누락분이 자동 채워진다.
   4. build_photoism_agg 로 집계 parquet 갱신.
 
-canonical 은 parquet 로 전환했다(대용량 CSV 미사용). 기존 master_photoism.csv 는
-레거시로 남겨둔다(대시보드는 parquet 우선). 전체 재빌드가 필요하면
+canonical 은 parquet 이다. 레거시 `master_photoism.csv`(2GB)는 2026-08-31 에 삭제했다 —
+2026-06-09 이후 갱신이 없었고, 마지막까지 그걸 읽던 KPI목표 화면이 **석 달 묵은 실적**을
+현재값처럼 내보내고 있었다. 전체 재빌드가 필요하면
 `python photoism_ingest.py 2026-01-01` 처럼 시작일을 주면 그 이후를 모두 재구성한다.
 
 실행: python photoism_ingest.py [YYYY-MM-DD]   (날짜 생략 시 최신 누적일부터)
@@ -30,7 +31,8 @@ BASE_DIR    = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.json"
 RAW_DIR     = BASE_DIR / "raw_photoism"
 DATA_DIR    = BASE_DIR / "data"
-MASTER_FILE = DATA_DIR / "master_photoism.csv"        # 레거시(대용량) — 더 이상 갱신 안 함
+# (MASTER_FILE 은 지웠다 — 2026-08-31. 레거시 2GB CSV 는 2026-06-09 이후 갱신이
+#  없었고 읽는 곳도 없어서 파일째 삭제했다. canonical 은 아래 MASTER_PARQ.)
 # ★대량 재적재용 우회로 (2026-08-06).
 #   PHOTOISM_MASTER 로 다른 parquet 을 지정하면 운영본을 안 건드리고 거기에 쌓는다.
 #   전량 재적재는 월 단위로 20번 돌려야 하는데, 매번 운영 parquet 을 교체하면
