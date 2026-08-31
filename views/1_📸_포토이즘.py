@@ -457,7 +457,8 @@ AGG_FILE     = BASE_DIR / "data" / "master_photoism_agg.parquet"
 HOURLY_FILE  = BASE_DIR / "data" / "master_photoism_hourly.parquet"
 ORIG_FILE    = BASE_DIR / "data" / "master_photoism_orig.parquet"   # 오리지널 프레임별(경량)
 PARQUET_FILE = BASE_DIR / "data" / "master_photoism.parquet"
-MASTER_FILE  = BASE_DIR / "data" / "master_photoism.csv"
+# (레거시 2GB `master_photoism.csv` 를 가리키던 MASTER_FILE 은 지웠다 — 2026-08-31.
+#  이 화면은 쓰지 않고 있었고, 파일도 삭제했다. 원장은 master_photoism.parquet.)
 CONFIG_FILE  = BASE_DIR / "config.json"
 DEVICE_FILE  = BASE_DIR / "data" / "devices.parquet"   # 장비관리 CMS(device_ingest.py)
 THEME_FILE   = BASE_DIR / "data" / "theme_daily.parquet"  # CMS 프레임 리포트(테마 축)
@@ -1752,15 +1753,29 @@ def _period_str(o, e):
 
 
 def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None,
-               nested_key=None):
+               nested_key=None, total=None, start_rank=1, max_frac=None):
     """비중막대 내장 순위표(.ntbl). collapse_after=N 이면 상위 N개 + 나머지 접기.
     status_map={이름:{오픈일,종료일,...}} 를 주면 **판매기간(지라 오픈~종료)** 칸이 붙는다.
-    (상태 배지 신규/확인필요/판매중/종료 는 2026-07-28 제거 — 스내피즘과 동일 기준.)"""
+    (상태 배지 신규/확인필요/판매중/종료 는 2026-07-28 제거 — 스내피즘과 동일 기준.)
+
+    ★★상위 N 위를 **다른 데서 그리고** 나머지만 넘길 때는 아래 셋을 반드시 같이 준다
+      (2026-08-31 수정). 안 주면 넘어온 것 기준으로 계산해서:
+        · total 없음     → 분모가 '나머지 합' 이 되어 비중이 통째로 부풀어 오른다
+                           (PICK 탭 Red Velvet 이 2.5% 인데 24.7% 로 보였다)
+        · start_rank 없음 → 번호가 1 부터 다시 시작한다(접기 라벨은 '11~621위' 인데)
+        · max_frac 없음   → 막대가 나머지 안의 1위를 꽉 찬 것으로 잡아 위 표와 안 맞는다
+      셋 다 074964c(상위 10위를 눌러 펼치기로 뗀 커밋)에서 같이 생긴 회귀다.
+
+    total:      비중의 **분모**. 안 주면 넘어온 것의 합.
+    start_rank: 첫 줄에 찍을 순위 번호. 나머지만 넘길 때는 11 처럼 이어서 준다.
+    max_frac:   막대 길이 기준(=1위의 비중). 안 주면 넘어온 것 안에서의 최대값.
+    """
     d = dframe.sort_values("매출", ascending=False).reset_index(drop=True)
     if top:
         d = d.head(top)
-    tot = d["매출"].sum()
-    mx = (d["매출"] / tot).max() if tot else 1.0
+    tot = total if total is not None else d["매출"].sum()
+    mx = max_frac if max_frac is not None else (
+        (d["매출"] / tot).max() if tot else 1.0)
     has_cnt = "건수" in d.columns
     has_st = bool(status_map)
     if has_st:
@@ -1783,7 +1798,8 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None,
         h = ""
         for i, r in sub.iterrows():
             frac = (r["매출"] / tot) if tot else 0
-            rk = f'<span class="rk {"top" if i == 0 else ""}">{i + 1}</span>'
+            _rk = i + start_rank          # i 는 d 의 인덱스라 접기 뒷쪽도 이어진다
+            rk = f'<span class="rk {"top" if _rk == 1 else ""}">{_rk}</span>'
             cnt = (f'<span class="r num" style="color:var(--text-2)">{int(r["건수"]):,}</span>'
                    if has_cnt else "")
             nm = f'<span class="nname">{r[name_col]}</span>'
@@ -1801,7 +1817,8 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None,
     if collapse_after and len(d) > collapse_after:
         top_d, rest_d = d.iloc[:collapse_after], d.iloc[collapse_after:]
         st.markdown(f'<div class="ntbl">{head}{_rows(top_d)}</div>', unsafe_allow_html=True)
-        _lab = f"나머지 {len(rest_d):,}개 더보기  ·  {collapse_after + 1}~{len(d):,}위"
+        _lab = (f"나머지 {len(rest_d):,}개 더보기  ·  "
+                f"{collapse_after + start_rank}~{len(d) + start_rank - 1:,}위")
         # ★이미 expander 안이면 expander 를 또 열 수 없다(Streamlit 이 막는다).
         #   그런 자리에선 nested_key 를 주고 체크박스로 편다.
         if nested_key:
@@ -1822,7 +1839,9 @@ def rank_table(dframe, name_col, top=None, collapse_after=None, status_map=None,
 # ══════════════════════════════════════════════════════════════
 df_all = load_data()
 
-# 노출 대상 IP구분(아티스트·캐릭터·PICK) 필터는 _load_data 안에서 이미 적용됨.
+# 노출 대상 IP구분(`ip_classify.IP_GUBUN_SHOWN` — 지금 6종) 필터는 _load_data 안에서
+# 이미 적용됨. ★구분 이름을 여기 나열하지 않는다 — 예전엔 '아티스트·캐릭터·PICK' 이라
+#   적어 뒀는데 렌탈·오리지널이 되살아난 뒤에도 그대로 남아 주석이 거짓말을 했다.
 # 캐시 '이전'에 걸어야 안 쓰는 행까지 직렬화하지 않는다(그러다 MemoryError 가 났었다).
 
 st.title("📸 포토이즘 매출 대시보드")
@@ -1865,7 +1884,8 @@ ex         = load_exchange_rates()
 _opts = _sidebar_options(_file_mtime(AGG_FILE))
 
 # IP 구분(다중선택) — 비우면 노출 대상 전체, 고르면 그 구분만.
-# 노출 대상은 IP_GUBUN_SHOWN(아티스트·캐릭터·PICK) 으로 이미 df_all 에서 걸러져 있다.
+# 노출 대상은 IP_GUBUN_SHOWN(지금 6종 — 목록은 ip_classify 가 단일 출처) 으로
+# 이미 df_all 에서 걸러져 있다.
 IP_GUBUN_VIEW = [g for g in ip_classify.IP_GUBUN_ORDER if g in ip_classify.IP_GUBUN_SHOWN]
 
 default_start = max(last_date - timedelta(days=29), first_date)
@@ -2418,7 +2438,7 @@ with tab_home:
                 st.info("데이터가 없어요.")
             helpbox("""
 **구좌 타입별 비중 (IP구분별)**
-- `IP구분`별 매출액 비중(도넛) — **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본)**.
+- `IP구분`별 매출액 비중(도넛) — **아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본) · 렌탈** 6종(`IP_GUBUN_SHOWN`).
 - 위 '매출 추이'와 **같은 분류·같은 색**이에요. 추이는 시간축, 이 도넛은 기간 합계 비중이라 짝으로 봐요.
 - 구좌(BASIC/WITH/EVENT)는 이 IP구분을 더 크게 묶은 상위 개념이에요 — 구좌 기준 숫자는 '매장별 분석' 탭의 구좌타입 분석에서 봐요.
 """)
@@ -2902,8 +2922,15 @@ with tab_ip:
                             if len(_t) > 10:
                                 with st.expander(f"나머지 {len(_t) - 10:,}개 더보기 "
                                                  f"· 11~{len(_t):,}위"):
+                                    # ★★상위 10위를 위에서 따로 그렸으니 **여기서만**
+                                    #   계산하게 두면 안 된다 — 분모가 '11위부터의 합',
+                                    #   번호는 1부터, 막대는 11위를 꽉 찬 것으로 잡는다.
+                                    #   위 표와 같은 기준(_tot·_mx)을 그대로 넘긴다.
+                                    #   (2026-08-31: 074964c 이후 비중이 PICK 탭에서
+                                    #    10배까지 부풀어 있었다 — Red Velvet 2.5%→24.7%)
                                     rank_table(_t.iloc[10:], _KEY, collapse_after=40,
                                                nested_key=f"ph_slot_rest_{_g}",
+                                               total=_tot, start_rank=11, max_frac=_mx,
                                                status_map=(_tstat or None)
                                                if _KEY == "타이틀" else None)
                                     st.caption("11위부터는 펼치기가 없어요 — "
@@ -2921,7 +2948,13 @@ with tab_ip:
   - 오리지널을 뺀 나머지 구분은 자동으로 탭이 생겨요 — `IP_GUBUN_SHOWN` 만 고치면 돼요.
 - **오리지널(포토이즘) / 오리지널(기본)** = `프레임`별 매출액·건수 순위(경량 집계). 오리지널은 타이틀이 아니라 프레임 단위라 따로 봐요.
   - ⚠️ 오리지널 탭은 **매장 필터가 적용되지 않아요**(날짜·국가만). 다른 탭은 필터바 전체 반영.
-- '전체' 탭은 타이틀이 있는 구분(아티스트·캐릭터·PICK)만 합쳐요(오리지널은 프레임이라 제외).
+- ⚠️ **'전체' 탭은 맨 위 요약과 아래 순위표의 범위가 달라요.**
+  - **맨 위 요약(매출·건수)** = 조회 범위의 **총매출** — 오리지널 2종까지 **다 들어가요**.
+  - **아래 순위표** = 이름이 있는 구분만(**아티스트·캐릭터·PICK·렌탈**). 오리지널은 집계에
+    타이틀·IP명이 없어서(프레임 단위라 그룹 폭증을 막으려 뺐어요) 줄로 세울 수가 없어요.
+  - 그래서 **순위표의 비중은 '이름 있는 구분 합' 기준**이에요. 예로 조회 기간이
+    2026-08 이면 요약은 133억인데 순위표 분모는 58.6억이라, 요약 금액에 비중을 곱하면
+    안 맞아요. 오리지널까지 포함한 구분별 금액은 위 **'IP 구분 (비중·매출)'** 카드에서 봐요.
 
 **판매기간(오픈~종료)** — 지라 티켓의 **계획 오픈일(`startdate`) ~ 종료일(`duedate`)** 기준이에요.
 - 실제 거래일이 아니라 **지라에 등록된 오픈·종료일**을 그대로 보여줘요. (예: `07-01 ~ 07-30`)
@@ -3240,7 +3273,7 @@ with tab_nat:
             helpbox("""
 **국가 × IP구분**
 - 나라마다 **무엇으로 매출이 나는지** 구성을 비교해요. 맨 오른쪽 막대는 **그 나라 안에서의 구성비**(100% 기준이 나라마다 달라요) — 나라끼리 크기를 비교하는 막대가 아니에요.
-- 나누는 축은 `IP구분` 5종 — 아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본). **'매출 추이'·'구좌 타입별 비중'과 같은 분류·같은 색**이에요.
+- 나누는 축은 `IP구분` 6종 — 아티스트 · 캐릭터 · PICK · 오리지널(포토이즘) · 오리지널(기본) · 렌탈. **'매출 추이'·'구좌 타입별 비중'과 같은 분류·같은 색**이에요.
 - 원래 **매장별 분석 탭**에 있던 표예요(2026-08-18 이동). 그땐 그 탭의 전용 필터(국가·상품)를 탔지만, 지금은 **상단 필터바**를 타요 — 그래서 예전과 숫자가 다를 수 있어요.
 """)
 
