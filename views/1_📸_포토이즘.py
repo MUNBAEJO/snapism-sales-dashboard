@@ -373,17 +373,27 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 .st-key-dlbtn [data-testid="stDownloadButton"] button p{
   font-size:11px !important; font-weight:700 !important; letter-spacing:-.01em !important; }
 
-/* 셀렉트박스 = 시안 .minisel (컴팩트·글자 세로중앙) */
-[data-testid="stSelectbox"]{ max-width:240px !important; }
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
+/* 셀렉트박스 = 시안 .minisel (컴팩트·글자 세로중앙)
+   ★★반드시 `[data-testid="stMain"]` 으로 범위를 좁힌다 (2026-09-02).
+     전엔 무범위라 **문서 전체**에 걸렸고, 그래서 다른 화면의 `st.dialog`
+     (문의하기 등) 안 셀렉트박스까지 240px 로 눌리고 오른쪽으로 밀렸다.
+     `inquiry.py` 가 `div[data-testid="stDialog"]` 로 되받아 치는 우회를 넣어
+     막고 있었는데, 그건 증상 처리였다.
+     실측(2026-09-02 · 최소 앱으로 DOM 확인): **st.dialog 는 stMain 밖**
+     BODY 직속 포털에 그려진다(`main.contains(dialog) === false`).
+     그래서 stMain 으로 좁히면 다이얼로그엔 아예 닿지 않는다.
+     ※포토이즘 화면의 셀렉트박스는 전부 메인에 있다(사이드바엔 없음). */
+[data-testid="stMain"] [data-testid="stSelectbox"]{ max-width:240px !important; }
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
   min-height:33px !important; height:33px !important; background:var(--surface-2) !important;
   border:1px solid var(--border-strong) !important; border-radius:8px !important;
   display:flex !important; align-items:center !important; }
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child > div{
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child > div{
   display:flex !important; align-items:center !important; }
-[data-testid="stSelectbox"] div[data-baseweb="select"] div{ font-size:12.5px !important; font-weight:600 !important; }
-[data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]),
-[data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] div{
+  font-size:12.5px !important; font-weight:600 !important; }
+[data-testid="stMain"] [data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]),
+[data-testid="stMain"] [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
   display:flex !important; justify-content:flex-end !important; }
 /* 카드 헤더 드롭다운 = 카드 제목 옆(우상단) 절대배치 */
 .st-key-scard-natsel, .st-key-scard-titlesel, .st-key-scard-nattitle{ position:relative; }

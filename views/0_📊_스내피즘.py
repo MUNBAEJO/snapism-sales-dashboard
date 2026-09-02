@@ -373,18 +373,24 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p{
   color:var(--brand) !important; font-weight:700 !important; }
 
-/* 셀렉트박스(국가·카테고리) = 시안 .minisel (작은 회색) */
-[data-testid="stSelectbox"]{ max-width:210px !important; }
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
+/* 셀렉트박스(국가·카테고리) = 시안 .minisel (작은 회색)
+   ★★`[data-testid="stMain"]` 으로 범위를 좁힌다 (2026-09-02 · 포토이즘과 동일).
+     무범위면 **문서 전체**에 걸려 다른 화면의 `st.dialog`(문의하기) 안
+     셀렉트박스까지 210px 로 눌리고 오른쪽으로 밀린다.
+     실측: st.dialog 는 stMain **밖** BODY 직속 포털에 그려진다
+     (`main.contains(dialog) === false`) → stMain 으로 좁히면 아예 안 닿는다. */
+[data-testid="stMain"] [data-testid="stSelectbox"]{ max-width:210px !important; }
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
   min-height:33px !important; height:33px !important; background:var(--surface-2) !important;
   border:1px solid var(--border-strong) !important; border-radius:8px !important;
   display:flex !important; align-items:center !important; }   /* 글자 세로 중앙정렬 */
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child > div{
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child > div{
   display:flex !important; align-items:center !important; }
-[data-testid="stSelectbox"] div[data-baseweb="select"] div{ font-size:12.5px !important; font-weight:600 !important; }
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] div{
+  font-size:12.5px !important; font-weight:600 !important; }
 /* 제목 옆 컨트롤(세그먼트·셀렉트)은 오른쪽 끝으로(시안 margin-left:auto) */
-[data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]),
-[data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
+[data-testid="stMain"] [data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]),
+[data-testid="stMain"] [data-testid="stElementContainer"]:has(> [data-testid="stSelectbox"]){
   display:flex !important; justify-content:flex-end !important; }
 /* 카드 헤더 드롭다운 = 카드 제목 옆(우상단)에 절대배치.
    제목은 모든 카드 표준(card 타이틀)이라 카드끼리 높이 일치, 드롭다운만 겹쳐 올림. */

@@ -95,8 +95,10 @@ button[data-baseweb="tab"][aria-selected="true"] p{ color:var(--brand) !importan
 [data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child{ background:var(--brand-soft) !important; border-radius:9px 9px 0 0 !important; }
 [data-baseweb="tab-list"] button[data-baseweb="tab"]:first-child p{ color:var(--brand) !important; }
 
-/* 컴팩트 위젯 */
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
+/* 컴팩트 위젯
+   ★stMain 으로 좁힌다 (2026-09-02) — 무범위면 st.dialog 안 셀렉트박스까지 물든다.
+     다이얼로그는 stMain 밖 포털이라 이 한정만으로 안 닿는다. */
+[data-testid="stMain"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child{
   min-height:34px !important; background:var(--surface-2) !important;
   border:1px solid var(--border-strong) !important; border-radius:8px !important; }
 [data-testid="stButtonGroup"]{ background:var(--surface-3) !important; border-radius:8px !important; padding:2px !important; }
