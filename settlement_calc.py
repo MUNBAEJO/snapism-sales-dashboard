@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+from functools import lru_cache as _lru
 from pathlib import Path
 
 import pandas as pd
@@ -32,6 +33,9 @@ BASE_DIR = Path(__file__).parent
 PH_AGG = BASE_DIR / "data" / "master_photoism_agg.parquet"
 PH_RAW = BASE_DIR / "data" / "master_photoism.parquet"
 SN_MASTER = BASE_DIR / "data" / "master.parquet"
+# 테마 수집본 — 원장엔 테마가 없다(theme_pick.THEME_FILE 과 같은 파일).
+# `member_ip_spread` 가 '이 멤버가 어느 IP에 나오나' 를 볼 때만 쓴다.
+THEME_DAILY = BASE_DIR / "data" / "theme_daily.parquet"
 
 
 def data_version() -> float:
@@ -511,7 +515,8 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     #   일어난다. 별첨(member_pivot)은 `_norm_member` 를 태우므로 본문과 별첨의
     #   멤버 수가 서로 달라진다 — 같은 문서에서 기준이 두 개면 안 된다.
     if "mem" in df.columns:
-        df["mem"] = df["mem"].map(_norm_member)
+        _al = _member_alias(titles)          # 타이틀 전용 별칭까지 합쳐 **한 번만** 만든다
+        df["mem"] = df["mem"].map(lambda x: _norm_member(x, _al))
     # ★절사는 현지통화끼리 한다. 환산 후 나누면 환율배수만큼 부푼다.
     df = _fold_prices(df, rates)
     if "구분" in df.columns:
@@ -597,8 +602,56 @@ def fill_open(detail: pd.DataFrame, opened: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── 멤버별 상세 ────────────────────────────────────────────────────────────
-def _member_alias() -> dict:
-    return _alias_store.load().get("aliases", {})
+@_lru(maxsize=64)
+def titles_to_ips(titles: tuple) -> tuple:
+    """타이틀들이 속한 **IP 이름들**. 별칭 범위를 IP 단위로 잡을 때 쓴다.
+
+    타이틀은 회차마다 새로 생기지만(`260722 루네이트` → `260729 루네이트`)
+    IP 이름은 그대로다. 그래서 별칭은 **IP 단위로 저장해야 다음 회차에도 먹는다.**
+    """
+    if not titles:
+        return ()
+    con = _con()
+    try:
+        rows = con.execute(f"""
+            SELECT DISTINCT CAST("IP명" AS VARCHAR) ip
+            FROM read_parquet('{PH_AGG.as_posix()}')
+            WHERE CAST("타이틀" AS VARCHAR) IN ({_sqlist([str(t) for t in titles])})
+              AND COALESCE(CAST("IP명" AS VARCHAR), '') <> ''
+        """).fetchall()
+    except Exception:                                        # noqa: BLE001
+        return ()
+    finally:
+        con.close()
+    return tuple(sorted(r[0] for r in rows))
+
+
+def _member_alias(titles=None) -> dict:
+    """멤버 별칭표. `titles` 를 주면 **그 IP 전용 별칭이 전역을 덮어쓴다.**
+
+    ★★왜 IP 단위가 필요한가 (2026-09-02) —
+      `aliases` 는 전역 `{한글: 영문}` 이라 **같은 한글 이름이 IP마다 다른 사람일 때
+      표현할 방법이 없다.** 실측:
+        `타쿠마` → 루네이트 · **비보이즈**        `Takuma` → LUN8
+        `이안`   → 루네이트 · **아티스트 앵콜 2차**  `Ian`    → LUN8
+      `타쿠마 → Takuma` 를 전역으로 걸면 **비보이즈의 타쿠마까지 딸려간다.**
+      절사 단위가 국가 × 멤버라, 엉뚱하게 합쳐지면 대외 문서 금액이 틀어진다.
+
+    ★키가 타이틀이 아니라 **IP** 인 이유 — 타이틀은 회차마다 새로 생긴다
+      (`260722 루네이트` → `260729 루네이트`). 타이틀에 걸면 **다음 회차마다 다시
+      매핑**해야 한다. IP 이름은 그대로라 한 번 저장하면 계속 먹는다.
+      IP명이 한/영으로 갈린 경우(`루네이트` ↔ `LUN8`)는 그 문서가 담은 IP **전부**에
+      저장하므로 양쪽 다 맞는다.
+
+    ★전역 표는 그대로 둔다 — 기존 411건이 그대로 동작해야 한다.
+    """
+    d = _alias_store.load()
+    out = dict(d.get("aliases", {}))
+    if titles:
+        per = d.get("by_ip", {})
+        for ip in titles_to_ips(tuple(titles)):
+            out.update(per.get(str(ip), {}))
+    return out
 
 
 # ★CMS 데이터에 키릴문자가 섞여 있다. 라틴 알파벳과 글꼴이 같아 눈으로는 못 잡는데
@@ -612,10 +665,17 @@ _CYRILLIC = str.maketrans({
 })
 
 
-def _norm_member(s: str) -> str:
-    """멤버명 정규화 — 키릴문자 치환 → 별칭(한글→영문) 적용."""
+def _norm_member(s: str, alias: dict | None = None) -> str:
+    """멤버명 정규화 — 키릴문자 치환 → 별칭(한글→영문) 적용.
+
+    ★★`alias` 를 **반드시 미리 만들어 넘긴다** (2026-09-02).
+      전엔 인자가 없어서 행마다 `_member_alias()` 를 불렀는데, `JsonStore.load()` 에는
+      캐시가 없어 **행 하나당 파일을 새로 읽고 파싱**했다(실측 356µs/회).
+      `df["mem"].map(_norm_member)` 가 1만 행이면 그것만 3.6초다.
+      안 넘기면 예전처럼 도는 폴백을 남겨 두되(호환), 새 코드는 늘 넘길 것.
+    """
     s = str(s or "").translate(_CYRILLIC).strip()
-    return _member_alias().get(s, s)
+    return (_member_alias() if alias is None else alias).get(s, s)
 
 
 def unmapped_members(*pivots) -> list[str]:
@@ -667,24 +727,79 @@ def member_names(brand: str, titles: list[str], start: str, end: str, frames=Non
         df = con.execute(sql).df()
     finally:
         con.close()
-    out = {_norm_member(x) for x in df["mem"].tolist() if str(x).strip()}
+    _al = _member_alias(titles)
+    out = {_norm_member(x, _al) for x in df["mem"].tolist() if str(x).strip()}
     return sorted(out)
 
 
-def unmapped_names(names) -> list[str]:
-    """한글이 든 이름 중 **별칭이 없는 것**. `unmapped_members` 의 리스트판."""
+def unmapped_names(names, titles=None) -> list[str]:
+    """한글이 든 이름 중 **별칭이 없는 것**. `unmapped_members` 의 리스트판.
+
+    `titles` 를 주면 그 타이틀 전용 별칭도 '있는 것' 으로 친다 —
+    안 그러면 IP 단위로 저장해 둔 이름이 화면에 계속 '정리 필요' 로 남는다.
+    """
     import re
-    alias = _member_alias()
+    alias = _member_alias(titles)
     return sorted({str(m) for m in names
                    if re.search(r"[가-힣]", str(m)) and str(m) not in alias})
 
 
-def set_member_alias(ko: str, en: str) -> None:
-    """한글 멤버명 → 영문 표기 저장. 저장하면 다음 집계부터 열이 합쳐진다."""
+def set_member_alias(ko: str, en: str, titles=None) -> None:
+    """한글 멤버명 → 영문 표기 저장. 저장하면 다음 집계부터 열이 합쳐진다.
+
+    `titles` 를 주면 **그 타이틀들이 속한 IP 에만** 적용된다(IP 단위 별칭).
+    같은 한글 이름이 IP마다 다른 사람일 때 쓴다 — 자세한 이유는 `_member_alias` 주석.
+    안 주면 예전처럼 전역에 저장한다.
+    """
     ko, en = str(ko).strip(), str(en).strip()
     if not ko or not en:
         return
-    _alias_store.mutate(lambda d: d.setdefault("aliases", {}).update({ko: en}))
+    ips = titles_to_ips(tuple(titles)) if titles else ()
+    if ips:
+        def _put(d):
+            bi = d.setdefault("by_ip", {})
+            for ip in ips:
+                bi.setdefault(str(ip), {})[ko] = en
+
+        _alias_store.mutate(_put)
+    else:
+        # titles 를 줬는데 IP를 못 찾은 경우도 전역으로 떨어진다 — 저장 자체를
+        # 버리면 사용자가 매핑을 했는데 아무 일도 안 일어난 것처럼 보인다.
+        _alias_store.mutate(lambda d: d.setdefault("aliases", {}).update({ko: en}))
+
+
+def member_ip_spread(names, brand: str = "photoism") -> dict:
+    """한글 멤버명 → 그 이름이 나오는 **IP 이름들**. 전역 저장이 안전한지 판단용.
+
+    IP가 하나뿐이면 전역으로 저장해도 남의 IP를 건드릴 일이 없다.
+    둘 이상이면 **타이틀 단위로 저장해야 한다** — 안 그러면 다른 IP의 동명이인이
+    같이 합쳐진다(타쿠마가 루네이트·비보이즈 둘 다에 있는 경우).
+    """
+    names = [str(n).strip() for n in names if str(n).strip()]
+    if not names or brand != "photoism":
+        return {}
+    con = _con()
+    try:
+        rows = con.execute(f"""
+            WITH t2ip AS (
+              SELECT DISTINCT CAST("타이틀" AS VARCHAR) t, CAST("IP명" AS VARCHAR) ip
+              FROM read_parquet('{PH_AGG.as_posix()}')
+              WHERE COALESCE(CAST("IP명" AS VARCHAR),'') <> ''
+            )
+            SELECT CAST(d."프레임" AS VARCHAR) f, m.ip
+            FROM read_parquet('{THEME_DAILY.as_posix()}') d
+            JOIN t2ip m ON CAST(d."타이틀" AS VARCHAR) = m.t
+            WHERE CAST(d."프레임" AS VARCHAR) IN ({_sqlist(names)})
+            GROUP BY 1, 2
+        """).fetchall()
+    except Exception:                                        # noqa: BLE001
+        return {}                                            # 판단 못 하면 조용히 비운다
+    finally:
+        con.close()
+    out: dict[str, set] = {}
+    for f, ip in rows:
+        out.setdefault(str(f), set()).add(str(ip))
+    return {k: sorted(v) for k, v in out.items()}
 
 
 def _allocate_krw(df: "pd.DataFrame", targets: dict | None = None) -> "pd.Series":
@@ -834,7 +949,8 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
     df["국가"] = df["국가"].map(lambda x: NAT_KO.get(x, x))
-    df["member"] = df["member"].map(_norm_member)
+    _al = _member_alias(titles)              # 본문(country_detail)과 **같은 기준**
+    df["member"] = df["member"].map(lambda x: _norm_member(x, _al))
     # 별칭·키릴 정규화로 같은 멤버가 합쳐질 수 있으므로 다시 모은다.
     df = df.groupby(["국가", "member"], as_index=False).agg(
         num=("num", "sum"), krw_raw=("krw_raw", "sum"),

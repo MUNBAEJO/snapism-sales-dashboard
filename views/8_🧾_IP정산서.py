@@ -785,7 +785,9 @@ def make_panel():
                                             sc.data_version())
             except Exception:                                  # noqa: BLE001
                 pass
-    _un = sc.unmapped_names(_mem_all)
+    # 이 문서가 담는 타이틀 전부 — IP 단위 별칭의 저장/조회 키다.
+    _all_titles = tuple(sorted({t for _, ts in picks.values() for t in (ts or [])}))
+    _un = sc.unmapped_names(_mem_all, _all_titles)
     if _un:
         _en = [m for m in sorted(set(_mem_all)) if m not in _un]
         # ★로마자로 '짐작' 한 추천을 얹는다 — 단, **저장은 사람이 한다**(name_alias 철학).
@@ -797,18 +799,46 @@ def make_panel():
         except Exception:                                      # noqa: BLE001
             _sug = {}
         _strong = {k: v["en"] for k, v in _sug.items() if v.get("strong")}
+        # ★★전역 저장이 위험한 이름을 데이터로 가려낸다 (2026-09-02).
+        #   기준은 '여러 IP에 나오나' 가 **아니다** — 그러면 거의 모든 이름이 걸린다
+        #   (슬기는 `SM ent`·`성수중앙_SM ent`·`연남3호_SM ent` 셋에 나오는데 같은 사람이다).
+        #   진짜 기준은 **이 문서 밖의 IP에도 그 이름이 있는가** 다.
+        #     · 타쿠마 → 루네이트·비보이즈 · 이 문서가 루네이트면 **밖(비보이즈)에도 있다**
+        #       → 전역으로 걸면 비보이즈의 타쿠마가 딸려간다 → 이 IP에만 저장
+        #     · 슬기  → SM ent 3종 · 전부 이 문서 안 → 밖에 없으니 전역도 안전
+        #   절사 단위가 국가 × 멤버라, 엉뚱하게 합쳐지면 대외 문서 금액이 틀어진다.
+        try:
+            _spread = sc.member_ip_spread(_un)
+            _doc_ips = set(sc.titles_to_ips(_all_titles))
+        except Exception:                                      # noqa: BLE001
+            _spread, _doc_ips = {}, set()
+        # 이 문서 밖 IP에도 있는 이름 = 전역 저장 금지
+        _multi = {k for k, v in _spread.items() if set(v) - _doc_ips}
+
+        def _save_alias(ko, en):
+            """문서 밖 IP에도 있는 이름이면 이 IP들에만, 아니면 전역."""
+            sc.set_member_alias(ko, en,
+                                titles=_all_titles if ko in _multi else None)
+
         with st.expander(f"🔤 멤버 이름 정리 필요 {len(_un)}명 — 한글·영문이 "
                          "따로 잡혀 있어요", expanded=False):
             st.caption("같은 사람인데 한글 이름과 영문 이름이 각각 한 명으로 세어져요. "
                        "짝을 맞춰 두면 다음 발행부터 한 열로 합쳐져요. "
                        "**절사가 멤버 단위라 금액도 조금 달라져요.**")
+            if _multi:
+                st.caption(f"🔒 이 중 **{len(_multi)}명**은 같은 이름이 여러 IP에 있어요 "
+                           f"({', '.join(sorted(_multi)[:4])}"
+                           f"{' 외' if len(_multi) > 4 else ''}). "
+                           "다른 IP의 동명이인이 딸려가지 않게 **이 IP에서만** 적용해요.")
             if _strong and CAN_EDIT:
                 _cA, _cB = st.columns([3, 2])
                 if _cA.button(f"✅ 추천 {len(_strong)}명 한 번에 저장 "
                               "(로마자 정확 일치)", key="mal_bulk"):
                     for _k, _e in _strong.items():
-                        sc.set_member_alias(_k, _e)
-                    st.success(f"{len(_strong)}명 저장했어요.")
+                        _save_alias(_k, _e)
+                    _n_ip = sum(1 for _k in _strong if _k in _multi)
+                    st.success(f"{len(_strong)}명 저장했어요."
+                               + (f" (그중 {_n_ip}명은 이 IP에서만)" if _n_ip else ""))
                     st.rerun()
                 _cB.caption("아래에서 하나씩 확인해 저장해도 돼요.")
             for _i, _ko in enumerate(_un[:30]):
@@ -818,7 +848,10 @@ def make_panel():
                 if _s:
                     _lbl += (f"　↔ `{_s['en']}`"
                              + ("" if _s.get("strong") else " · 확인 필요"))
-                c1.markdown(_lbl)
+                if _ko in _multi:
+                    _lbl += (f"　<span style='font-size:11px;color:#b45309'>🔒 이 IP에서만"
+                             f" · {len(_spread.get(_ko, []))}개 IP에 있는 이름</span>")
+                c1.markdown(_lbl, unsafe_allow_html=True)
                 _opts = ["(고르기)"] + _en
                 # 강한 추천만 미리 고른다. 약한 추천은 라벨로만 알리고 기본은 (고르기).
                 _idx = (_opts.index(_s["en"]) if (_s and _s.get("strong")
@@ -827,7 +860,7 @@ def make_panel():
                                      key=f"mal_{_ko}", label_visibility="collapsed")
                 if c3.button("저장", key=f"malb_{_ko}", disabled=not CAN_EDIT
                              or _pick == "(고르기)"):
-                    sc.set_member_alias(_ko, _pick)
+                    _save_alias(_ko, _pick)
                     st.rerun()
             if len(_un) > 30:
                 st.caption(f"… 외 {len(_un) - 30}명")
