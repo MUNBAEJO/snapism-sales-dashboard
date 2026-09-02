@@ -723,8 +723,28 @@ def _write_member_summary(ws, a: pd.DataFrame):
     _fit_page(ws)
 
 
+def _drop_mini(a: pd.DataFrame) -> pd.DataFrame:
+    """미니스티커(`-MINI`) 프레임을 **내보내는 표에서만** 뺀다 (2026-09-02 요청).
+
+    ★원장·집계에는 그대로 남는다. 수집·저장은 손대지 않고 여기서만 거른다 —
+      나중에 값이 생기면 데이터는 이미 있으니 이 줄만 지우면 된다.
+    ★전량 실측(2026-09-02): `-MINI` 는 **59종이고 전 기간 촬영수·주문수·금액이 0**,
+      그리고 '촬영·주문이 0 인 프레임' 집합과 **정확히 일치**한다(59 = 59).
+      MINI 를 이름에 품은 것도 59종 전부가 `-MINI` 로 끝난다(부분일치 오폭 없음).
+      → 숫자는 하나도 안 바뀌고, 늘 0 이던 줄만 사라진다.
+    ★프레임 기준으로 거른다(멤버가 아니라). 멤버는 별칭에 따라 합쳐질 수 있어
+      원본인 프레임이 기준으로 정확하다.
+    ★여기(build_xlsx)에서만 거르는 게 중요하다 — annotate 자체를 고치면
+      detect_unmatched 가 이 프레임들을 **'미등록 IP' 로 잘못 잡는다**
+      (그쪽은 annotate 를 따로 불러 matched 를 만든다).
+    """
+    if a.empty or "프레임" not in a.columns:
+        return a
+    return a[~a["프레임"].astype(str).str.upper().str.endswith("-MINI")]
+
+
 def build_xlsx(df: pd.DataFrame) -> bytes:
-    a = annotate(df)
+    a = _drop_mini(annotate(df))
     all_dates = sorted(a["날짜"].unique())
     ch = load_changes()
     cidx = _changes_index(ch)
