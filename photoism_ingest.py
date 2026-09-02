@@ -25,7 +25,7 @@ import time
 import json
 import pandas as pd
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 BASE_DIR    = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.json"
@@ -248,6 +248,31 @@ def main():
         return not (end_date and s > end_date + MARGIN)
 
     sel = [f for f in all_files if cutoff is None or _in_range(f)]
+
+    # ★★원본이 압축돼 있으면 **멈춘다** (2026-09-02).
+    #   아래 교체는 `날짜 >= cutoff` 를 통째로 새 데이터로 갈아 끼운다(322행 근처).
+    #   그런데 raw_archive.py 로 묶어 둔 달은 .xlsx 가 없어 읽히지 않으므로,
+    #   그 기간을 포함해 재빌드하면 **원장에서 그 달이 조용히 사라진다.**
+    #   (일상 적재는 cutoff 가 최근이라 여기 안 걸린다 — 전체 재빌드만 해당.)
+    #   되살리려면: python raw_archive.py restore 202603
+    if cutoff is not None:
+        _arc = RAW_DIR / "_archive"
+        _have = {f.stem.rsplit("_", 1)[-1][:6] for f in all_files
+                 if f.stem.rsplit("_", 1)[-1][:8].isdigit()}
+        _end = end_date or date.today()
+        _want, _c = set(), date(cutoff.year, cutoff.month, 1)
+        while _c <= _end:
+            _want.add(f"{_c.year}{_c.month:02d}")
+            _c = date(_c.year + (_c.month == 12), _c.month % 12 + 1, 1)
+        _packed = sorted(_want - _have) if _arc.exists() else []
+        _packed = [m for m in _packed if (_arc / f"photoism_{m}.tar.xz").exists()]
+        if _packed:
+            log("[중단] 원본이 압축돼 있어 이 기간을 재빌드하면 원장이 비어요: "
+                + ", ".join(_packed))
+            log("       먼저 되돌리세요 → "
+                + " · ".join(f"python raw_archive.py restore {m}" for m in _packed))
+            raise SystemExit(1)
+
     if not sel:
         log("새로 처리할 파일이 없습니다 (이미 최신).")
         return

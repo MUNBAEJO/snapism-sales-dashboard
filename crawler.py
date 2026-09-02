@@ -30,7 +30,20 @@ def load_config():
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
-    print(line)
+    # ★★콘솔이 cp949 라 em대시(—) 같은 글자에서 print 가 **예외를 던진다** (2026-09-02).
+    #   이게 조용한 문제가 아니었다 — 환율 갱신 성공 메시지에 `—` 가 들어 있어서
+    #   (아래 '환율 갱신 완료 — …') print 가 죽고, 그 예외를 부르는 쪽 except 가
+    #   받아 **매일 "[경고] 환율 갱신 오류" 를 찍고 있었다.** 실제로는 매일 정상
+    #   갱신됐는데 8일 연속 오류로 기록됐다. 진짜 환율 실패도 같은 줄로 보이니
+    #   경보가 잡음에 묻힌다(환율이 1:1 로 떨어지면 해외 매출이 조용히 망가진다).
+    #   파일 기록이 print **뒤**라, 죽으면 로그 파일에도 안 남았다.
+    #   → 콘솔로 못 쓰는 글자는 치환해 흘리고, 파일에는 원문 그대로 남긴다.
+    #   (photoism_ingest.log 에 이미 있던 방어를 여기에도 맞춘다.)
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(line.encode(enc, errors="replace").decode(enc, errors="replace"))
     LOG_DIR.mkdir(exist_ok=True)
     with open(LOG_DIR / "crawler.log", "a", encoding="utf-8") as f:
         f.write(line + "\n")
