@@ -79,7 +79,7 @@ def _gubun_filter() -> str:
     return f"AND ({ip_classify.IP_GUBUN_SQL}) IN ({g})"
 
 
-def _sn_gubun() -> str:
+def _sn_gubun(cats=None) -> str:
     """스내피즘 원거래에도 후보 목록과 **같은 정산대상 판정**을 건다.
 
     ★2026-08-04(`a6087c0`) 에 생긴 함수다. 취지는 **후보 목록과 정산 집계를
@@ -93,8 +93,26 @@ def _sn_gubun() -> str:
       `settlement_map.SNAPISM_SETTLE_SQL` 주석에 적어 뒀다.
     ★**식은 거기 한 곳에만 둔다.** 두 곳에 복사하면 갈린다 — `a6087c0` 이
       고쳐야 했던 게 바로 그 갈림이었다.
+
+    cats — 고른 **판매 항목**(상품 카테고리: 와이드 스티커·미니 스티커·포토카드(IP)·
+      폴라로이드…). **None 이면 안 거른다**(=전부).
+    ★★왜 필요한가 (2026-09-03) — 한 IP 안에 **계약이 둘**인 경우가 있다.
+      리센느 2026-08: `와이드 스티커`(기획전 반팔입고나와, `CANDIP-32744`) 2,490만 +
+      `미니 스티커`(메이 생일, `CANDIP-33333`) 220만. 정산 타이틀 축이 `프레임 이름`
+      하나(=`리센느`)라 둘이 한 덩어리로 묶여, 와이드만 있는 티켓에 미니가 딸려 왔다.
+      `a6087c0` 이 말한 "같은 IP라도 카테고리가 다르면 정산 조건이 다르다" 가 이것이다.
+    ★★`None` 과 `()` 는 다르다 — None = 축을 안 건드림(전부), () = 하나도 안 고름.
+      섞으면 '전부'가 '아무것도 아님'이 돼 문서가 0원으로 나온다(`_title_pred` 와 같은 규칙).
+    ★값은 `country_detail` 의 `구분` 과 **같은 식**으로 만든다(빈칸→'기타').
+      다르게 만들면 화면에서 고른 항목과 문서의 행이 어긋난다.
     """
-    return f"AND {smap.SNAPISM_SETTLE_SQL}"
+    out = f"AND {smap.SNAPISM_SETTLE_SQL}"
+    if cats is not None:
+        if not cats:
+            return "AND FALSE"
+        out += (" AND COALESCE(NULLIF(trim(CAST(\"상품 카테고리\" AS VARCHAR)), ''),"
+                f" '기타') IN ({_sqlist(list(cats))})")
+    return out
 
 
 # ── 미니스티커(-MINI) 는 정산에서 뺀다 ──────────────────────────────────
@@ -459,7 +477,7 @@ def _fold_prices(df: pd.DataFrame, rates: dict) -> pd.DataFrame:
 
 # ── 국가별 상세 ────────────────────────────────────────────────────────────
 def country_detail(brand: str, titles: list[str], start: str, end: str,
-                   rates: dict, frames=None) -> pd.DataFrame:
+                   rates: dict, frames=None, cats=None) -> pd.DataFrame:
     """국가 · 통화 · 수량 · 현지매출 · 매출(KRW). 수량은 현지통화끼리 나눈다."""
     if not titles:
         return pd.DataFrame(columns=["국가", "unit", "수량", "현지", "매출액", "건수"])
@@ -513,7 +531,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
                          TRY_CAST("상품 단가" AS DOUBLE) AS up
                   FROM read_parquet('{SN_MASTER.as_posix()}')
                   WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                    AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+                    AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun(cats)}
                     AND NOT COALESCE("취소 여부", FALSE)
                 )
                 SELECT COALESCE(구분, '기타') AS 구분, "국가",
@@ -554,7 +572,8 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     return df.sort_values("매출액", ascending=False).reset_index(drop=True)
 
 
-def revenue_countries(brand: str, titles: list[str], start: str, end: str) -> list[str]:
+def revenue_countries(brand: str, titles: list[str], start: str, end: str,
+                      cats=None) -> list[str]:
     """그 기간에 **매출이 난 국가** 이름만. 국가별 요율 입력칸을 그릴 때 쓴다.
 
     ★country_detail 을 부르면 안 된다 — 요율 화면은 금액 미리보기보다 먼저 뜨는데
@@ -573,7 +592,7 @@ def revenue_countries(brand: str, titles: list[str], start: str, end: str) -> li
         else:
             sql = f"""SELECT DISTINCT "국가" FROM read_parquet('{SN_MASTER.as_posix()}')
                       WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                        AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+                        AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun(cats)}
                         AND NOT COALESCE("취소 여부", FALSE)"""
         names = con.execute(sql).df()["국가"].astype(str).tolist()
     finally:
@@ -766,7 +785,8 @@ def unmapped_members(*pivots) -> list[str]:
     return sorted(out)
 
 
-def member_names(brand: str, titles: list[str], start: str, end: str, frames=None) -> list[str]:
+def member_names(brand: str, titles: list[str], start: str, end: str, frames=None,
+                 cats=None) -> list[str]:
     """그 타이틀들의 **멤버 이름만** (정규화 후, 금액 안 셈). 매핑 화면용.
 
     ★`member_pivot` 을 부르면 금액 배분까지 돌아 무겁다. 이름만 필요하므로
@@ -792,7 +812,7 @@ def member_names(brand: str, titles: list[str], start: str, end: str, frames=Non
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                   {store_rules.not_test_sql()}
-                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun(cats)}
             """
         df = con.execute(sql).df()
     finally:
@@ -949,7 +969,8 @@ def _allocate(df: "pd.DataFrame", targets: dict | None = None) -> "pd.Series":
 
 def member_pivot(brand: str, titles: list[str], start: str, end: str,
                  rates: dict,
-                 targets: dict | None = None, frames=None) -> tuple[pd.DataFrame, pd.DataFrame]:
+                 targets: dict | None = None, frames=None,
+                 cats=None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """국가 × 멤버의 **(수량, 매출KRW)** 두 표. 두 브랜드 다 나온다 —
     포토이즘은 '프레임 이름', 스내피즘은 '상품 이름' 이 멤버다.
 
@@ -1007,7 +1028,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                                 THEN 1 ELSE 0 END) AS up_cnt
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun(cats)}
                   AND NOT COALESCE("취소 여부", FALSE)
                   AND CAST("최종 결제 금액" AS BIGINT)
                       + CAST("쿠폰 할인 금액" AS BIGINT) <> 0
@@ -1039,7 +1060,8 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
                                        fill_value=0)
 
 
-def price_table(brand: str, titles: list[str], start: str, end: str, frames=None) -> pd.DataFrame:
+def price_table(brand: str, titles: list[str], start: str, end: str, frames=None,
+                cats=None) -> pd.DataFrame:
     """국가별 평균 단가. 스내피즘은 **상품 형태마다 단가가 다르다** → 형태까지 쪼갠다.
     ★0원 거래는 평균에서 뺀다(AVG(NULLIF(...,0))). 넣으면 실제보다 낮아진다."""
     if not titles:
@@ -1068,7 +1090,7 @@ def price_table(brand: str, titles: list[str], start: str, end: str, frames=None
                        AVG(NULLIF(TRY_CAST("상품 단가" AS DOUBLE), 0)) AS 단가
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun(cats)}
                   AND NOT COALESCE("취소 여부", FALSE)
                 GROUP BY 1,3
             """).df()
@@ -1164,7 +1186,7 @@ def set_partner(brand: str, ticket: str, agency_name: str, mgmt_name: str,
 
 
 def cancel_amount(brand: str, titles: list[str], start: str, end: str,
-                  rates: dict, frames=None) -> int:
+                  rates: dict, frames=None, cats=None) -> int:
     """그 기간 취소 금액(원화, 양수). 정산서 표지에 '취소 금액'으로 적는다.
 
     취소는 음수 거래로 들어온다. 매출액에는 이미 차감돼 있고, 이 값은
@@ -1206,7 +1228,7 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
                        + CAST("쿠폰 할인 금액" AS BIGINT)) * {rate})) AS BIGINT) AS v
                 FROM read_parquet('{SN_MASTER.as_posix()}')
                 WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun()}
+                  AND "프레임 이름" IN ({_sqlist(titles)}) {_sn_gubun(cats)}
                   AND CAST("최종 결제 금액" AS BIGINT)
                       + CAST("쿠폰 할인 금액" AS BIGINT) < 0"""
         v = con.execute(q).fetchone()[0]
@@ -1281,7 +1303,8 @@ def store_versions() -> tuple[float, float, float]:
 
 def build_context(picks: dict, start: str, end: str, ip_name: str,
                   rates: dict, rate_date: str, issued: str,
-                  rate_source: str = "", frames: dict | None = None) -> dict:
+                  rate_source: str = "", frames: dict | None = None,
+                  cats: dict | None = None) -> dict:
     """PDF 한 부를 만드는 데 필요한 값을 한 번에 모은다.
 
     picks = {brand: ticket 또는 [ticket, ...]}.
@@ -1299,6 +1322,8 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
         넘긴다. 한 곳만 빠뜨리면 표끼리 안 맞는 문서가 나간다.
     """
     _fr = frames or {}
+    # ★상품 축(스내피즘). frames 와 같은 모양의 {브랜드: 목록} 이고 None 이면 전부.
+    _ct = cats or {}
     ctx = {"ip": ip_name, "start": start, "end": end, "issued": issued,
            "rate_date": rate_date, "rate_source": rate_source,
            "details": {}, "pivots": {}, "pivots_rev": {}, "prices": {},
@@ -1315,7 +1340,9 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
             continue
         ticket = tickets[0]
         _bf = _fr.get(brand)
-        d = fill_open(country_detail(brand, titles, start, end, rates, frames=_bf),
+        _bc = _ct.get(brand)
+        d = fill_open(country_detail(brand, titles, start, end, rates, frames=_bf,
+                                     cats=_bc),
                       open_countries(brand, start, end))
         ctx["details"][brand] = d
         # 별첨 합계를 본문 국가 소계에 맞춘다 — 같은 문서에서 두 숫자가 다르면 안 된다.
@@ -1326,7 +1353,7 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
             q, k = _tg.get(r["국가"], (0, 0))
             _tg[r["국가"]] = (q + int(r["수량"]), k + int(r["매출액"]))
         ctx["pivots"][brand], ctx["pivots_rev"][brand] = member_pivot(
-            brand, titles, start, end, rates, _tg, frames=_bf)
+            brand, titles, start, end, rates, _tg, frames=_bf, cats=_bc)
         ctx["titles"][brand] = titles
         ctx["rs"][brand] = get_rs(brand, ticket)
         ctx["mg"][brand] = get_mg(brand, ticket)
@@ -1355,7 +1382,7 @@ def build_context(picks: dict, start: str, end: str, ip_name: str,
             ctx["tickets"][brand] = None
         for _, r in d.iterrows():
             ctx["units"].setdefault(r["국가"], r["unit"])
-        pt = price_table(brand, titles, start, end, frames=_bf)
+        pt = price_table(brand, titles, start, end, frames=_bf, cats=_bc)
         ctx["prices"][brand] = {
             nat: dict(zip(g["형태"], g["단가"])) for nat, g in pt.groupby("국가")
         }

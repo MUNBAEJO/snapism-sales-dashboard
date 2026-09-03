@@ -407,11 +407,13 @@ def _axes_cached(titles_key, start, end, dataver):
 
 
 @st.cache_data(ttl=900, max_entries=16, show_spinner=False)
-def _detail_cached(brand, titles_key, start, end, fx_key, dataver, frames_key=None):
+def _detail_cached(brand, titles_key, start, end, fx_key, dataver, frames_key=None,
+                   cats_key=None):
     rates, _, _ = _rates(end, fx_key)
     return sc.fill_open(
         sc.country_detail(brand, list(titles_key), start, end, rates,
-                          frames=list(frames_key) if frames_key is not None else None),
+                          frames=list(frames_key) if frames_key is not None else None,
+                          cats=list(cats_key) if cats_key is not None else None),
         sc.open_countries(brand, start, end))
 
 
@@ -443,9 +445,50 @@ def make_panel():
     # ★기본은 두 축 다 '전체' 다. 그러면 아래로 넘어가는 frames 가 None 이 되어
     #   **지금까지와 1원도 다르지 않다**(검증 기준). 실제로 세 타이틀에서 확인함.
     frames_by_brand = {}
+    cats_by_brand = {}
     _axes_by_brand = {}
     for b, (tks, titles) in picks.items():
         if not titles:
+            continue
+        # ── 스내피즘: 판매 항목으로 좁히기 ──────────────────────────────
+        # ★★한 IP 안에 **계약이 둘**인 경우가 있다 (2026-09-03).
+        #   리센느 2026-08: `와이드 스티커`(기획전 반팔입고나와, `CANDIP-32744`) 2,490만
+        #   + `미니 스티커`(메이 생일, `CANDIP-33333`) 220만. 정산 타이틀 축이
+        #   `프레임 이름` 하나(=`리센느`)라 둘이 한 덩어리로 묶여, **와이드만 있는
+        #   티켓에 미니가 딸려 왔다.** `a6087c0` 이 말한 "같은 IP라도 카테고리가
+        #   다르면 정산 조건이 다르다" 가 이 상황이다.
+        # ★기본은 **전체**다 — 안 건드리면 `cats` 가 None 이라 지금까지와 1원도 다르지 않다.
+        # ★항목이 하나뿐이면 고를 게 없으므로 칸을 그리지 않는다(화면을 안 어지럽힌다).
+        # ★폴라릿처럼 **일부러 같이 보는** 조합도 있다(2026-08-11 확정) — 그래서
+        #   자동으로 가르지 않고 사람이 고르게 둔다.
+        if b == "snapism":
+            _cd = _detail_cached(b, tuple(titles), S, E, fx.version(),
+                                 sc.data_version())
+            _cl = []
+            if not _cd.empty and "구분" in _cd.columns:
+                _g = (_cd.groupby("구분", as_index=False)["매출액"].sum()
+                        .sort_values("매출액", ascending=False))
+                # ★0원짜리는 후보에서 뺀다 — `매출 없음` 은 fill_open 이 매출 없는
+                #   나라에 넣는 **자리표**라 고를 대상이 아니다(고르면 0원 문서가 된다).
+                _cl = [(str(r["구분"]), int(r["매출액"])) for _, r in _g.iterrows()
+                       if int(r["매출액"]) != 0]
+            if len(_cl) > 1:
+                _cn = [c for c, _ in _cl]
+                _cm = dict(_cl)
+                with st.expander(
+                        f"{sm.BRAND_LABEL.get(b, b)} — 판매 항목으로 좁히기"
+                        f"  ({len(_cn)}종)", expanded=False):
+                    st.caption("비워 두면 **전체**예요. 티켓이 상품별로 나뉘어 있으면 "
+                               "그 상품만 고르세요.")
+                    _sc_ = st.multiselect(
+                        "판매 항목", _cn, default=[], key=f"pk_cat_{b}",
+                        format_func=lambda x: f"{x}  ({_cm.get(x, 0):,}원)",
+                        disabled=not CAN_EDIT)
+                    if _sc_:
+                        cats_by_brand[b] = tuple(_sc_)
+                        _tot = sum(_cm.get(x, 0) for x in _sc_)
+                        st.caption(f"　└ 고른 항목 {len(_sc_)}종 · **{_fmt(_tot)}원** "
+                                   f"(전체 {_fmt(sum(_cm.values()))}원)")
             continue
         ax = _axes_cached(tuple(titles), S, E, sc.data_version())
         _axes_by_brand[b] = ax
@@ -585,8 +628,15 @@ def make_panel():
         tf = frames_by_brand.get(b)
         return "" if tf is None else ";".join(f"{t}={','.join(fs)}" for t, fs in tf)
 
+    # ★고른 판매 항목도 같은 이유로 축에 넣는다 (2026-09-03). 안 넣으면 상품을
+    #   좁혀 놓고 '만들기' 를 다시 안 눌렀을 때 **넓은 범위로 만든 옛 PDF** 가
+    #   그대로 첨부돼 대외로 나간다 — 바로 위 멤버 축과 같은 병이다.
+    def _csig(b):
+        cc = cats_by_brand.get(b)
+        return "" if cc is None else ",".join(cc)
+
     _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}>{_rsig(b, tks)}"
-                    f">{_fsig(b)}"
+                    f">{_fsig(b)}>{_csig(b)}"
                     for b, (tks, titles) in sorted(picks.items())) + f"‖{S}‖{E}"
     if st.session_state.get("_sig") != _sig:
         st.session_state["_sig"] = _sig
@@ -789,7 +839,7 @@ def make_panel():
             continue
         _fk = frames_by_brand.get(b)      # 이미 해시 가능한 (타이틀, 프레임…) 튜플
         d = _detail_cached(b, tuple(titles), S, E, fx.version(), sc.data_version(),
-                           _fk)
+                           _fk, cats_by_brand.get(b))
         if d.empty:                 # 그 기간 매출 행이 없으면 문서에도 안 들어간다
             continue
         shown.append(b)
@@ -1009,7 +1059,7 @@ def make_panel():
             ctx = sc.build_context({b: t for b, (t, _) in picks.items() if t},
                                    S, E, ipn, RATES, EFF or E,
                                    date.today().isoformat(), SRC,
-                                   frames=frames_by_brand)
+                                   frames=frames_by_brand, cats=cats_by_brand)
             # ★★먼저 만들어 보고, 성공했을 때만 발행 기록을 남긴다 (2026-08-05).
             #   전엔 record_issue 가 앞에 있어서, 한 부도 못 만들어도 버전이 올라갔다.
             #   실제로 대한축구협회가 v1~v4 까지 쌓이는 동안 PDF 는 0부였다.
