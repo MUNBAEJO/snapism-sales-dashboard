@@ -102,6 +102,12 @@ def _rows(titles, start: str, end: str) -> pd.DataFrame:
             FROM read_parquet('{THEME_FILE.as_posix()}')
             WHERE CAST("타이틀" AS VARCHAR) IN ({_sqlist(titles)})
               AND TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              -- ★★미니스티커는 정산 대상이 아니다 (2026-09-03 사용자 확정).
+              --   지금은 무료라 금액이 0이어서 아래 HAVING 에 우연히 걸러지지만,
+              --   **나중에 추가금액이 붙으면 말없이 선택지에 나타난다.**
+              --   금액이 아니라 **이름으로** 막아야 그때도 계속 빠져 있다.
+              --   (금액 쪽 차단은 settlement_calc._mini_filter 에 같이 있다)
+              AND UPPER(TRIM(CAST("프레임" AS VARCHAR))) NOT LIKE '%-MINI'
             GROUP BY 1, 2, 3
             HAVING SUM("최종결제금액") > {_MIN_AMT}
         """).df()

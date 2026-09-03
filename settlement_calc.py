@@ -95,6 +95,24 @@ def _sn_gubun() -> str:
     return f'AND "카테고리" IN ({g})'
 
 
+# ── 미니스티커(-MINI) 는 정산에서 뺀다 ──────────────────────────────────
+# ★★**지금 0원이라 빼는 게 아니다** (2026-09-03 사용자 확정).
+#   미니는 현재 **무료로 판매 중**이라 금액이 0이지만, **나중에 추가금액이 붙을 수
+#   있다.** 그때 아무 조치를 안 하면 **말없이 정산에 섞여 들어간다** — 대외 문서라
+#   그게 제일 위험하다. 값이 붙기 전에 지금 막아 둔다.
+# ★그래서 '금액 0이면 제외' 같은 조건으로 쓰지 않는다. **이름으로** 뺀다.
+#   값이 생겨도 계속 빠져 있어야, 넣을지 말지를 사람이 그때 정할 수 있다.
+# ★같은 규칙이 SM 촬영수 엑셀에도 있다(`sm_report._drop_mini`, c7ecd43).
+#   거긴 표시용이고 여기는 **금액**이라 더 엄하게 본다.
+# ★되살릴 땐 이 함수가 빈 문자열을 돌려주게 하면 된다 — 한 곳만 고치면 된다.
+MINI_SUFFIX = "-MINI"
+
+
+def _mini_filter(col: str) -> str:
+    """미니스티커 프레임 제외 절. `col` 은 프레임 이름이 든 열."""
+    return f" AND UPPER(TRIM(CAST({col} AS VARCHAR))) NOT LIKE '%{MINI_SUFFIX}'"
+
+
 def _sqlist(vals) -> str:
     """문자열 리스트 → SQL IN 절. 작은따옴표는 두 번 써서 이스케이프."""
     esc = [str(v).replace("'", "''") for v in vals]
@@ -467,7 +485,7 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
                     {_title_pred(titles, start, end, frames)}
-                    {_gubun_filter()}
+                    {_gubun_filter()}{_mini_filter('"프레임 이름"')}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
                   SELECT *, {_ph_num(cpn, coin)} AS num
@@ -764,7 +782,7 @@ def member_names(brand: str, titles: list[str], start: str, end: str, frames=Non
                 WHERE TRY_CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
                   {store_rules.not_test_sql()}
                   {_title_pred(titles, start, end, frames)}
-                  {_gubun_filter()}
+                  {_gubun_filter()}{_mini_filter('"프레임 이름"')}
             """
         else:
             sql = f"""
@@ -962,7 +980,7 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
                     {_title_pred(titles, start, end, frames)}
-                    {_gubun_filter()}
+                    {_gubun_filter()}{_mini_filter('"프레임 이름"')}
                     AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 ), f AS (
                   SELECT *, {_ph_num(cpn, coin)} AS num
@@ -1037,7 +1055,7 @@ def price_table(brand: str, titles: list[str], start: str, end: str, frames=None
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
                   {_title_pred(titles, start, end, frames)}
-                  {_gubun_filter()}
+                  {_gubun_filter()}{_mini_filter('"프레임 이름"')}
                   AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
                 GROUP BY 1,3
             """).df()
@@ -1178,7 +1196,7 @@ def cancel_amount(brand: str, titles: list[str], start: str, end: str,
               --   장비 목록은 진작 빼고 있었는데 매출만 남아
               --   '1대당 매출' 의 분자·분모가 어긋나 있었다.
               {store_rules.not_test_sql()}
-                  {_title_pred(titles, start, end, frames)} {_gubun_filter()}
+                  {_title_pred(titles, start, end, frames)} {_gubun_filter()}{_mini_filter('"프레임 이름"')}
                   AND CAST("최종 결제 금액" AS BIGINT) < 0"""
         else:
             q = f"""
