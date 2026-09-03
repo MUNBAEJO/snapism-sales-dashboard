@@ -424,10 +424,38 @@ def make_panel():
         _thn = [x["이름"] for x in ax["themes"]]
         _frn = [x["이름"] for x in ax["frames"]]
         _amt = {x["이름"]: x["금액"] for x in ax["frames"]}
+        _arts = ax.get("artists") or []
+        _alab = f" · 아티스트 {len(_arts)}명" if _arts else ""
         with st.expander(
                 f"{sm.BRAND_LABEL.get(b, b)} — 테마 · 멤버로 좁히기"
-                f"  ({len(_thn)}개 테마 · {len(_frn)}명)", expanded=False):
+                f"  ({len(_thn)}개 테마 · {len(_frn)}명{_alab})", expanded=False):
             st.caption("비워 두면 **전체**예요. 테마와 멤버를 같이 고르면 겹치는 것만 잡아요.")
+            # ── 아티스트로 한 번에 고르기 (SM) ─────────────────────────
+            # ★★한 타이틀에 여러 아티스트가 섞이고, 그 안에서 **한/영 테마가 쌍으로
+            #   갈린다**(`260624_RIIZE` + `260624_라이즈`). 손으로 고르면 한글 쌍을
+            #   놓치기 쉽고 그러면 **30% 넘게 덜 정산된다** — 실측 라이즈 5,292만 중
+            #   한글 테마가 1,995만(37.7%)이다.
+            #   그래서 아티스트를 고르면 그 쌍을 **테마 칸에 같이 채워 준다.**
+            # ★채우기만 하고 **고르는 건 사람이 한다** — 채운 뒤 테마 칸에서 눈으로
+            #   확인·수정할 수 있다(별칭 추천과 같은 철학).
+            if _arts:
+                _amap = {a["이름"]: a["테마들"] for a in _arts}
+                ac1, ac2 = st.columns([3, 1])
+                _pick_art = ac1.multiselect(
+                    "아티스트로 고르기 (SM)", [a["이름"] for a in _arts], default=[],
+                    key=f"pk_art_{b}",
+                    format_func=lambda x: (
+                        f"{x}  ({next(a['금액'] for a in _arts if a['이름'] == x):,}"
+                        f" · 테마 {len(_amap[x])})"))
+                if ac2.button("테마 칸에 넣기", key=f"pk_artgo_{b}",
+                              disabled=not _pick_art, use_container_width=True):
+                    _want = sorted({t for a in _pick_art for t in _amap[a]})
+                    st.session_state[f"pk_th_{b}"] = _want
+                    st.rerun()
+                if _pick_art:
+                    _n = sum(len(_amap[a]) for a in _pick_art)
+                    ac1.caption(f"→ 테마 {_n}개가 채워져요 "
+                                f"(한글·영문 표기가 갈린 건 **같이** 들어가요)")
             c1, c2 = st.columns(2)
             with c1:
                 _th = st.multiselect("테마", _thn, default=[], key=f"pk_th_{b}",

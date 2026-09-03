@@ -55,30 +55,14 @@ _DEFAULT_ARTISTS = [
         "려욱": ["려욱", "ryeowook"]}},
 ]
 
-ARTISTS_FILE = BASE_DIR / "sm_artists.json"
+# ★정의 읽기와 테마 매칭 규칙은 `sm_artists.py` 한 곳에 있다 (2026-09-03).
+#   정산서 화면에서도 같은 규칙이 필요해졌는데, 이 모듈은 openpyxl 을 끌고 와서
+#   화면에 붙이기엔 무겁다. 규칙을 복사하면 나중에 갈리므로(쿠폰 국가 목록에서
+#   이미 겪은 병) 규칙만 빼고 여기서는 부른다. 동작은 예전과 같다.
+import sm_artists as _sma
 
-
-def _load_artists():
-    """sm_artists.json 이 있으면 그걸로 아티스트 목록을 구성(코드 수정 없이 IP 추가).
-    파일이 없거나 형식이 깨지면 내장 기본값(_DEFAULT_ARTISTS)으로 안전 폴백."""
-    if ARTISTS_FILE.exists():
-        try:
-            data = json.load(open(ARTISTS_FILE, encoding="utf-8"))
-            arts = data.get("artists", data) if isinstance(data, dict) else data
-            ok = []
-            for a in arts:
-                if (isinstance(a, dict) and a.get("name") and a.get("kws")
-                        and isinstance(a.get("members"), dict)):
-                    a.setdefault("countries", None)
-                    ok.append(a)
-            if ok:
-                return ok
-        except Exception:
-            pass
-    return _DEFAULT_ARTISTS
-
-
-ARTISTS = _load_artists()
+ARTISTS_FILE = _sma.ARTISTS_FILE
+ARTISTS = _sma.load(fallback=_DEFAULT_ARTISTS)
 
 # ── 서식 ──
 # 색은 단순하게 — 회색 2톤만(헤더/합계). 변동(빨강)·증감 색만 기능상 유지.
@@ -232,13 +216,8 @@ def load_daily(start=None, end=None) -> pd.DataFrame:
 
 
 def _match_artist(theme: str, cc: str):
-    tl = str(theme).lower()
-    for a in ARTISTS:
-        if any(k in tl for k in a["kws"]):
-            if a["countries"] and cc not in a["countries"]:
-                return None
-            return a
-    return None
+    """테마 → 아티스트. 규칙은 `sm_artists.match_theme` 한 곳에 있다."""
+    return _sma.match_theme(theme, cc, ARTISTS)
 
 
 def _canon_member(artist, frame: str) -> str:

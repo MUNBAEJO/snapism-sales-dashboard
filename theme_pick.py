@@ -109,17 +109,37 @@ def _rows(titles, start: str, end: str) -> pd.DataFrame:
         con.close()
 
 
+def artist_groups(themes) -> dict:
+    """테마 목록 → `{아티스트: [테마…]}` (SM 정의에 걸리는 것만).
+
+    ★★왜 필요한가 — **한 타이틀에 여러 아티스트가 섞이고, 그 안에서 또 한/영 테마가
+      쌍으로 갈린다.** 실측(`260804 SM ent` · 2026-08):
+          RIIZE      `260624_RIIZE` 3,297만 + `260624_라이즈` 1,995만
+          Red Velvet `260804_Red Velvet` 1,709만 + `260804_레드벨벳` 1,421만
+      손으로 고르면 한글 쌍을 놓치기 쉽고 그러면 **30% 넘게 덜 정산된다.**
+      아티스트 한 줄을 켜면 그 쌍이 **같이** 켜진다.
+    ★매칭 규칙은 `sm_artists.py` 한 곳에 있다(촬영수 리포트와 같은 규칙).
+      정의를 못 읽으면 조용히 빈 dict — 아티스트 축만 안 보이고 나머지는 그대로 돈다.
+    """
+    try:
+        import sm_artists
+        return sm_artists.group_themes(themes)
+    except Exception:                                        # noqa: BLE001
+        return {}
+
+
 def axes(titles, start: str, end: str) -> dict:
-    """화면에 그릴 두 축.
+    """화면에 그릴 축.
 
     돌려주는 값
       themes  : [{이름, 금액, 멤버수}]   — 큰 순
       frames  : [{이름, 금액, 테마수}]   — 큰 순. 테마수>1 이면 여러 테마에 걸친 멤버
+      artists : [{이름, 금액, 테마들}]   — SM 정의에 걸린 것만. 없으면 빈 목록
       grid    : True 면 격자(한 프레임이 여러 테마에 걸침) — 화면이 안내를 다르게 낸다
     """
     d = _rows(titles, start, end)
     if d.empty:
-        return {"themes": [], "frames": [], "grid": False}
+        return {"themes": [], "frames": [], "artists": [], "grid": False}
 
     th = (d.groupby("테마", as_index=False)
             .agg(금액=("금액", "sum"), 멤버수=("프레임", "nunique"))
@@ -127,11 +147,20 @@ def axes(titles, start: str, end: str) -> dict:
     fr = (d.groupby("프레임", as_index=False)
             .agg(금액=("금액", "sum"), 테마수=("테마", "nunique"))
             .sort_values("금액", ascending=False))
+    # 아티스트 축 — 테마 금액을 아티스트로 굴려 올린다(한/영 쌍이 여기서 합쳐진다).
+    _amt = dict(zip(th["테마"], th["금액"]))
+    _grp = artist_groups(list(th["테마"]))
+    arts = sorted(
+        ({"이름": a, "금액": int(sum(_amt.get(t, 0) for t in ts)), "테마들": ts}
+         for a, ts in _grp.items()),
+        key=lambda x: -x["금액"])
+
     return {
         "themes": [{"이름": r["테마"], "금액": int(r["금액"]), "멤버수": int(r["멤버수"])}
                    for _, r in th.iterrows()],
         "frames": [{"이름": r["프레임"], "금액": int(r["금액"]), "테마수": int(r["테마수"])}
                    for _, r in fr.iterrows()],
+        "artists": arts,
         "grid": bool((fr["테마수"] > 1).any()),
     }
 
