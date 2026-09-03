@@ -31,6 +31,31 @@ CONFIG_FILE = BASE_DIR / "config.json"
 TARGET_DB = "seobuk"
 TARGET_TABLE = "revenue_raw_data"
 
+# ══════════════════════════════════════════════════════════════════════
+#  ★★★개인정보는 **읽지 않는다** (2026-09-03 · 사용자 지시)
+# ══════════════════════════════════════════════════════════════════════
+# 원천에는 개인정보가 실제로 들어 있다. 대사에 필요한 건 금액·건수·시각·매출ID 뿐이라
+# 이 열들은 **쿼리에 넣을 이유가 아예 없다.** 말로만 지키면 언젠가 새므로 코드로 막는다.
+#
+#   phone_number  개인 연락처 — 명백한 개인정보
+#   coupon_num    쿠폰 번호 — 발급 시스템과 이으면 개인 식별이 된다
+#   is_extra_paid 자유 입력 문자열(varchar 100) — 무엇이 적혔는지 보장이 없다
+#   cancel_reason 자유 입력 문자열 — 위와 같은 이유
+#
+# ★열을 나열해 SELECT 할 때는 **반드시 `safe_cols()` 를 통과시킨다.**
+#   `SELECT *` 는 이 필터를 우회하므로 쓰지 않는다.
+PII_COLS = {"phone_number", "coupon_num", "is_extra_paid", "cancel_reason"}
+
+
+def safe_cols(names):
+    """개인정보 열을 걸러 낸다. 걸러진 게 있으면 이유를 남긴다."""
+    out, drop = [], []
+    for n in names:
+        (drop if str(n).lower() in PII_COLS else out).append(n)
+    if drop:
+        log(f"  ※ 개인정보 열 {len(drop)}개는 조회에서 제외했어요: {', '.join(drop)}")
+    return out
+
 # config.json 에 이 모양으로 넣는다(값은 사람이 직접 채운다).
 SHAPE = """
   "rds": {
@@ -156,9 +181,14 @@ def main():
             if not cols:
                 log("  ★ 테이블이 안 보여요 — 권한이나 이름을 확인해 주세요.")
             else:
-                log(f"  열 {len(cols)}개")
+                _pii = [c[0] for c in cols if c[0].lower() in PII_COLS]
+                log(f"  열 {len(cols)}개"
+                    + (f"  ·  🔒개인정보 {len(_pii)}개는 조회 금지: {', '.join(_pii)}"
+                       if _pii else ""))
                 for n, t, nul in cols:
-                    log(f"    {n:<28} {t:<22} {'NULL' if nul == 'YES' else 'NOT NULL'}")
+                    lock = " 🔒" if n.lower() in PII_COLS else ""
+                    log(f"    {n:<28} {t:<22} "
+                        f"{'NULL' if nul == 'YES' else 'NOT NULL'}{lock}")
 
                 log("\n" + "=" * 62)
                 log("4) 규모·기간 (읽기 전용)")
@@ -174,9 +204,12 @@ def main():
 
             if "--sample" in sys.argv and cols:
                 log("\n" + "=" * 62)
-                log("5) 표본 3줄 (열 이름만 보고 값은 줄여서)")
+                log("5) 표본 3줄")
                 log("=" * 62)
-                cn = [c[0] for c in cols][:8]
+                # ★개인정보 열은 여기서 **절대** 안 나간다. 앞 8열을 그냥 자르면
+                #   테이블 순서가 바뀌었을 때 개인정보가 딸려 나올 수 있어,
+                #   자르기 **전에** 거른다.
+                cn = safe_cols([c[0] for c in cols])[:8]
                 rows = q(cur, f"SELECT {', '.join('`%s`' % c for c in cn)} "
                               f"FROM `{TARGET_DB}`.`{TARGET_TABLE}` LIMIT 3")
                 log("  " + " | ".join(cn))
