@@ -145,7 +145,8 @@ def axes(titles, start: str, end: str) -> dict:
     """
     d = _rows(titles, start, end)
     if d.empty:
-        return {"themes": [], "frames": [], "artists": [], "grid": False}
+        return {"themes": [], "frames": [], "artists": [], "grid": False,
+                "frames_by_theme": {}}
 
     th = (d.groupby("테마", as_index=False)
             .agg(금액=("금액", "sum"), 멤버수=("프레임", "nunique"))
@@ -161,6 +162,14 @@ def axes(titles, start: str, end: str) -> dict:
          for a, ts in _grp.items()),
         key=lambda x: -x["금액"])
 
+    # ★테마 → 그 테마에 실제로 있는 멤버들 (2026-09-03).
+    #   화면에서 테마를 고르면 멤버 후보를 그 테마 것으로 좁히는 데 쓴다.
+    #   전엔 멤버 칸에 늘 전체(예: 490명)가 떠서, 고른 테마와 상관없는 이름 중에서
+    #   찾아야 했다. **금액 계산에는 안 쓴다** — 고르는 것을 돕는 목록일 뿐이고,
+    #   실제 필터는 `resolve()` 가 (타이틀 × 프레임) 으로 만든다.
+    fbt = {t: tuple(sorted(g["프레임"].unique()))
+           for t, g in d.groupby("테마", sort=False)}
+
     return {
         "themes": [{"이름": r["테마"], "금액": int(r["금액"]), "멤버수": int(r["멤버수"])}
                    for _, r in th.iterrows()],
@@ -168,6 +177,7 @@ def axes(titles, start: str, end: str) -> dict:
                    for _, r in fr.iterrows()],
         "artists": arts,
         "grid": bool((fr["테마수"] > 1).any()),
+        "frames_by_theme": fbt,
     }
 
 

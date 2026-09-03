@@ -491,8 +491,32 @@ def make_panel():
                 _th = st.multiselect("테마", _thn, default=[], key=f"pk_th_{b}",
                                      format_func=lambda x: x)
             with c2:
-                _fr = st.multiselect("멤버", _frn, default=[], key=f"pk_fr_{b}",
+                # ★★테마를 고르면 멤버 후보를 **그 테마에 있는 사람만** 남긴다
+                #   (2026-09-03 요청). 전엔 늘 전체가 떠서, 테마를 골라 놓고도
+                #   상관없는 이름 490개 중에서 찾아야 했다.
+                #   ★고르는 것을 돕는 목록일 뿐이다 — 실제 필터는 아래 `tp.resolve`
+                #     가 (타이틀 × 프레임) 으로 만든다. 여기서 좁혀도 금액 계산 규칙은
+                #     그대로다(테마·멤버를 같이 고르면 겹치는 것만).
+                _fbt = ax.get("frames_by_theme") or {}
+                _pool = _frn
+                if _th and _fbt:
+                    _allow = {f for t in _th for f in _fbt.get(t, ())}
+                    _pool = [x for x in _frn if x in _allow]
+                # ★★옵션이 바뀌면 스트림릿이 위젯을 **초기화한다**(1.45 는 위젯 id 에
+                #   options 를 넣는다). 그대로 두면 멤버를 고른 뒤 테마를 건드릴 때
+                #   고른 멤버가 **말없이 사라진다.** 그래서 좁힌 목록에서 살아남는
+                #   것만 남기고 **미리 세션에 써 둔다**(위젯을 그리기 전에 써야 먹는다).
+                #   살아남을 게 없어 비는 것과, 사용자가 지운 것은 결과가 같다 —
+                #   둘 다 '멤버 축은 안 고름'이라 테마만으로 거른다.
+                _prev = st.session_state.get(f"pk_fr_{b}") or []
+                _keep = [x for x in _prev if x in _pool]
+                if _keep != _prev:
+                    st.session_state[f"pk_fr_{b}"] = _keep
+                _fr = st.multiselect("멤버", _pool, key=f"pk_fr_{b}",
                                      format_func=lambda x: f"{x}  ({_amt.get(x, 0):,})")
+                if _th and len(_pool) < len(_frn):
+                    st.caption(f"　└ 고른 테마의 멤버 **{len(_pool)}명**만 보여요 "
+                               f"(전체 {len(_frn)}명)")
             r = tp.resolve(titles, S, E,
                            sel_themes=_th or None, sel_frames=_fr or None)
             # ★원장에 거는 값은 **타이틀과 짝지어진** title_frames 다. frames 는
