@@ -157,19 +157,19 @@ def _pct(a, b):
 
 
 ui_theme.kpis([
-    ui_theme.kpi("이번 주", f"{tot_cur/1e6:,.1f}백만원",
+    ui_theme.kpi("이번 주", f"{tot_cur:,.0f}원",
                  f"{S[5:]} ~ {E[5:]}", hero=True),
-    ui_theme.kpi("전주 대비", _pct(tot_cur, tot_prv), f"{tot_prv/1e6:,.1f}백만원"),
-    ui_theme.kpi("전년 대비", _pct(tot_cur, tot_yoy), f"{tot_yoy/1e6:,.1f}백만원"),
+    ui_theme.kpi("전주 대비", _pct(tot_cur, tot_prv), f"{tot_prv:,.0f}원"),
+    ui_theme.kpi("전년 대비", _pct(tot_cur, tot_yoy), f"{tot_yoy:,.0f}원"),
     ui_theme.kpi("나라", f"{cur['cc'].nunique()}개국",
                  f"환율 {RDATE} · {RSRC}"),
 ])
 
 if not _m.empty:
-    st.caption(f"**(단위: 백만원)** · 팝업 매장에서 판 정규 IP 매출은 **포함**하고, "
-               f"렌탈 IP 는 **뺐어요**(이번 주 {_rent_amt/1e6:,.1f}백만원). "
+    st.caption(f"**(단위: 원)** · 팝업 매장에서 판 정규 IP 매출은 **포함**하고, "
+               f"렌탈 IP 는 **뺐어요**(이번 주 {_rent_amt:,.0f}원). "
                f"엑셀 리포트와 같은 기준이에요.")
-    st.dataframe((_m / 1e6).round(1), use_container_width=True)
+    st.dataframe(_m.round(0).style.format("{:,.0f}"), use_container_width=True)
 
 # ── ② 팀별 TOP 10 ─────────────────────────────────────────────────────────
 ui_theme.sec("2", "팀별 TOP 10", "회차가 나뉘어 있으면 IP 이름으로 합쳐요")
@@ -201,18 +201,22 @@ for tab, team in zip(tabs[:2], ("A", "C")):
                .agg(원화=("원화", "sum"), 건수=("건수", "sum"))
                .sort_values("원화", ascending=False).head(10))
         g["전주"] = g["ip"].map(_prev_ip).fillna(0)
-        # ★금액은 **백만원 맨숫자**로 적는다(사내 표준). 원 단위로 두면 자릿수가
-        #   길어 지수표기(`9.13e+07`)로 새고, 천원 단위는 100배로 잘못 읽힌다.
+        # ★★금액은 **원 단위 + 쉼표**다. 매주 보시던 엑셀 리포트가 원 단위 맨숫자라
+        #   여기서 백만원으로 바꾸면 같은 표를 두 단위로 읽게 된다(2026-09-03 지적).
+        #   ★단위를 바꾸는 대신 **Styler 로 쉼표만** 넣는다 — 문자열로 만들면
+        #     표에서 정렬이 죽고, 그냥 두면 지수표기(`9.13e+07`)로 새어 못 읽는다.
         show = pd.DataFrame({
             "IP": g["ip"],
-            "매출": (g["원화"] / 1e6).round(1),
-            "전주": (g["전주"] / 1e6).round(1),
+            "매출": g["원화"].round(0),
+            "전주": g["전주"].round(0),
             "증감": [_pct(a, b) for a, b in zip(g["원화"], g["전주"])],
             "비중": (g["원화"] / q["원화"].sum() * 100).round(1),
             "건수": g["건수"].astype(int),
         })
-        st.caption("**(매출·전주 단위: 백만원 · 비중: %)**")
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.caption("**(매출·전주 단위: 원 · 비중: %)**")
+        st.dataframe(show.style.format({"매출": "{:,.0f}", "전주": "{:,.0f}",
+                                        "비중": "{:.1f}", "건수": "{:,d}"}),
+                     use_container_width=True, hide_index=True)
 
 with tabs[2]:
     q = cur[cur["구분"].isin(_ORIG) & cur["원화"].notna()].copy()
@@ -224,17 +228,18 @@ with tabs[2]:
                .agg(원화=("원화", "sum"), 건수=("건수", "sum"))
                .sort_values("원화", ascending=False).head(15))
         g["전주"] = g["ip"].map(_prev_ip).fillna(0)
-        st.caption("**(매출·전주 단위: 백만원)** · 포토이즘 자체 프레임이에요. "
+        st.caption("**(매출·전주 단위: 원)** · 포토이즘 자체 프레임이에요. "
                    "`P ` 는 기획 프레임, 나머지는 기본 디자인이고요 — "
                    "**IP 협업(그냥집사)과 자체 시즌 디자인(민트 도트)은 데이터로는 "
                    "안 갈려요.** 갈라야 하면 알려 주세요.")
         st.dataframe(pd.DataFrame({
             "프레임": g["ip"], "구분": g["구분"],
-            "매출": (g["원화"] / 1e6).round(1),
-            "전주": (g["전주"] / 1e6).round(1),
+            "매출": g["원화"].round(0),
+            "전주": g["전주"].round(0),
             "증감": [_pct(a, b) for a, b in zip(g["원화"], g["전주"])],
             "건수": g["건수"].astype(int),
-        }), use_container_width=True, hide_index=True)
+        }).style.format({"매출": "{:,.0f}", "전주": "{:,.0f}", "건수": "{:,d}"}),
+            use_container_width=True, hide_index=True)
 
 # ── ③ 스내피즘 ────────────────────────────────────────────────────────────
 ui_theme.sec("3", "스내피즘", "판매 항목 × 국가")
@@ -248,8 +253,8 @@ else:
                                             values="원화", aggfunc="sum", fill_value=0)
     sp["TTL"] = sp.sum(axis=1)
     sp = sp.sort_values("TTL", ascending=False)
-    st.caption("**(단위: 백만원)**")
-    st.dataframe((sp / 1e6).round(2), use_container_width=True)
+    st.caption("**(단위: 원)**")
+    st.dataframe(sp.round(0).style.format("{:,.0f}"), use_container_width=True)
     st.markdown("**상품별 IP TOP 10**")
     _stab = st.tabs(list(sp.index[:4]))
     for t, cat in zip(_stab, sp.index[:4]):
@@ -258,12 +263,13 @@ else:
                  .groupby("타이틀", as_index=False)
                  .agg(원화=("원화", "sum"), 건수=("건수", "sum"))
                  .sort_values("원화", ascending=False).head(10))
-            st.caption("**(매출 단위: 백만원)**")
+            st.caption("**(매출 단위: 원)**")
             st.dataframe(pd.DataFrame({
                 "IP": g["타이틀"],
-                "매출": (g["원화"] / 1e6).round(2),
+                "매출": g["원화"].round(0),
                 "건수": g["건수"].astype(int),
-            }), use_container_width=True, hide_index=True)
+            }).style.format({"매출": "{:,.0f}", "건수": "{:,d}"}),
+                use_container_width=True, hide_index=True)
 
 # ── ④ 새로 나온 IP 팀 확인 ─────────────────────────────────────────────────
 unk = cur[cur["근거"] == "접두어"].groupby(
