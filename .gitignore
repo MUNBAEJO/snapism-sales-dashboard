@@ -38,6 +38,13 @@ __pycache__/
 *.pyc
 *.pyo
 
+# 가상환경 — 목록에 없어서 `git add -A` 한 번에 site-packages 6천 개가
+# 통째로 스테이징된 적이 있다(2026-09-03). 이름이 뭐든 다 막는다.
+.venv/
+.venv*/
+venv/
+env/
+
 # 기타
 *.png
 hub_current.txt

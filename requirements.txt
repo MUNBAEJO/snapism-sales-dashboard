@@ -1,4 +1,8 @@
-streamlit>=1.32.0,<1.46.0
+# ★하한 1.40 — 아래를 깔면 새 환경이 **import 도 못 하고 죽는다**:
+#   · st.segmented_control (1.40+) — KPI목표·스내피즘·포토이즘·trend_chart
+#   · st.columns(vertical_alignment=) (1.36+) — 스내피즘·오픈캘린더·IP주간분석
+#   예전 하한(1.32)은 이 위젯들을 쓰기 전 값이라 실제와 안 맞았다(2026-09-03 수정).
+streamlit>=1.40.0,<1.46.0
 pandas>=2.0.0
 plotly>=5.18.0
 openpyxl>=3.1.0

@@ -9,7 +9,9 @@
      규칙이 늙는다(`weekly_report.unknown_teams` 주석 참고).
   ② 전주·전년과 나란히 보여준다 — 엑셀 COVER 가 그렇게 생겼다.
 """
+import html as _html_mod
 import os
+import re
 import sys
 from datetime import date, timedelta
 
@@ -87,6 +89,7 @@ def _week(d: date) -> tuple[date, date]:
 
 # 기본은 **지난 주**다 — 이번 주는 아직 안 끝나서 전주 대비가 헛나온다.
 _last_mon, _last_sun = _week(date.today() - timedelta(days=7))
+_this_mon = _last_mon + timedelta(days=7)      # ▶ 는 이번 주까지만 — 그 앞은 빈 화면이다
 
 
 def _shift_week(days: int) -> None:
@@ -101,8 +104,10 @@ with _h2:
     E = c2.date_input("끝(일)", value=_last_sun, key="wk_e")
     b1.button("◀", key="wk_prev", help="전주", use_container_width=True,
               on_click=_shift_week, args=(-7,))
+    # ★▶ 는 이번 주에서 멈춘다 — 계속 누르면 아직 오지 않은 주를 조회해
+    #   "매출이 없어요" 빈 화면만 나온다(데이터가 없는 게 아니라 아직 안 판 것).
     b2.button("▶", key="wk_next", help="다음 주", use_container_width=True,
-              on_click=_shift_week, args=(7,))
+              on_click=_shift_week, args=(7,), disabled=(S >= _this_mon))
 if S > E:
     st.error("시작일이 끝일보다 늦어요.")
     st.stop()
@@ -250,6 +255,13 @@ def _n(v) -> str:
     return f"{v:,.0f}" if pd.notna(v) and v else '<span class="dash">—</span>'
 
 
+# ★표를 st.dataframe 에서 직접 HTML 로 바꿨으니 **값은 반드시 이스케이프**한다.
+#   IP·상품 이름은 CMS 에서 온 남의 문자열이라 `&`·`<` 가 섞일 수 있고, 그러면
+#   그 줄이 통째로 깨진다(dataframe 은 알아서 해 주던 일이다).
+def _e(v) -> str:
+    return _html_mod.escape(str(v), quote=False)
+
+
 # ── 히어로: 이번 주 성적표 한 장 ─────────────────────────────────────────
 # ★전주·전년 비교를 히어로 카드 **안에** 붙인다 — 카드 셋으로 흩으면
 #   "이번 주 성적" 이라는 한 문장이 세 조각 난다(2026-09-03 재디자인).
@@ -288,7 +300,7 @@ if not _m.empty:
     #   합계 굵게 + 오른쪽 끝에 주 전체 대비 비중 막대. TTL 이라는 말도 안 쓴다.
     _cols = [c for c in _m.columns if c not in ("TTL",)]
     _gt = f"34px 100px repeat({len(_cols)},1fr) 1.05fr 108px"
-    _rows_h = "".join(f'<span class="r">{_cc_ko(c) if c != "기타" else "기타"}</span>'
+    _rows_h = "".join(f'<span class="r">{_e(_cc_ko(c)) if c != "기타" else "기타"}</span>'
                       for c in _cols)
     _html = [f'<div class="ntbl"><div class="ntr nth" style="grid-template-columns:{_gt}">'
              f'<span>팀</span><span>구좌</span>{_rows_h}'
@@ -298,7 +310,7 @@ if not _m.empty:
         cells = "".join(f'<span class="r">{_n(r[c])}</span>' for c in _cols)
         _html.append(
             f'<div class="ntr" style="grid-template-columns:{_gt}">'
-            f'<span class="nname">{tm_}</span><span>{gz_}</span>{cells}'
+            f'<span class="nname">{_e(tm_)}</span><span>{_e(gz_)}</span>{cells}'
             f'<span class="r"><b>{r["TTL"]:,.0f}</b></span>'
             f'<span>{ui_theme.bar((r["TTL"] / tot_cur) if tot_cur else 0, _mx_frac)}</span>'
             '</div>')
@@ -355,7 +367,7 @@ for tab, team in zip(tabs[:2], ("A", "C")):
             _h10.append(
                 f'<div class="ntr" style="grid-template-columns:{_gt10}">'
                 f'<span class="dim{top}">{_i}</span>'
-                f'<span class="nname{top}">{r["ip"]}</span>'
+                f'<span class="nname{top}">{_e(r["ip"])}</span>'
                 f'<span class="r"><b>{r["원화"]:,.0f}</b></span>'
                 f'<span class="r dim">{_n(r["전주"])}</span>'
                 f'<span class="r">{_delta_pill(r["원화"], r["전주"])}</span>'
@@ -386,8 +398,8 @@ with tabs[2]:
             _ho.append(
                 f'<div class="ntr" style="grid-template-columns:{_gto}">'
                 f'<span class="dim{top}">{_i}</span>'
-                f'<span class="nname{top}">{r["ip"]}</span>'
-                f'<span class="dim">{r["구분"]}</span>'
+                f'<span class="nname{top}">{_e(r["ip"])}</span>'
+                f'<span class="dim">{_e(r["구분"])}</span>'
                 f'<span class="r"><b>{r["원화"]:,.0f}</b></span>'
                 f'<span class="r dim">{_n(r["전주"])}</span>'
                 f'<span class="r">{_delta_pill(r["원화"], r["전주"])}</span>'
@@ -417,13 +429,13 @@ else:
     _sntt = float(sp["합계"].sum())
     _snh = [f'<div class="ntbl"><div class="ntr nth" style="grid-template-columns:{_sngt}">'
             '<span>상품</span>'
-            + "".join(f'<span class="r">{c}</span>' for c in _snc)
+            + "".join(f'<span class="r">{_e(c)}</span>' for c in _snc)
             + '<span class="r">합계</span><span class="r">비중</span></div>']
     _snmx = float((sp["합계"] / _sntt).max()) if _sntt else 0
     for idx, r in sp.iterrows():
         cells = "".join(f'<span class="r">{_n(r[c])}</span>' for c in _snc)
         _snh.append(f'<div class="ntr" style="grid-template-columns:{_sngt}">'
-                    f'<span class="nname">{idx}</span>{cells}'
+                    f'<span class="nname">{_e(idx)}</span>{cells}'
                     f'<span class="r"><b>{r["합계"]:,.0f}</b></span>'
                     f'<span>{ui_theme.bar((r["합계"] / _sntt) if _sntt else 0, _snmx)}</span>'
                     '</div>')
@@ -451,7 +463,7 @@ else:
                 top = " wk-top1" if _i == 1 else ""
                 _ch.append(f'<div class="ntr" style="grid-template-columns:{_cgt}">'
                            f'<span class="dim{top}">{_i}</span>'
-                           f'<span class="nname{top}">{r["타이틀"]}</span>'
+                           f'<span class="nname{top}">{_e(r["타이틀"])}</span>'
                            f'<span class="r"><b>{r["원화"]:,.0f}</b></span>'
                            f'<span>{ui_theme.bar((r["원화"] / _ct) if _ct else 0, _cmx)}</span>'
                            f'<span class="r">{int(r["건수"]):,d}</span></div>')
@@ -472,7 +484,7 @@ else:
     st.caption("**`L `·`P ` 표식이 없는 캐릭터 IP** 가 여기 걸리기 쉬워요.")
     # ★행마다 [IP명(굵게)+구분 태그+코드(작은 회색)] · 금액 · A/C 선택을 한 줄로.
     #   전엔 항목과 라디오가 화면 양끝으로 찢어져 어느 행 것인지 눈으로 이어야 했다.
-    _CODE_RE = __import__("re").compile(
+    _CODE_RE = re.compile(
         r"^((?:렌탈|PW|L7|L|P|B|SP|NX)\s+)?(\d{6,8}\s*)?(.*)$")
     for _i, (_, r) in enumerate(unk.head(20).iterrows()):
         k = str(r["타이틀"])
@@ -482,9 +494,9 @@ else:
         if _i:
             st.markdown('<div class="wkhr"></div>', unsafe_allow_html=True)
         cc1, cc2, cc3 = st.columns([3.1, 1.0, 1.3], vertical_alignment="center")
-        cc1.markdown(f'<span class="wknm">{_name}</span>'
-                     f'<span class="wktag">{r["구분"]}</span>'
-                     + (f'<br><span class="wkcode">{_code}</span>' if _code else ""),
+        cc1.markdown(f'<span class="wknm">{_e(_name)}</span>'
+                     f'<span class="wktag">{_e(r["구분"])}</span>'
+                     + (f'<br><span class="wkcode">{_e(_code)}</span>' if _code else ""),
                      unsafe_allow_html=True)
         cc2.markdown(f'<div class="r num" style="text-align:right;font-weight:700">'
                      f'{0 if pd.isna(r["원화"]) else int(r["원화"]):,}원</div>',
