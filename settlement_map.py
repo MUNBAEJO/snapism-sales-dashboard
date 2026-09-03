@@ -134,19 +134,31 @@ def title_revenue(brand: str, start: str, end: str, rates: dict) -> pd.DataFrame
                     AND "IP구분" IN ({gubun})
                     AND NOT COALESCE("취소 여부", FALSE)
                 )
-                SELECT 타이틀, any_value("IP구분") AS "IP구분",
-                       CAST(ROUND(SUM(
-                         pay * r
-                         + CASE WHEN cc IN ({cpn})  THEN cpn  * r ELSE 0 END
-                         + CASE WHEN cc IN ({coin}) THEN coin * r ELSE 0 END
-                       )) AS BIGINT) AS 매출액,
-                       CAST(SUM(CASE WHEN pay < 0 THEN -"건수" ELSE "건수" END) AS BIGINT) AS 건수,
+                -- ★★반올림 단위를 **문서와 맞춘다** (2026-09-03).
+                --   전엔 전 국가를 합친 뒤 한 번만 ROUND 했는데, 문서(country_detail
+                --   → _fold_prices)는 **국가마다** 반올림한 뒤 더한다. 그래서 같은
+                --   화면에서 체크박스와 '금액 확인' 이 1원씩 어긋났다.
+                --   포토이즘 절사 단위는 `국가`다(_fold_prices keys=["국가"]).
+                , g AS (
+                  SELECT 타이틀, any_value("IP구분") AS ipg, "국가",
+                         CAST(ROUND(SUM(
+                           pay * r
+                           + CASE WHEN cc IN ({cpn})  THEN cpn  * r ELSE 0 END
+                           + CASE WHEN cc IN ({coin}) THEN coin * r ELSE 0 END
+                         )) AS BIGINT) AS amt,
+                         CAST(SUM(CASE WHEN pay < 0 THEN -"건수" ELSE "건수" END) AS BIGINT) AS cnt
+                  FROM t
+                  -- ★취소는 음수 거래로 들어온다. '> 0' 으로 거르면 차감이 안 된다.
+                  WHERE pay <> 0
+                     OR (cc IN ({cpn})  AND cpn  <> 0)
+                     OR (cc IN ({coin}) AND coin <> 0)
+                  GROUP BY 1, 3
+                )
+                SELECT 타이틀, any_value(ipg) AS "IP구분",
+                       CAST(SUM(amt) AS BIGINT) AS 매출액,
+                       CAST(SUM(cnt) AS BIGINT) AS 건수,
                        COUNT(DISTINCT "국가") AS 국가수
-                FROM t
-                -- ★취소는 음수 거래로 들어온다. '> 0' 으로 거르면 차감이 안 된다.
-                WHERE pay <> 0
-                   OR (cc IN ({cpn})  AND cpn  <> 0)
-                   OR (cc IN ({coin}) AND coin <> 0)
+                FROM g
                 GROUP BY 1 HAVING 매출액 > 0 ORDER BY 매출액 DESC
             """).df()
         else:
@@ -156,6 +168,9 @@ def title_revenue(brand: str, start: str, end: str, rates: dict) -> pd.DataFrame
                 WITH t AS (
                   SELECT trim(COALESCE("프레임 이름", '')) AS 타이틀,
                          "카테고리" AS "IP구분", "국가",
+                         -- 문서의 '구분' 과 **같은 식**이어야 반올림 단위가 맞는다
+                         COALESCE(NULLIF(trim(CAST("상품 카테고리" AS VARCHAR)), ''),
+                                  '기타') AS cat,
                          CAST("최종 결제 금액" AS BIGINT) AS pay,
                          CAST("쿠폰 할인 금액"  AS BIGINT) AS cpn,
                          {rate} AS r
@@ -164,12 +179,24 @@ def title_revenue(brand: str, start: str, end: str, rates: dict) -> pd.DataFrame
                     AND "카테고리" IN ({gubun})
                     AND NOT COALESCE("취소 여부", FALSE)
                 )
-                SELECT 타이틀, any_value("IP구분") AS "IP구분",
-                       CAST(ROUND(SUM((pay + cpn) * r)) AS BIGINT) AS 매출액,
-                       CAST(SUM(CASE WHEN pay + cpn < 0 THEN -1 ELSE 1 END) AS BIGINT) AS 건수,
+                -- ★★반올림 단위를 **문서와 맞춘다** (2026-09-03).
+                --   스내피즘 절사 단위는 `(구분 × 국가)` 다 — 한 IP 안에 판매 항목이
+                --   여럿이고 단가가 달라서다(_fold_prices keys=["구분","국가"]).
+                --   전엔 여기서 전부 합쳐 한 번만 ROUND 해서, 같은 화면의 체크박스와
+                --   '금액 확인' 이 1원 어긋났다(더윈드 937,487 vs 937,486).
+                , g AS (
+                  SELECT 타이틀, any_value("IP구분") AS ipg, cat, "국가",
+                         CAST(ROUND(SUM((pay + cpn) * r)) AS BIGINT) AS amt,
+                         CAST(SUM(CASE WHEN pay + cpn < 0 THEN -1 ELSE 1 END) AS BIGINT) AS cnt
+                  FROM t
+                  WHERE pay + cpn <> 0        -- 음수(취소)를 살려 차감되게 한다
+                  GROUP BY 1, 3, 4
+                )
+                SELECT 타이틀, any_value(ipg) AS "IP구분",
+                       CAST(SUM(amt) AS BIGINT) AS 매출액,
+                       CAST(SUM(cnt) AS BIGINT) AS 건수,
                        COUNT(DISTINCT "국가") AS 국가수
-                FROM t
-                WHERE pay + cpn <> 0          -- 음수(취소)를 살려 차감되게 한다
+                FROM g
                 GROUP BY 1 HAVING 매출액 > 0 ORDER BY 매출액 DESC
             """).df()
     finally:
