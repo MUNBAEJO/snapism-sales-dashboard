@@ -184,6 +184,41 @@ def _title_tickets(brand, start, end, rate_key, fx_key, mapver, dataver=0.0):
     return out
 
 
+def _overlap_days(a0: str, a1: str, b0: str, b1: str) -> int:
+    """두 기간이 **며칠 겹치는가**. 안 겹치거나 날짜가 이상하면 0.
+
+    양 끝을 포함한다(8/1~8/31 과 8/1~8/31 은 31일).
+    """
+    try:
+        s = max(date.fromisoformat(str(a0)[:10]), date.fromisoformat(str(b0)[:10]))
+        e = min(date.fromisoformat(str(a1)[:10]), date.fromisoformat(str(b1)[:10]))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, (e - s).days + 1)
+
+
+def _rank_cands(brand: str, cands: list, start: str, end: str) -> list:
+    """후보 티켓을 **정산 기간과 겹치는 순**으로 줄 세운다.
+
+    ★★왜 (2026-09-03 사용자 지정) — 전엔 목록 맨 앞이 기본이라 **최신 티켓**이
+      잡혔다. 실제로 `PW 260801 반팔 입고 나와` **8월** 정산서에 스내피즘 티켓이
+      `CANDIP-33370`(26.09 · 9/1~10/31)로 붙었다. 맞는 건
+      `CANDIP-32744`(8/1~8/31) 였다. 금액은 타이틀·판매항목 기준이라 안 틀리지만,
+      **'어느 계약을 덮었나' 기록과 요율 저장 대상이 틀린다.**
+    ★'겹치기만 하면' 으로는 부족하다 — 리센느는 `메이 생일`(8/19~9/18)도 8월과
+      겹친다. **겹치는 날 수**로 줄 세워야 8/1~8/31 짜리가 앞에 온다(31일 vs 13일).
+    ★계약 티켓(`1차 계약_…`)은 같은 기간이라도 **뒤로** 민다 — 도움말이 이미
+      "계약 티켓이 아니라 실제 상품 티켓을 고르세요" 라고 안내하는 그것이다.
+    ★겹치는 게 하나도 없으면 원래 순서 그대로 둔다(임의로 고르지 않는다).
+    """
+    def key(tk):
+        e = sm.lookup_ticket(brand, tk) or {}
+        ov = _overlap_days(e.get("startdate"), e.get("duedate"), start, end)
+        contract = 1 if "계약" in str(e.get("parent") or "") else 0
+        return (-ov, contract, cands.index(tk))
+    return sorted(cands, key=key)
+
+
 def _ticket_box(brand: str):
     """티켓번호 **또는 IP명**으로 찾아 붙일 타이틀을 고른다.
 
@@ -292,6 +327,10 @@ def _ticket_box(brand: str):
             p = (e.get("parent") or " / ".join(e.get("titles") or []))[:34]
             return f"{x} · {p} · {(e.get('startdate') or '?')[5:]}~{(e.get('duedate') or '?')[5:]}"
 
+        # ★기간이 가장 많이 겹치는 티켓을 앞으로 — 드롭다운을 열었을 때도 그게 먼저
+        #   보여야 한다(기본값만 바꾸면 목록 맨 위엔 여전히 엉뚱한 게 있다).
+        cands = _rank_cands(brand, cands, S, E)
+        # ★확정이 있으면 그게 이긴다 — 사람이 이미 정한 것이라 자동 정렬보다 우선한다.
         idx = cands.index(fixed) if fixed in cands else 0
         # ★후보 수는 고르는 칸 **위**에 적는다. 전엔 아래에 caption 으로 달았는데
         #   '후보 2장' 이 다음 줄의 제목처럼 읽혀서, 뒤에 아무것도 없으니 화면이
