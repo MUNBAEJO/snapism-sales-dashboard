@@ -95,14 +95,12 @@ if cur.empty:
 # ★★환율이 없는 통화를 **1:1 로 떨어뜨리지 않는다.** `{"KRW":1}` 같은 폴백은
 #   해외 매출을 원화로 둔갑시키는데, 값이 있어 아무도 못 알아챈다(2026-08 에
 #   실제로 5곳에 있었다). 없으면 NaN 으로 두고 화면이 **어느 나라가 빠졌는지 알린다.**
-# theme_daily 엔 `결제 단위` 가 없어 국가코드로 통화를 잇는다.
-_CC_UNIT = {"kr": "KRW", "cn": "CNH", "tw": "TWD", "jp": "JPY", "id": "IDR",
-            "vn": "VND", "us": "USD", "th": "THB", "hk": "HKD", "my": "MYR",
-            "ph": "PHP", "la": "LAK", "mn": "MNT", "lv": "EUR", "de": "EUR",
-            "fr": "EUR", "nl": "EUR", "lu": "EUR", "bn": "BND", "au": "AUD"}
-for _d in (cur, prv, yoy):
+# ★★국가→통화는 **원장이 말하는 대로** 쓴다. 손으로 적은 표를 쓰다가 10개국
+#   8,800건(1.89%)을 놓쳤다 — 자세한 경위는 `weekly_report.cc_units` 주석에.
+#   theme_daily 엔 `결제 단위` 가 없어 원장에서 그 기간의 표를 만들어 붙인다.
+for _d, _s, _e in ((cur, S, E), (prv, _pS, _pE), (yoy, _yS, _yE)):
     if not _d.empty:
-        _u = _d["cc"].map(_CC_UNIT)
+        _u = _d["cc"].map(wr.cc_units(_s, _e))
         _r = _u.map(lambda u: RATES.get(str(u).upper()) if u else None)
         _d["원화"] = (_d["현지"] * _r).where(_r.notna())
         _d["환율없음"] = _r.isna()
@@ -128,6 +126,16 @@ _RENT = cur["구분"] == "렌탈"
 _rent_amt = float(cur.loc[_RENT, "원화"].sum(skipna=True))
 cur, prv, yoy = (d[d["구분"] != "렌탈"] if not d.empty else d for d in (cur, prv, yoy))
 
+# ★'단독' 프레임(특정 장소 전용)은 **포함**한다(2026-09-03 사용자 확정).
+#   `KT위즈 단독`(수원KT 파크 팝업부스) · `카이스트 단독`(카이스트 팝업부스) 처럼
+#   대부분 팝업부스 매장이라, 이미 정한 '팝업 매장 정규 IP 포함' 과 같은 얘기다.
+#   ★엑셀의 CMS 내려받기본에는 이게 **없어서**(26-a 누적시트엔 있다) 우리 합계가
+#     더 크다. 오차가 아니라 우리 쪽이 더 완전한 것이라, 매주 "왜 다르지" 하지
+#     않도록 금액을 적어 둔다.
+#   ★`렌탈 … 단독` 은 위에서 이미 빠졌다 — '단독'이라서가 아니라 렌탈 IP 라서다.
+_solo_amt = float(cur.loc[cur["타이틀"].str.contains("단독", na=False),
+                          "원화"].sum(skipna=True))
+
 _ccs = [c for c in cur.groupby("cc")["원화"].sum().sort_values(ascending=False).index][:8]
 
 
@@ -140,9 +148,17 @@ def _matrix(d: pd.DataFrame) -> pd.DataFrame:
     q.loc[q["구좌"] == "BASIC", "구좌표시"] = q.loc[q["구좌"] == "BASIC", "구분"]
     p = q.pivot_table(index=["팀", "구좌표시"], columns="cc", values="원화",
                       aggfunc="sum", fill_value=0)
-    p = p.reindex(columns=[c for c in _ccs if c in p.columns], fill_value=0)
-    p["TTL"] = p.sum(axis=1)
-    return p
+    # ★★상위 8개국만 열로 세우고 나머지는 **`기타` 한 칸에 담는다.**
+    #   전엔 그냥 잘라내서 매트릭스 TTL(26.2억)과 위 KPI 총액(28.5억)이 안 맞았다.
+    #   합계가 두 개인 화면은 **어느 쪽이 맞는지 아무도 모른다** — 잘라낸 나라가
+    #   30개국 중 22개라 금액도 작지 않다(그 주 2.3억).
+    _keep = [c for c in _ccs if c in p.columns]
+    _rest = [c for c in p.columns if c not in _keep]
+    out = p.reindex(columns=_keep, fill_value=0)
+    if _rest:
+        out["기타"] = p[_rest].sum(axis=1)
+    out["TTL"] = out.sum(axis=1)
+    return out
 
 
 _m = _matrix(cur)
@@ -166,9 +182,11 @@ ui_theme.kpis([
 ])
 
 if not _m.empty:
-    st.caption(f"**(단위: 원)** · 팝업 매장에서 판 정규 IP 매출은 **포함**하고, "
+    st.caption(f"**(단위: 원)** · 팝업 매장에서 판 정규 IP 와 "
+               f"**단독 프레임**(KT위즈·카이스트 등)은 **포함**했어요"
+               f"(이번 주 단독 {_solo_amt:,.0f}원). "
                f"렌탈 IP 는 **뺐어요**(이번 주 {_rent_amt:,.0f}원). "
-               f"엑셀 리포트와 같은 기준이에요.")
+               f"단독은 엑셀 CMS 내려받기본에 빠져 있어 **엑셀보다 그만큼 커요.**")
     st.dataframe(_m.round(0).style.format("{:,.0f}"), use_container_width=True)
 
 # ── ② 팀별 TOP 10 ─────────────────────────────────────────────────────────

@@ -272,6 +272,31 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
     return out[~out["구분"].isin(["제외", "스티커머신"])].reset_index(drop=True)
 
 
+def cc_units(start: str, end: str) -> dict:
+    """{국가코드(소문자): 결제 통화}. **원장이 말하는 대로** 쓴다.
+
+    ★★손으로 적은 국가→통화 표를 쓰다가 10개국을 통째로 놓쳤다(2026-09-03).
+      2026-08-24~30 기준 `ca`·`mx`·`mo`·`ae`·`sg`·`gu`·`gb`·`es` 등 8,800건(1.89%)이
+      환율을 못 찾아 합계에서 빠졌다. `cn` 은 원장이 **CNY** 인데 표에는 CNH 로
+      적혀 있기까지 했다. 나라가 늘 때마다 표를 고쳐야 하는 구조 자체가 틀렸다.
+    ★환율표에는 25개 통화가 다 있었다 — 없던 건 **우리 표**였다.
+      이 함수로 바꾸면 그 주 30개국이 전부 환산된다(못 찾는 나라 0개).
+    """
+    con = _duck()
+    try:
+        d = con.execute(f"""
+            SELECT lower(국가코드) AS cc,
+                   any_value(UPPER(TRIM(CAST("결제 단위" AS VARCHAR)))) AS unit
+            FROM read_parquet('{PH_RAW.as_posix()}')
+            WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'
+              AND {NOT_CANCELLED}
+            GROUP BY 1
+        """).df()
+    finally:
+        con.close()
+    return dict(zip(d["cc"], d["unit"]))
+
+
 def unknown_teams(start: str, end: str, teams: dict | None = None) -> pd.DataFrame:
     """그 주에 **팀을 규칙으로 짐작한** 타이틀 목록. 화면이 확인을 받는다.
 
