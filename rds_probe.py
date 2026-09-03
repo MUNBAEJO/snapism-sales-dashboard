@@ -37,10 +37,26 @@ SHAPE = """
     "host": "…rds.amazonaws.com",     ← SSM 터널을 쓰면 "127.0.0.1"
     "port": 3306,                      ← 터널이면 로컬 포트(예: 13306)
     "user": "…",
-    "password": "…",
+    "auth": "iam",                     ← IAM 토큰 인증이면 "iam" (password 불필요)
+    "password": "…",                   ← 일반 비밀번호 인증일 때만
     "database": "seobuk"
   }
 """
+
+# ★IAM 인증(rds-db:connect) — 비밀번호 대신 **15분짜리 토큰**을 만들어 붙는다.
+#   받은 키(`seobuk-datatool-user`)가 STS 말고 전부 막혀 있어(2026-09-03 실측)
+#   이 방식일 가능성이 크다. rds-db:connect 는 어떤 List/Describe 에도 안 잡힌다.
+#   ★IAM 인증은 **SSL 이 필수**다. 안 켜면 서버가 연결을 끊는다.
+def _iam_token(rds):
+    import boto3
+    a = json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("aws", {})
+    s = boto3.session.Session(
+        aws_access_key_id=a.get("access_key_id"),
+        aws_secret_access_key=a.get("secret_access_key"),
+        region_name=a.get("region") or "ap-northeast-2")
+    return s.client("rds").generate_db_auth_token(
+        DBHostname=rds["host"], Port=int(rds.get("port", 3306)),
+        DBUsername=rds["user"], Region=a.get("region") or "ap-northeast-2")
 
 
 def log(msg):
@@ -63,7 +79,9 @@ def load_cfg():
         log(SHAPE)
         log("  ※ config.json 은 gitignore 되어 있어 커밋되지 않아요.")
         raise SystemExit(2)
-    miss = [k for k in ("host", "user", "password") if not str(rds.get(k, "")).strip()]
+    need = ("host", "user") if str(rds.get("auth", "")).lower() == "iam" \
+        else ("host", "user", "password")
+    miss = [k for k in need if not str(rds.get(k, "")).strip()]
     if miss:
         log(f"★ `rds` 에 빠진 값: {', '.join(miss)}")
         log(SHAPE)
@@ -74,16 +92,23 @@ def load_cfg():
 def connect(rds):
     import pymysql
     host, port = str(rds["host"]), int(rds.get("port", 3306))
-    log(f"접속 시도 — {_mask(host, 8)}:{port} · db={rds.get('database', TARGET_DB)}")
+    iam = str(rds.get("auth", "")).lower() == "iam"
+    log(f"접속 시도 — {_mask(host, 8)}:{port} · db={rds.get('database', TARGET_DB)}"
+        f" · 인증 {'IAM 토큰' if iam else '비밀번호'}")
     if host in ("127.0.0.1", "localhost"):
         log("  (로컬 주소 = SSM/SSH 터널을 통해 붙는 설정이에요. 터널이 떠 있어야 해요.)")
-    return pymysql.connect(
-        host=host, port=port, user=rds["user"], password=rds["password"],
-        database=rds.get("database") or TARGET_DB,
-        charset="utf8mb4", connect_timeout=10,
-        cursorclass=pymysql.cursors.Cursor,
-        read_default_file=None,
-    )
+    kw = dict(host=host, port=port, user=rds["user"],
+              database=rds.get("database") or TARGET_DB,
+              charset="utf8mb4", connect_timeout=15,
+              cursorclass=pymysql.cursors.Cursor, read_default_file=None)
+    if iam:
+        kw["password"] = _iam_token(rds)
+        # IAM 인증은 SSL 필수. CA 를 안 주면 검증 없이 암호화만 한다 —
+        # 사설망이라 지금은 이걸로 충분하고, CA 를 받으면 여기에 넣으면 된다.
+        kw["ssl"] = {"ca": rds["ssl_ca"]} if rds.get("ssl_ca") else {}
+    else:
+        kw["password"] = rds["password"]
+    return pymysql.connect(**kw)
 
 
 def q(cur, sql, args=None):
