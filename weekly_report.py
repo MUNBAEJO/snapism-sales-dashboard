@@ -72,6 +72,28 @@ IP_SRC_SQL = "CASE WHEN \"구좌\"='BASIC' THEN \"프레임 이름\" ELSE \"타�
 #   `= false` 로 걸면 한 건도 안 잡힌다 — 실제로 처음에 전부 0원이 나왔다.
 NOT_CANCELLED = "lower(CAST(\"취소 여부\" AS VARCHAR)) NOT IN ('true','1')"
 
+
+def not_test(*cols: str) -> str:
+    """이름에 `테스트`/`test` 가 든 행을 빼는 WHERE 조각 (2026-09-03 사용자 지정).
+
+    ★왜 이름으로 빼나 — 테스트 프레임은 **일반 매출과 구분되는 표식이 없다.**
+      매장·브랜드·구좌 어디에도 안 남아서 이름이 유일한 단서다.
+    ★★**영문 `test` 까지 빼도 안전한지 전수로 확인했다** — `Contest`·`Greatest`
+      같은 오탐이 걱정이었는데, 2025년 이후 영문 test 가 든 이름 5종
+      (`TEST 호빵맨`·`test 매핑`·`WITH TEST 1`·`test 매핑 6컷`·
+      `PW 260701 단 하루만 주인공이 될 TEST`)이 **전부 KR 매출 0원**이다.
+      마지막 것은 프레임이 쇼콜라·바닐라·루나 같은 캐릭터 이름이라 진짜 상품인 줄
+      알았는데, 하루(2026-06-26) 23건 0원이라 테스트가 맞았다.
+    ★한글 `테스트` 쪽은 금액이 있다 — `a안 테스트` 264만 · `b안 테스트` 264만 ·
+      `테스트_아날로그 검정` 198만(2026년 KR 합계 약 730만). 이쪽이 본 목적이다.
+    ★스내피즘의 `테스트`·`테스트트트` 프레임도 0원이지만 같이 뺀다(목록에 뜨면 헷갈린다).
+    """
+    parts = []
+    for c in cols:
+        e = f"COALESCE(CAST({c} AS VARCHAR), '')"
+        parts.append(f"{e} NOT ILIKE '%테스트%' AND {e} NOT ILIKE '%test%'")
+    return "(" + " AND ".join(parts) + ")"
+
 _PREFIX_RE = re.compile(r"^(렌탈|PW|L7|L|P|B|SP|NX)\s+")
 
 
@@ -161,6 +183,7 @@ def photoism_rows(start: str, end: str, ccs: list[str] | None = None) -> pd.Data
             FROM read_parquet('{PH_RAW.as_posix()}')
             WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'
               AND {NOT_CANCELLED}{cc}
+              AND {not_test('"타이틀명"', '"프레임 이름"')}
             GROUP BY 1, 2, 3, 4, 5
             HAVING SUM(CAST("최종 결제 금액" AS BIGINT)) <> 0
         """).df()
@@ -189,6 +212,7 @@ def snapism_rows(start: str, end: str) -> pd.DataFrame:
             WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'
               AND COALESCE(TRIM(CAST("프레임 이름" AS VARCHAR)), '') <> ''
               AND lower(CAST("취소 여부" AS VARCHAR)) NOT IN ('true','1')
+              AND {not_test('"프레임 이름"', '"상품 이름"')}
             GROUP BY 1, 2, 3, 4, 5
             HAVING SUM(CAST("최종 결제 금액" AS BIGINT)) <> 0
         """).df()
@@ -226,6 +250,7 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
             FROM read_parquet('{PH_RAW.as_posix()}')
             WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'
               AND {NOT_CANCELLED} AND "구좌" <> 'BASIC'{cc_raw}
+              AND {not_test('"타이틀명"', '"프레임 이름"')}
             GROUP BY 1
         """).df()
         th = con.execute(f"""
@@ -234,6 +259,7 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
                    CAST(SUM(주문수) AS BIGINT) AS 건수
             FROM read_parquet('{THEME_DAILY.as_posix()}')
             WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'{cc_th}
+              AND {not_test('타이틀', '테마', '프레임')}
             GROUP BY 1, 2, 3, 4
         """).df()
         # ② BASIC 은 원장에서. 프레임 이름이 곧 IP라 테마 축이 없다.
@@ -246,6 +272,7 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
             FROM read_parquet('{PH_RAW.as_posix()}')
             WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'
               AND {NOT_CANCELLED} AND "구좌" = 'BASIC'{cc_raw}
+              AND {not_test('"타이틀명"', '"프레임 이름"')}
             GROUP BY 1, 2, 3, 4
             HAVING SUM(CAST("최종 결제 금액" AS BIGINT)) <> 0
         """).df()
