@@ -263,6 +263,7 @@ def _ticket_box(brand: str):
     order = sorted(claimed, key=lambda t: -rev.get(t, (0, 0))[0])
     breakdown = _cat_breakdown(brand)
     chosen, tmap = [], {}
+    extra_tks = []           # 대표 외에 '같이 담은' 티켓들 — 문서에 번호로만 들어간다
     for t in order:
         cands = claimed[t]
         fixed = tt[t][0]
@@ -288,18 +289,36 @@ def _ticket_box(brand: str):
         #   잘린 줄 알았다는 지적을 받았다(2026-08-28). 나머지 후보는 드롭다운
         #   안에 있으니, 어디를 열어야 보이는지까지 문구에 담는다.
         if len(cands) > 1:
-            st.caption(f"　└ 후보 티켓 {len(cands)}장 — 아래 칸을 열어 골라요")
-        pick = st.selectbox("담을 티켓", cands, index=idx, format_func=_lab,
-                            key=f"tkpick_{brand}_{t}", disabled=not CAN_EDIT,
-                            label_visibility="collapsed",
-                            help="이 타이틀 매출을 어느 티켓으로 정산할지 골라요. "
-                                 "후보가 여럿이면 계약 티켓이 아니라 실제 상품 "
-                                 "티켓을 고르세요.")
+            st.caption(f"　└ 후보 티켓 {len(cands)}장 — **여러 장을 같이 담을 수 있어요**")
+        # ★★한 타이틀에 티켓을 **여러 장** 담는다 (2026-09-03 요청).
+        #   한 타이틀 안에 상품이 여러 가지고 티켓이 상품별로 나뉘는 경우가 있다 —
+        #   더윈드: `폴라릿`(CANDIP-31888) · `스티커 프레임, 포토카드`(CANDIP-31552).
+        #   한 장만 고를 수 있으면 나머지 티켓이 문서에서 통째로 빠진다.
+        #   ★매출은 **타이틀 기준**이라 티켓을 더 골라도 **금액은 안 변한다.**
+        #     바뀌는 건 문서에 적히는 티켓번호와 확정 저장 대상뿐이다.
+        #   ★위젯 키를 `tkpicks_` 로 바꿨다 — 예전 `tkpick_` 에는 세션에 **문자열**이
+        #     남아 있어서, 같은 키로 multiselect 를 그리면 타입이 부딪힌다.
+        picked = st.multiselect(
+            "담을 티켓", cands, default=([cands[idx]] if cands else []),
+            format_func=_lab, key=f"tkpicks_{brand}_{t}", disabled=not CAN_EDIT,
+            label_visibility="collapsed",
+            help="이 타이틀 매출을 어느 티켓으로 정산할지 골라요. 상품별로 티켓이 "
+                 "나뉘어 있으면 **여러 장을 같이** 고르세요 — 매출은 타이틀 기준이라 "
+                 "금액은 그대로이고, 문서에 티켓번호가 모두 적혀요. "
+                 "계약 티켓이 아니라 실제 상품 티켓을 고르세요.")
         if on:
             chosen.append(t)
-            tmap[t] = pick
+            if picked:
+                # ★확정 저장·요율은 **대표 한 장**(맨 앞)을 따른다. 요율이 하나라는
+                #   전제이고(사용자 확정), 매핑 저장소도 타이틀당 티켓 하나를 쥔다.
+                #   나머지는 문서에 티켓번호로만 함께 적힌다.
+                tmap[t] = picked[0]
+                extra_tks.extend(picked[1:])
+            else:
+                st.warning(f"`{t}` — 담을 티켓을 안 골랐어요. 한 장 이상 골라 주세요.")
 
-    used = list(dict.fromkeys(tmap.values()))
+    # 대표 티켓들 먼저, 그 뒤에 같이 담은 티켓들
+    used = list(dict.fromkeys(list(tmap.values()) + extra_tks))
     if len(used) > 1:
         st.caption("🧾 티켓 " + f"{len(used)}장을 **한 장으로** 정산해요 — "
                    + " · ".join(f"`{x}`" for x in used))
