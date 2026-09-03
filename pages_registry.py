@@ -16,6 +16,7 @@ PAGES = [
     ("snapism",    "views/0_📊_스내피즘.py",                 "스내피즘",          "📊", "snapism",     True),
     ("settledoc",  "views/8_🧾_IP정산서.py",                 "IP정산서",         "🧾", "settlement-doc", False),
     ("ipcal",      "views/9_📅_오픈캘린더.py",                "IP 오픈 캘린더",    "📅", "calendar",    True),
+    ("ipweekly",   "views/10_📰_IP주간분석.py",               "IP 주간분석",      "📰", "ip-weekly",   True),
     ("sm",         "views/6_🎬_SM촬영현황.py",                "SM 촬영현황",       "🎬", "sm-shooting", False),
     ("runs",       "views/7_🆚_타이틀_런_비교.py",            "타이틀 런 비교",     "🆚", "runs",        False),
     ("kpi",        "views/0_🎯_KPI목표.py",                  "KPI목표(수정중)",   "🎯", "kpi",         True),
