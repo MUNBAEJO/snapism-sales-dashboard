@@ -9,7 +9,9 @@
      규칙이 늙는다(`weekly_report.unknown_teams` 주석 참고).
   ② 전주·전년과 나란히 보여준다 — 엑셀 COVER 가 그렇게 생겼다.
 """
+import html as _html_mod
 import os
+import re
 import sys
 from datetime import date, timedelta
 
@@ -31,12 +33,51 @@ if not auth.can_view_page(_email, "ipweekly"):
 CAN_EDIT = auth.can_edit(_email)
 ui_theme.inject()
 
-st.markdown('<div style="font-size:26px;font-weight:800;letter-spacing:-.03em;'
-            'color:var(--text);margin:2px 0 4px">📰 IP 주간분석</div>'
-            '<div style="font-size:13px;color:var(--text-3);margin-bottom:6px">'
-            '팀(<b>A</b> 아티스트 · <b>C</b> 캐릭터) × 구좌 × 국가로 한 주를 봐요. '
-            '팝업·렌탈 매장 매출도 그 IP 것으로 <b>포함</b>해요.</div>',
-            unsafe_allow_html=True)
+# ── 페이지 전용 스타일 (2026-09-03 재디자인) ─────────────────────────────
+# ★ui_theme 공용 CSS 는 안 건드린다 — 다른 페이지가 같이 흔들린다. 여기 것만.
+_WK_CSS = """
+.wkhero{ background:linear-gradient(135deg,#f5f4ff,#eef0fe); border:1px solid #dcdefc;
+  border-radius:14px; padding:18px 22px; display:flex; gap:24px; align-items:center;
+  margin:10px 0 6px; }
+.wkhero .wl{ flex:1.35; } .wkhero .wk{ font-size:12.5px; font-weight:700; color:var(--brand); }
+.wkhero .wv{ font-size:32px; font-weight:800; color:var(--brand); letter-spacing:-.01em;
+  margin-top:4px; font-variant-numeric:tabular-nums; }
+.wkhero .wb{ display:flex; gap:8px; margin-top:10px; }
+.wkbdg{ font-size:12px; font-weight:800; border-radius:99px; padding:4px 12px; }
+.wkbdg small{ font-weight:600; opacity:.85; margin-left:4px; }
+.wk-dnb{ background:#fdf0ef; color:var(--red); } .wk-upb{ background:#edf7f0; color:var(--green); }
+.wkhero .wr{ flex:1; background:#fff; border:1px solid var(--border); border-radius:12px;
+  padding:11px 15px; font-size:12px; color:var(--text-2); }
+.wkhero .wr div{ display:flex; justify-content:space-between; padding:3px 0; }
+.wkhero .wr b{ color:var(--text); font-variant-numeric:tabular-nums; }
+.wk-up{ display:inline-block; font-size:11px; font-weight:800; border-radius:99px;
+  padding:2px 9px; background:#edf7f0; color:var(--green); white-space:nowrap; }
+.wk-dn{ display:inline-block; font-size:11px; font-weight:800; border-radius:99px;
+  padding:2px 9px; background:#fdf0ef; color:var(--red); white-space:nowrap; }
+.wk-new{ display:inline-block; font-size:11px; font-weight:800; border-radius:99px;
+  padding:2px 9px; background:var(--brand-soft); color:var(--brand); }
+.wkcnt{ font-size:12px; font-weight:800; color:#fff; background:var(--red);
+  border-radius:99px; padding:1px 10px; vertical-align:2px; margin-left:2px; }
+.wk-top1, .wk-top1 b{ color:var(--brand) !important; }
+.wknm{ font-weight:700; } .wktag{ display:inline-block; font-size:10.5px; font-weight:700;
+  border-radius:99px; padding:1px 8px; background:var(--surface-3); color:var(--text-2);
+  margin-left:6px; }
+.wkcode{ font-size:11px; color:var(--text-3); font-family:Consolas,monospace; }
+.wkhr{ border-bottom:1px solid var(--border); margin:2px 0 10px; }
+"""
+st.markdown("<style>" + " ".join(ln.strip() for ln in _WK_CSS.splitlines() if ln.strip())
+            + "</style>", unsafe_allow_html=True)
+
+# ★제목은 왼쪽 · 주 선택은 오른쪽 한 줄 — 조회 조건이 첫 화면 주인공 자리를
+#   차지하지 않게 한다(2026-09-03 재디자인). 설명문은 짧게 캡션으로만.
+_h1, _h2 = st.columns([2.4, 2.0], vertical_alignment="bottom")
+with _h1:
+    st.markdown('<div style="font-size:26px;font-weight:800;letter-spacing:-.03em;'
+                'color:var(--text);margin:2px 0 4px">📰 IP 주간분석</div>'
+                '<div style="font-size:13px;color:var(--text-3);margin-bottom:6px">'
+                '팀(<b>A</b> 아티스트 · <b>C</b> 캐릭터) × 구좌 × 국가로 한 주를 봐요. '
+                '팝업·렌탈 매장 매출도 그 IP 것으로 <b>포함</b>해요.</div>',
+                unsafe_allow_html=True)
 
 
 # ── 주 고르기 ─────────────────────────────────────────────────────────────
@@ -48,9 +89,25 @@ def _week(d: date) -> tuple[date, date]:
 
 # 기본은 **지난 주**다 — 이번 주는 아직 안 끝나서 전주 대비가 헛나온다.
 _last_mon, _last_sun = _week(date.today() - timedelta(days=7))
-c1, c2, c3 = st.columns([1.2, 1.2, 2])
-S = c1.date_input("시작(월)", value=_last_mon, key="wk_s")
-E = c2.date_input("끝(일)", value=_last_sun, key="wk_e")
+_this_mon = _last_mon + timedelta(days=7)      # ▶ 는 이번 주까지만 — 그 앞은 빈 화면이다
+
+
+def _shift_week(days: int) -> None:
+    """◀▶ 버튼 — 시작·끝을 한 주씩 같이 민다."""
+    st.session_state["wk_s"] = st.session_state["wk_s"] + timedelta(days=days)
+    st.session_state["wk_e"] = st.session_state["wk_e"] + timedelta(days=days)
+
+
+with _h2:
+    b1, c1, c2, b2 = st.columns([0.5, 1.4, 1.4, 0.5], vertical_alignment="bottom")
+    S = c1.date_input("시작(월)", value=_last_mon, key="wk_s")
+    E = c2.date_input("끝(일)", value=_last_sun, key="wk_e")
+    b1.button("◀", key="wk_prev", help="전주", use_container_width=True,
+              on_click=_shift_week, args=(-7,))
+    # ★▶ 는 이번 주에서 멈춘다 — 계속 누르면 아직 오지 않은 주를 조회해
+    #   "매출이 없어요" 빈 화면만 나온다(데이터가 없는 게 아니라 아직 안 판 것).
+    b2.button("▶", key="wk_next", help="다음 주", use_container_width=True,
+              on_click=_shift_week, args=(7,), disabled=(S >= _this_mon))
 if S > E:
     st.error("시작일이 끝일보다 늦어요.")
     st.stop()
@@ -59,10 +116,9 @@ _pS = (date.fromisoformat(S) - timedelta(days=7)).isoformat()
 _pE = (date.fromisoformat(E) - timedelta(days=7)).isoformat()
 # ★전년은 **같은 요일**로 맞춘다(364일 = 52주). 날짜로 맞추면 요일이 어긋나
 #   주말이 하루 더 든 주와 비교하게 된다 — 커버리지 조사에서 이미 겪은 함정이다.
+#   ★기준 안내문은 히어로 카드 오른쪽에 함께 적는다 — 머리에 떠 있을 이유가 없다.
 _yS = (date.fromisoformat(S) - timedelta(days=364)).isoformat()
 _yE = (date.fromisoformat(E) - timedelta(days=364)).isoformat()
-c3.caption(f"전주 {_pS} ~ {_pE} · 전년 {_yS} ~ {_yE} "
-           f"(전년은 **같은 요일**로 364일 전이에요)")
 
 RATES, RDATE, RSRC = fx.resolve(E)
 
@@ -172,22 +228,98 @@ def _pct(a, b):
     return f"{(a / b - 1) * 100:+.1f}%" if b else "—"
 
 
-ui_theme.kpis([
-    ui_theme.kpi("이번 주", f"{tot_cur:,.0f}원",
-                 f"{S[5:]} ~ {E[5:]}", hero=True),
-    ui_theme.kpi("전주 대비", _pct(tot_cur, tot_prv), f"{tot_prv:,.0f}원"),
-    ui_theme.kpi("전년 대비", _pct(tot_cur, tot_yoy), f"{tot_yoy:,.0f}원"),
-    ui_theme.kpi("나라", f"{cur['cc'].nunique()}개국",
-                 f"환율 {RDATE} · {RSRC}"),
-])
+# ── 표현 도우미 (2026-09-03 재디자인) ─────────────────────────────────────
+# ★증감은 **색이 말하게 한다** — 하락 빨강 · 상승 초록. 전주 0원(신규)은 NEW.
+def _delta_pill(a: float, b: float) -> str:
+    if not b:
+        return '<span class="wk-new">NEW</span>'
+    p = (a / b - 1) * 100
+    if p >= 0:
+        return f'<span class="wk-up">▲ {p:.1f}%</span>'
+    return f'<span class="wk-dn">▼ {abs(p):.1f}%</span>'
+
+
+# ★국가는 **이름으로** 적는다 — `kr/cn` 코드는 스내피즘 재디자인 때 이미 금지한
+#   문법이다(임시 티도 난다). 모르는 코드는 대문자로라도 보여 준다.
+_CC_KO = {"kr": "한국", "cn": "중국", "tw": "대만", "jp": "일본", "id": "인니",
+          "us": "미국", "vn": "베트남", "hk": "홍콩", "th": "태국", "sg": "싱가포르",
+          "my": "말련", "ph": "필리핀", "mo": "마카오", "ae": "아랍", "gb": "영국",
+          "ca": "캐나다", "mx": "멕시코", "au": "호주", "es": "스페인", "gu": "괌"}
+
+
+def _cc_ko(cc: str) -> str:
+    return _CC_KO.get(str(cc).lower(), str(cc).upper())
+
+
+def _n(v) -> str:
+    return f"{v:,.0f}" if pd.notna(v) and v else '<span class="dash">—</span>'
+
+
+# ★표를 st.dataframe 에서 직접 HTML 로 바꿨으니 **값은 반드시 이스케이프**한다.
+#   IP·상품 이름은 CMS 에서 온 남의 문자열이라 `&`·`<` 가 섞일 수 있고, 그러면
+#   그 줄이 통째로 깨진다(dataframe 은 알아서 해 주던 일이다).
+def _e(v) -> str:
+    return _html_mod.escape(str(v), quote=False)
+
+
+# ── 히어로: 이번 주 성적표 한 장 ─────────────────────────────────────────
+# ★전주·전년 비교를 히어로 카드 **안에** 붙인다 — 카드 셋으로 흩으면
+#   "이번 주 성적" 이라는 한 문장이 세 조각 난다(2026-09-03 재디자인).
+st.markdown(
+    '<div class="wkhero"><div class="wl">'
+    f'<div class="wk">이번 주 매출 · {S[5:]} ~ {E[5:]}</div>'
+    f'<div class="wv">{tot_cur:,.0f}원</div>'
+    '<div class="wb">'
+    + (f'<span class="wkbdg wk-upb">▲ {(tot_cur / tot_prv - 1) * 100:.1f}%'
+       '<small>전주 대비</small></span>' if tot_prv and tot_cur >= tot_prv else
+       f'<span class="wkbdg wk-dnb">▼ {abs((tot_cur / tot_prv - 1) * 100):.1f}%'
+       '<small>전주 대비</small></span>' if tot_prv else "")
+    + (f'<span class="wkbdg wk-upb">▲ {(tot_cur / tot_yoy - 1) * 100:.1f}%'
+       '<small>전년 대비</small></span>' if tot_yoy and tot_cur >= tot_yoy else
+       f'<span class="wkbdg wk-dnb">▼ {abs((tot_cur / tot_yoy - 1) * 100):.1f}%'
+       '<small>전년 대비</small></span>' if tot_yoy else "")
+    + '</div></div><div class="wr">'
+    f'<div><span>전주 ({_pS[5:]} ~ {_pE[5:]})</span><b>{tot_prv:,.0f}원</b></div>'
+    f'<div><span>전년 같은 주 ({_yS[2:]} ~ {_yE[5:]})</span><b>{tot_yoy:,.0f}원</b></div>'
+    f'<div><span>{cur["cc"].nunique()}개국 · 환율 {RDATE}</span>'
+    f'<b style="font-weight:600;color:var(--text-3)">{RSRC}</b></div>'
+    '</div></div>', unsafe_allow_html=True)
+
+# ★긴 집계 각주는 접어 둔다 — 매주 같은 문장이 본문 가운데 떠 있을 이유가 없다.
+#   내용은 그대로다(단독·렌탈 금액이 매주 갱신되는 것도 그대로).
+with st.expander("ⓘ 집계 기준 — 단독 포함 · 렌탈 제외 · 엑셀과 다른 점"):
+    st.markdown(f"**(단위: 원)** · 팝업 매장에서 판 정규 IP 와 "
+                f"**단독 프레임**(KT위즈·카이스트 등)은 **포함**했어요"
+                f"(이번 주 단독 {_solo_amt:,.0f}원). "
+                f"렌탈 IP 는 **뺐어요**(이번 주 {_rent_amt:,.0f}원). "
+                f"단독은 엑셀 CMS 내려받기본에 빠져 있어 **엑셀보다 그만큼 커요.** "
+                f"전년은 **같은 요일**로 364일 전({_yS} ~ {_yE})이에요.")
 
 if not _m.empty:
-    st.caption(f"**(단위: 원)** · 팝업 매장에서 판 정규 IP 와 "
-               f"**단독 프레임**(KT위즈·카이스트 등)은 **포함**했어요"
-               f"(이번 주 단독 {_solo_amt:,.0f}원). "
-               f"렌탈 IP 는 **뺐어요**(이번 주 {_rent_amt:,.0f}원). "
-               f"단독은 엑셀 CMS 내려받기본에 빠져 있어 **엑셀보다 그만큼 커요.**")
-    st.dataframe(_m.round(0).style.format("{:,.0f}"), use_container_width=True)
+    # ★st.dataframe(줄무늬 그리드) 대신 ui_theme 의 ntbl 문법 — 국가명 헤더 +
+    #   합계 굵게 + 오른쪽 끝에 주 전체 대비 비중 막대. TTL 이라는 말도 안 쓴다.
+    _cols = [c for c in _m.columns if c not in ("TTL",)]
+    _gt = f"34px 100px repeat({len(_cols)},1fr) 1.05fr 108px"
+    _rows_h = "".join(f'<span class="r">{_e(_cc_ko(c)) if c != "기타" else "기타"}</span>'
+                      for c in _cols)
+    _html = [f'<div class="ntbl"><div class="ntr nth" style="grid-template-columns:{_gt}">'
+             f'<span>팀</span><span>구좌</span>{_rows_h}'
+             f'<span class="r">합계</span><span class="r">비중</span></div>']
+    _mx_frac = float((_m["TTL"] / tot_cur).max()) if tot_cur else 0
+    for (tm_, gz_), r in _m.iterrows():
+        cells = "".join(f'<span class="r">{_n(r[c])}</span>' for c in _cols)
+        _html.append(
+            f'<div class="ntr" style="grid-template-columns:{_gt}">'
+            f'<span class="nname">{_e(tm_)}</span><span>{_e(gz_)}</span>{cells}'
+            f'<span class="r"><b>{r["TTL"]:,.0f}</b></span>'
+            f'<span>{ui_theme.bar((r["TTL"] / tot_cur) if tot_cur else 0, _mx_frac)}</span>'
+            '</div>')
+    _sum_cells = "".join(f'<span class="r">{_n(_m[c].sum())}</span>' for c in _cols)
+    _html.append(f'<div class="ntr sum" style="grid-template-columns:{_gt}">'
+                 f'<span></span><span>합계</span>{_sum_cells}'
+                 f'<span class="r">{_m["TTL"].sum():,.0f}</span><span></span></div></div>')
+    st.markdown("".join(_html), unsafe_allow_html=True)
+    st.caption("(단위: 원) · 비중은 이번 주 전체 매출 대비예요.")
 
 # ── ② 팀별 TOP 10 ─────────────────────────────────────────────────────────
 ui_theme.sec("2", "팀별 TOP 10", "회차가 나뉘어 있으면 IP 이름으로 합쳐요")
@@ -221,20 +353,29 @@ for tab, team in zip(tabs[:2], ("A", "C")):
         g["전주"] = g["ip"].map(_prev_ip).fillna(0)
         # ★★금액은 **원 단위 + 쉼표**다. 매주 보시던 엑셀 리포트가 원 단위 맨숫자라
         #   여기서 백만원으로 바꾸면 같은 표를 두 단위로 읽게 된다(2026-09-03 지적).
-        #   ★단위를 바꾸는 대신 **Styler 로 쉼표만** 넣는다 — 문자열로 만들면
-        #     표에서 정렬이 죽고, 그냥 두면 지수표기(`9.13e+07`)로 새어 못 읽는다.
-        show = pd.DataFrame({
-            "IP": g["ip"],
-            "매출": g["원화"].round(0),
-            "전주": g["전주"].round(0),
-            "증감": [_pct(a, b) for a, b in zip(g["원화"], g["전주"])],
-            "비중": (g["원화"] / q["원화"].sum() * 100).round(1),
-            "건수": g["건수"].astype(int),
-        })
-        st.caption("**(매출·전주 단위: 원 · 비중: %)**")
-        st.dataframe(show.style.format({"매출": "{:,.0f}", "전주": "{:,.0f}",
-                                        "비중": "{:.1f}", "건수": "{:,d}"}),
-                     use_container_width=True, hide_index=True)
+        # ★순위·증감 색·비중 막대를 넣는다(2026-09-03 재디자인) — 1위와 10위가
+        #   같은 무게로 보이면 TOP 10 이라는 말이 심심해진다. 1위는 브랜드색.
+        _tt = float(q["원화"].sum())
+        _gt10 = "26px minmax(0,1.6fr) 1fr 1fr 96px 130px 74px"
+        _h10 = [f'<div class="ntbl"><div class="ntr nth" style="grid-template-columns:{_gt10}">'
+                '<span>#</span><span>IP</span><span class="r">매출</span>'
+                '<span class="r">전주</span><span class="r">증감</span>'
+                '<span class="r">비중</span><span class="r">건수</span></div>']
+        _mx10 = float((g["원화"] / _tt).max()) if _tt else 0
+        for _i, (_, r) in enumerate(g.iterrows(), start=1):
+            top = " wk-top1" if _i == 1 else ""
+            _h10.append(
+                f'<div class="ntr" style="grid-template-columns:{_gt10}">'
+                f'<span class="dim{top}">{_i}</span>'
+                f'<span class="nname{top}">{_e(r["ip"])}</span>'
+                f'<span class="r"><b>{r["원화"]:,.0f}</b></span>'
+                f'<span class="r dim">{_n(r["전주"])}</span>'
+                f'<span class="r">{_delta_pill(r["원화"], r["전주"])}</span>'
+                f'<span>{ui_theme.bar((r["원화"] / _tt) if _tt else 0, _mx10)}</span>'
+                f'<span class="r">{int(r["건수"]):,d}</span></div>')
+        _h10.append("</div>")
+        st.markdown("".join(_h10), unsafe_allow_html=True)
+        st.caption("(매출·전주 단위: 원) · 비중은 이 팀 매출 대비예요.")
 
 with tabs[2]:
     q = cur[cur["구분"].isin(_ORIG) & cur["원화"].notna()].copy()
@@ -246,18 +387,29 @@ with tabs[2]:
                .agg(원화=("원화", "sum"), 건수=("건수", "sum"))
                .sort_values("원화", ascending=False).head(15))
         g["전주"] = g["ip"].map(_prev_ip).fillna(0)
-        st.caption("**(매출·전주 단위: 원)** · 포토이즘 자체 프레임이에요. "
+        # ★A/C 탭과 같은 문법 — 표가 탭마다 다르게 생기면 눈이 매번 다시 배운다.
+        _gto = "26px minmax(0,1.6fr) 150px 1fr 1fr 96px 74px"
+        _ho = [f'<div class="ntbl"><div class="ntr nth" style="grid-template-columns:{_gto}">'
+               '<span>#</span><span>프레임</span><span>구분</span>'
+               '<span class="r">매출</span><span class="r">전주</span>'
+               '<span class="r">증감</span><span class="r">건수</span></div>']
+        for _i, (_, r) in enumerate(g.iterrows(), start=1):
+            top = " wk-top1" if _i == 1 else ""
+            _ho.append(
+                f'<div class="ntr" style="grid-template-columns:{_gto}">'
+                f'<span class="dim{top}">{_i}</span>'
+                f'<span class="nname{top}">{_e(r["ip"])}</span>'
+                f'<span class="dim">{_e(r["구분"])}</span>'
+                f'<span class="r"><b>{r["원화"]:,.0f}</b></span>'
+                f'<span class="r dim">{_n(r["전주"])}</span>'
+                f'<span class="r">{_delta_pill(r["원화"], r["전주"])}</span>'
+                f'<span class="r">{int(r["건수"]):,d}</span></div>')
+        _ho.append("</div>")
+        st.markdown("".join(_ho), unsafe_allow_html=True)
+        st.caption("(매출·전주 단위: 원) · 포토이즘 자체 프레임이에요. "
                    "`P ` 는 기획 프레임, 나머지는 기본 디자인이고요 — "
                    "**IP 협업(그냥집사)과 자체 시즌 디자인(민트 도트)은 데이터로는 "
                    "안 갈려요.** 갈라야 하면 알려 주세요.")
-        st.dataframe(pd.DataFrame({
-            "프레임": g["ip"], "구분": g["구분"],
-            "매출": g["원화"].round(0),
-            "전주": g["전주"].round(0),
-            "증감": [_pct(a, b) for a, b in zip(g["원화"], g["전주"])],
-            "건수": g["건수"].astype(int),
-        }).style.format({"매출": "{:,.0f}", "전주": "{:,.0f}", "건수": "{:,d}"}),
-            use_container_width=True, hide_index=True)
 
 # ── ③ 스내피즘 ────────────────────────────────────────────────────────────
 ui_theme.sec("3", "스내피즘", "판매 항목 × 국가")
@@ -269,10 +421,30 @@ else:
     sn["원화"] = (sn["현지"] * _r).where(_r.notna())
     sp = sn[sn["원화"].notna()].pivot_table(index="상품", columns="국가",
                                             values="원화", aggfunc="sum", fill_value=0)
-    sp["TTL"] = sp.sum(axis=1)
-    sp = sp.sort_values("TTL", ascending=False)
-    st.caption("**(단위: 원)**")
-    st.dataframe(sp.round(0).style.format("{:,.0f}"), use_container_width=True)
+    sp["합계"] = sp.sum(axis=1)
+    sp = sp.sort_values("합계", ascending=False)
+    # ★①과 같은 ntbl 문법 + 비중 막대 — 국가는 이미 이름이라 그대로 쓴다.
+    _snc = [c for c in sp.columns if c != "합계"]
+    _sngt = f"minmax(0,1.2fr) repeat({len(_snc)},1fr) 1.05fr 108px"
+    _sntt = float(sp["합계"].sum())
+    _snh = [f'<div class="ntbl"><div class="ntr nth" style="grid-template-columns:{_sngt}">'
+            '<span>상품</span>'
+            + "".join(f'<span class="r">{_e(c)}</span>' for c in _snc)
+            + '<span class="r">합계</span><span class="r">비중</span></div>']
+    _snmx = float((sp["합계"] / _sntt).max()) if _sntt else 0
+    for idx, r in sp.iterrows():
+        cells = "".join(f'<span class="r">{_n(r[c])}</span>' for c in _snc)
+        _snh.append(f'<div class="ntr" style="grid-template-columns:{_sngt}">'
+                    f'<span class="nname">{_e(idx)}</span>{cells}'
+                    f'<span class="r"><b>{r["합계"]:,.0f}</b></span>'
+                    f'<span>{ui_theme.bar((r["합계"] / _sntt) if _sntt else 0, _snmx)}</span>'
+                    '</div>')
+    _snh.append(f'<div class="ntr sum" style="grid-template-columns:{_sngt}">'
+                f'<span>합계</span>'
+                + "".join(f'<span class="r">{_n(sp[c].sum())}</span>' for c in _snc)
+                + f'<span class="r">{_sntt:,.0f}</span><span></span></div></div>')
+    st.markdown("".join(_snh), unsafe_allow_html=True)
+    st.caption("(단위: 원)")
     st.markdown("**상품별 IP TOP 10**")
     _stab = st.tabs(list(sp.index[:4]))
     for t, cat in zip(_stab, sp.index[:4]):
@@ -281,31 +453,55 @@ else:
                  .groupby("타이틀", as_index=False)
                  .agg(원화=("원화", "sum"), 건수=("건수", "sum"))
                  .sort_values("원화", ascending=False).head(10))
-            st.caption("**(매출 단위: 원)**")
-            st.dataframe(pd.DataFrame({
-                "IP": g["타이틀"],
-                "매출": g["원화"].round(0),
-                "건수": g["건수"].astype(int),
-            }).style.format({"매출": "{:,.0f}", "건수": "{:,d}"}),
-                use_container_width=True, hide_index=True)
+            _ct = float(g["원화"].sum())
+            _cgt = "26px minmax(0,1.6fr) 1fr 130px 74px"
+            _ch = [f'<div class="ntbl"><div class="ntr nth" style="grid-template-columns:{_cgt}">'
+                   '<span>#</span><span>IP</span><span class="r">매출</span>'
+                   '<span class="r">비중</span><span class="r">건수</span></div>']
+            _cmx = float((g["원화"] / _ct).max()) if _ct else 0
+            for _i, (_, r) in enumerate(g.iterrows(), start=1):
+                top = " wk-top1" if _i == 1 else ""
+                _ch.append(f'<div class="ntr" style="grid-template-columns:{_cgt}">'
+                           f'<span class="dim{top}">{_i}</span>'
+                           f'<span class="nname{top}">{_e(r["타이틀"])}</span>'
+                           f'<span class="r"><b>{r["원화"]:,.0f}</b></span>'
+                           f'<span>{ui_theme.bar((r["원화"] / _ct) if _ct else 0, _cmx)}</span>'
+                           f'<span class="r">{int(r["건수"]):,d}</span></div>')
+            _ch.append("</div>")
+            st.markdown("".join(_ch), unsafe_allow_html=True)
+            st.caption("(매출 단위: 원) · 비중은 이 상품 매출 대비예요.")
 
 # ── ④ 새로 나온 IP 팀 확인 ─────────────────────────────────────────────────
 unk = cur[cur["근거"] == "접두어"].groupby(
     ["타이틀", "구분", "팀"], as_index=False)["원화"].sum().sort_values(
     "원화", ascending=False)
-ui_theme.sec("4", "팀 확인이 필요해요", f"{len(unk)}개")
+# ★건수는 빨간 pill — 이건 '보는 정보'가 아니라 '처리할 일감'이라서다.
+ui_theme.sec("4", f'팀 확인이 필요해요 <span class="wkcnt">{len(unk)}건</span>',
+             "규칙으로 짐작한 것들이에요 — 지정하면 다음 주부터 자동 반영돼요")
 if unk.empty:
     ui_theme.nbox("ok", "✅ <b>이번 주는 다 정해져 있어요</b>")
 else:
-    st.caption("규칙으로 짐작한 것들이에요. 한 번 정해 두면 다음 주부터 그대로 써요. "
-               "**`L `·`P ` 표식이 없는 캐릭터 IP** 가 여기 걸리기 쉬워요.")
-    for _, r in unk.head(20).iterrows():
+    st.caption("**`L `·`P ` 표식이 없는 캐릭터 IP** 가 여기 걸리기 쉬워요.")
+    # ★행마다 [IP명(굵게)+구분 태그+코드(작은 회색)] · 금액 · A/C 선택을 한 줄로.
+    #   전엔 항목과 라디오가 화면 양끝으로 찢어져 어느 행 것인지 눈으로 이어야 했다.
+    _CODE_RE = re.compile(
+        r"^((?:렌탈|PW|L7|L|P|B|SP|NX)\s+)?(\d{6,8}\s*)?(.*)$")
+    for _i, (_, r) in enumerate(unk.head(20).iterrows()):
         k = str(r["타이틀"])
-        cc1, cc2 = st.columns([3, 1])
-        cc1.markdown(f"`{k}` · {r['구분']} · "
-                     f"{0 if pd.isna(r['원화']) else int(r['원화']):,}원 "
-                     f"— 지금은 **{r['팀']}** 으로 봐요")
-        pick = cc2.radio("팀", ["A", "C"], index=0 if r["팀"] == "A" else 1,
+        m = _CODE_RE.match(k)
+        _code = ((m.group(1) or "") + (m.group(2) or "")).strip()
+        _name = (m.group(3) or k).strip() or k
+        if _i:
+            st.markdown('<div class="wkhr"></div>', unsafe_allow_html=True)
+        cc1, cc2, cc3 = st.columns([3.1, 1.0, 1.3], vertical_alignment="center")
+        cc1.markdown(f'<span class="wknm">{_e(_name)}</span>'
+                     f'<span class="wktag">{_e(r["구분"])}</span>'
+                     + (f'<br><span class="wkcode">{_e(_code)}</span>' if _code else ""),
+                     unsafe_allow_html=True)
+        cc2.markdown(f'<div class="r num" style="text-align:right;font-weight:700">'
+                     f'{0 if pd.isna(r["원화"]) else int(r["원화"]):,}원</div>',
+                     unsafe_allow_html=True)
+        pick = cc3.radio("팀", ["A", "C"], index=0 if r["팀"] == "A" else 1,
                          key=f"tm_{k}", horizontal=True, label_visibility="collapsed",
                          disabled=not CAN_EDIT)
         if pick != r["팀"] and CAN_EDIT:
