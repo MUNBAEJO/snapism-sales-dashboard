@@ -4,6 +4,9 @@ config.json
 allowed-users.json
 # ★백업본도 같은 내용(직원 이메일·접근권한) — 절대 커밋 금지
 allowed-users.json.bak*
+# ★config.json 백업도 자격증명 사본이다 — 원본만 막고 백업을 안 막아
+#   `config.json.bak_...` 이 추적 대상으로 뜬 적이 있다(2026-09-03).
+config.json.bak*
 
 # 원자적 저장/락 임시 파일 (auth·config 저장 시 잠깐 생겼다 사라짐)
 *.json.tmp
