@@ -214,7 +214,8 @@ def _ticket_box(brand: str):
     if st.session_state.get(f"_q_{brand}") != _qsig:
         st.session_state[f"_q_{brand}"] = _qsig
         for _k in [k for k in st.session_state
-                   if k.startswith((f"ck_{brand}_", f"tkpick_{brand}_"))]:
+                   if k.startswith((f"ck_{brand}_", f"tkpick_{brand}_",
+                                    f"tkpicks_{brand}_"))]:
             del st.session_state[_k]
     if not q:
         return [], [], {}, []
@@ -253,7 +254,15 @@ def _ticket_box(brand: str):
         for t, (fixed, cands) in tt.items():
             if fixed == "__excluded__":
                 continue
-            if (fixed == tk) if fixed else (tk in cands):
+            # ★★확정은 **대표를 정하는 것이지 나머지를 가리는 게 아니다** (2026-09-03).
+            #   전엔 `fixed` 가 있으면 그 한 장만 통과시켰다. 타이틀 1 : 티켓 1 이던
+            #   시절의 규칙인데, 상품별로 티켓이 나뉘는 건이 생기면서 탈이 났다 —
+            #   더윈드는 `폴라릿`(31888)로 확정돼 있어서, 번호를 직접 적어 불러온
+            #   `스티커 프레임, 포토카드`(31552)까지 후보에서 걸러져 **고를 칸에 한
+            #   장밖에 안 떴다.** 확정은 아래 multiselect 의 기본값(대표)으로만 쓰고,
+            #   후보 자체는 막지 않는다. 기본 선택은 여전히 확정 한 장뿐이라
+            #   모르는 새 딸려 들어가지는 않는다.
+            if (fixed == tk) or (tk in cands):
                 claimed.setdefault(t, []).append(tk)
     if not claimed:
         st.warning("이 기간에 그 티켓으로 잡히는 매출이 없어요.")
