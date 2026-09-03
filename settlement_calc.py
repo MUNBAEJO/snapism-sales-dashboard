@@ -517,6 +517,11 @@ def country_detail(brand: str, titles: list[str], start: str, end: str,
     if "mem" in df.columns:
         _al = _member_alias(titles)          # 타이틀 전용 별칭까지 합쳐 **한 번만** 만든다
         df["mem"] = df["mem"].map(lambda x: _norm_member(x, _al))
+        # ★대소문자 변형 접기는 **반드시 _fold_prices(절사) 앞**이다.
+        #   뒤에서 접으면 이미 두 번 절사된 값을 더하게 된다.
+        df, _fc = fold_case(df, "mem", "현지")     # 이 자리엔 아직 '매출액' 이 없다
+        if _fc:
+            print(f"[대소문자 합침] {[(c, v) for _, v, c in _fc]}", flush=True)
     # ★절사는 현지통화끼리 한다. 환산 후 나누면 환율배수만큼 부푼다.
     df = _fold_prices(df, rates)
     if "구분" in df.columns:
@@ -663,6 +668,51 @@ _CYRILLIC = str.maketrans({
     "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
     "і": "i", "ѕ": "s", "ј": "j",
 })
+
+
+def fold_case(df: "pd.DataFrame", name_col: str, amount_col: str):
+    """같은 이름의 **대소문자 변형을 하나로 접는다.** (df, 합친 내역) 을 돌려준다.
+
+    ★★왜 필요한가 (2026-09-03 · 원천 직결로 드러남) — CMS 내보내기의 표기가
+      수집 시점마다 달라서 원장에 `FAKER` 와 `Faker` 가 **둘 다** 쌓였다.
+      원천(RDS)엔 한 타이틀에 표기가 **하나뿐**이고 금액을 더하면 정확히 맞는다:
+          원천 `FAKER` 8,736,000/1,244
+          원장 `FAKER` 5,460,000/775 + `Faker` 3,276,000/469  = 같음
+      **절사 단위가 국가 × 멤버**라 두 표기로 남으면 **절사가 두 번** 일어난다.
+
+    ★★전역 대소문자 접기는 **하면 안 된다**(2026-08-28 기각). 서로 다른 사람이
+      섞인다 — `SOOBIN`(TXT) ↔ `Soobin`(우주소녀) · `WINTER`(aespa) ↔ `Winter`(계절테마).
+      129무리 중 85무리가 다른 IP였고 26.7억이 걸려 있었다.
+      여기서는 **한 정산서(= 한 IP) 안에서만** 접는다. 실측(2026년 전체):
+      IP 안에서 표기가 갈린 49무리 / 10,383 이 **전부 순수 대소문자**였다
+      (소문자로 바꿔 서로 달라지는 무리 0개).
+
+    ★대표 표기는 **금액이 큰 쪽**이다. 기간이 고정된 문서라 같은 기간을 다시
+      발행하면 같은 답이 나온다. 대문자로 통일하지 않는 이유는 원천도 타이틀마다
+      `KERIA`/`Keria` 로 갈려 있어 '대문자가 정답' 이 아니기 때문이다.
+    ★합친 사실은 **돌려준다** — 화면이 보여 줄 수 있어야 한다. 조용히 합치지 않는다.
+    """
+    if df is None or df.empty or name_col not in df.columns:
+        return df, []
+    s = df[name_col].astype(str)
+    low = s.str.lower()
+    if low.nunique() == s.nunique():
+        return df, []                      # 갈린 게 없다 — 손대지 않는다
+    # ★금액 열이 없으면 **행 수**로 대표를 정한다. 부르는 자리마다 열 이름이 달라서
+    #   (`현지`·`krw_raw`…) 없는 이름이 오면 죽는 게 아니라 순서만 바뀌어야 한다.
+    if amount_col in df.columns:
+        amt = pd.to_numeric(df[amount_col], errors="coerce").fillna(0)
+    else:
+        amt = pd.Series(1, index=df.index)
+    order = (pd.DataFrame({"_l": low, "_n": s, "_a": amt})
+             .groupby(["_l", "_n"], as_index=False)["_a"].sum()
+             .sort_values(["_l", "_a", "_n"], ascending=[True, False, True]))
+    canon = order.groupby("_l")["_n"].first().to_dict()
+    merged = [(k, sorted(g["_n"].tolist()), canon[k])
+              for k, g in order.groupby("_l") if g["_n"].nunique() > 1]
+    out = df.copy()
+    out[name_col] = low.map(canon).fillna(s)
+    return out, merged
 
 
 def _norm_member(s: str, alias: dict | None = None) -> str:
@@ -951,6 +1001,8 @@ def member_pivot(brand: str, titles: list[str], start: str, end: str,
     df["국가"] = df["국가"].map(lambda x: NAT_KO.get(x, x))
     _al = _member_alias(titles)              # 본문(country_detail)과 **같은 기준**
     df["member"] = df["member"].map(lambda x: _norm_member(x, _al))
+    # ★본문과 **같은 기준**이어야 한다 — 한쪽만 접으면 본문과 별첨의 멤버 수가 어긋난다.
+    df, _ = fold_case(df, "member", "krw_raw")
     # 별칭·키릴 정규화로 같은 멤버가 합쳐질 수 있으므로 다시 모은다.
     df = df.groupby(["국가", "member"], as_index=False).agg(
         num=("num", "sum"), krw_raw=("krw_raw", "sum"),
