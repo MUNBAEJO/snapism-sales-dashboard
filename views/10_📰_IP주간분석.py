@@ -508,8 +508,71 @@ else:
             wr.set_team(k, pick, _email)
             st.rerun()
 
-# ── ⑤ 내려받기 ────────────────────────────────────────────────────────────
-ui_theme.sec("5", "내려받기", "엑셀 한 장")
+# ── ⑤ 주차별 추이 ─────────────────────────────────────────────────────────
+# 엑셀의 `26-a`(아티스트) · `26-c`(캐릭터) 누적 시트를 대신한다 — IP 행 × 주차 열에
+# 매주 한 칸씩 쌓이는 그 표다.
+# ★★계산은 **주간 숫자와 같은 함수**(`photoism_detail(by_week=True)`)를 쓴다.
+#   추이용 집계를 따로 만들면 같은 화면에서 두 숫자가 갈린다 — 엑셀도 26-a/26-c 와
+#   COVER 가 같은 원천을 본다. 검증: 주차별 합 = 통짜 합(9주 45,210,709,467 동일),
+#   개별 주도 그 주만 조회한 값과 같다.
+# ★기간이 길수록 느리다(35주 15.2초). 그래서 **기본 12주**에 mtime 캐시를 건다 —
+#   원장이 안 바뀌면 다시 안 돈다.
+ui_theme.sec("5", "주차별 추이", "엑셀 26-a · 26-c 를 대신해요")
+
+
+@st.cache_data(ttl=3600, max_entries=4, show_spinner="주차별로 모으는 중이에요…")
+def _trend(t_start, t_end, teamver, dataver):
+    d = wr.photoism_detail(t_start, t_end, by_week=True)
+    if d.empty:
+        return d
+    tm = wr.load_teams()
+    d[["팀", "_"]] = d.apply(
+        lambda r: pd.Series(wr.team_of(r["타이틀"], r["구분"], tm)), axis=1)
+    d = d[d["구분"] != "렌탈"]
+    _u = d["cc"].map(wr.cc_units(t_start, t_end))
+    _r = _u.map(lambda u: RATES.get(str(u).upper()) if u else None)
+    d["원화"] = (d["현지"] * _r).where(_r.notna())
+    d["ip"] = d["표시IP"].map(wr.ip_name)
+    d["주"] = pd.to_datetime(d["주"]).dt.strftime("%m/%d")
+    return d[d["원화"].notna()]
+
+
+_nw = st.slider("몇 주를 볼까요", 4, 52, 12, step=4, key="wk_n",
+                help="길수록 느려요. 원장이 바뀌지 않으면 다시 계산하지 않아요.")
+_tS = (date.fromisoformat(E) - timedelta(weeks=_nw - 1)).isoformat()
+_tS = _week(date.fromisoformat(_tS))[0].isoformat()
+tr = _trend(_tS, E, wr.team_version(), _dv)
+if tr.empty:
+    st.caption("그 기간에 매출이 없어요.")
+else:
+    _wks = sorted(tr["주"].unique())
+    _ttab = st.tabs(["A · 아티스트", "C · 캐릭터"])
+    for _tb, _tm_ in zip(_ttab, ("A", "C")):
+        with _tb:
+            q = tr[(tr["팀"] == _tm_) & ~tr["구분"].isin(_ORIG)]
+            if q.empty:
+                st.caption("이 팀 매출이 없어요.")
+                continue
+            # ★TOP 은 **마지막 주**가 아니라 기간 전체 합으로 고른다 — 마지막 주만
+            #   보면 그 주에 반짝한 IP 가 올라오고 흐름이 안 보인다.
+            top = (q.groupby("ip")["원화"].sum()
+                     .sort_values(ascending=False).head(12).index.tolist())
+            piv = (q[q["ip"].isin(top)]
+                   .pivot_table(index="ip", columns="주", values="원화",
+                                aggfunc="sum", fill_value=0)
+                   .reindex(index=top, columns=_wks, fill_value=0))
+            st.caption("**(단위: 원)** · 기간 전체 매출 큰 순 12개예요")
+            st.dataframe(piv.round(0).style.format("{:,.0f}"),
+                         use_container_width=True)
+            _sel = st.multiselect("그래프로 볼 IP", top, default=top[:5],
+                                  key=f"tr_ip_{_tm_}")
+            if _sel:
+                st.line_chart(piv.loc[[i for i in top if i in _sel]].T,
+                              height=280)
+
+
+# ── ⑥ 내려받기 ────────────────────────────────────────────────────────────
+ui_theme.sec("6", "내려받기", "엑셀 한 장")
 try:
     import io
 
@@ -521,6 +584,17 @@ try:
             xw, sheet_name="포토이즘_상세", index=False)
         if not sn.empty:
             sn.to_excel(xw, sheet_name="스내피즘_상세", index=False)
+        # 엑셀 26-a/26-c 를 대신하는 시트 — IP 행 × 주차 열
+        if not tr.empty:
+            for _tm2, _nm in (("A", "26-a_아티스트"), ("C", "26-c_캐릭터")):
+                _q = tr[(tr["팀"] == _tm2) & ~tr["구분"].isin(_ORIG)]
+                if _q.empty:
+                    continue
+                (_q.pivot_table(index="ip", columns="주", values="원화",
+                                aggfunc="sum", fill_value=0)
+                   .sort_values(by=list(sorted(_q["주"].unique()))[-1],
+                                ascending=False)
+                   .to_excel(xw, sheet_name=_nm))
     st.download_button("📥 엑셀 내려받기", buf.getvalue(),
                        file_name=f"IP주간분석_{S}_{E}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument."

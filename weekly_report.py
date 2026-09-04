@@ -221,7 +221,7 @@ def snapism_rows(start: str, end: str) -> pd.DataFrame:
 
 
 def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
-                    split_sm: bool = True) -> pd.DataFrame:
+                    split_sm: bool = True, by_week: bool = False) -> pd.DataFrame:
     """리포트의 본 표. 열: 구분 · 구좌 · 타이틀 · 표시IP · cc · 현지 · 건수
 
     ★★출처를 둘로 나눈다 — 실측한 커버리지대로다(2026-08-24~30 KR):
@@ -235,6 +235,12 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
       로 갈라 준다. 검증: 8명 전원 0원 차이 · 미매칭 테마 0개.
       지점별로 쪼개진 것(`성수중앙_NCT 127`)도 같은 아티스트로 합쳐진다.
     """
+    # ★★주차 축은 **같은 함수에 얹는다** (2026-09-04). 추이용 집계를 따로 만들면
+    #   주간 숫자와 추이가 갈린다 — 엑셀 26-a/26-c 도 COVER 와 같은 원천을 쓴다.
+    #   `date_trunc('week')` 는 DuckDB 에서 **월요일**을 준다(우리 주 정의와 같다).
+    _wk_sel = "date_trunc('week', CAST(날짜 AS DATE)) AS 주, " if by_week else ""
+    # ★주 열이 앞에 붙으면 **위치 번호가 한 칸씩 밀린다** — GROUP BY 를 통째로 만든다.
+    _grp4 = "1, 2, 3, 4, 5" if by_week else "1, 2, 3, 4"
     con = _duck()
     try:
         cc_th = ""
@@ -254,17 +260,17 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
             GROUP BY 1
         """).df()
         th = con.execute(f"""
-            SELECT 타이틀, 테마, 프레임, lower(국가코드) AS cc,
+            SELECT {_wk_sel}타이틀, 테마, 프레임, lower(국가코드) AS cc,
                    CAST(SUM(최종결제금액) AS BIGINT) AS 현지,
                    CAST(SUM(주문수) AS BIGINT) AS 건수
             FROM read_parquet('{THEME_DAILY.as_posix()}')
             WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'{cc_th}
               AND {not_test('타이틀', '테마', '프레임')}
-            GROUP BY 1, 2, 3, 4
+            GROUP BY {_grp4}
         """).df()
         # ② BASIC 은 원장에서. 프레임 이름이 곧 IP라 테마 축이 없다.
         ba = con.execute(f"""
-            SELECT {GUBUN_SQL} AS 구분, '' AS 테마,
+            SELECT {_wk_sel}{GUBUN_SQL} AS 구분, '' AS 테마,
                    trim(CAST("프레임 이름" AS VARCHAR)) AS 타이틀,
                    lower(국가코드) AS cc,
                    CAST(SUM(CAST("최종 결제 금액" AS BIGINT)) AS BIGINT) AS 현지,
@@ -273,7 +279,7 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
             WHERE CAST(날짜 AS VARCHAR) BETWEEN '{start}' AND '{end}'
               AND {NOT_CANCELLED} AND "구좌" = 'BASIC'{cc_raw}
               AND {not_test('"타이틀명"', '"프레임 이름"')}
-            GROUP BY 1, 2, 3, 4
+            GROUP BY {_grp4}
             HAVING SUM(CAST("최종 결제 금액" AS BIGINT)) <> 0
         """).df()
     finally:
@@ -293,7 +299,9 @@ def photoism_detail(start: str, end: str, ccs: list[str] | None = None,
     ba["구좌"] = "BASIC"
     ba["프레임"] = ba["타이틀"]
     ba["표시IP"] = ba["타이틀"]
-    cols = ["구분", "구좌", "타이틀", "표시IP", "테마", "프레임", "cc", "현지", "건수"]
+    # ★`주` 를 열 목록에 넣어야 한다 — reindex 가 목록에 없는 열을 **말없이 버린다.**
+    cols = (["주"] if by_week else []) + [
+        "구분", "구좌", "타이틀", "표시IP", "테마", "프레임", "cc", "현지", "건수"]
     out = pd.concat([th.reindex(columns=cols), ba.reindex(columns=cols)],
                     ignore_index=True)
     return out[~out["구분"].isin(["제외", "스티커머신"])].reset_index(drop=True)
