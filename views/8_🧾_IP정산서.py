@@ -447,12 +447,13 @@ def _axes_cached(titles_key, start, end, dataver):
 
 @st.cache_data(ttl=900, max_entries=16, show_spinner=False)
 def _detail_cached(brand, titles_key, start, end, fx_key, dataver, frames_key=None,
-                   cats_key=None):
+                   cats_key=None, camps_key=None):
     rates, _, _ = _rates(end, fx_key)
     return sc.fill_open(
         sc.country_detail(brand, list(titles_key), start, end, rates,
                           frames=list(frames_key) if frames_key is not None else None,
-                          cats=list(cats_key) if cats_key is not None else None),
+                          cats=list(cats_key) if cats_key is not None else None,
+                          camps=list(camps_key) if camps_key is not None else None),
         sc.open_countries(brand, start, end))
 
 
@@ -485,6 +486,7 @@ def make_panel():
     #   **지금까지와 1원도 다르지 않다**(검증 기준). 실제로 세 타이틀에서 확인함.
     frames_by_brand = {}
     cats_by_brand = {}
+    camps_by_brand = {}
     _axes_by_brand = {}
     for b, (tks, titles) in picks.items():
         if not titles:
@@ -511,22 +513,47 @@ def make_panel():
                 #   나라에 넣는 **자리표**라 고를 대상이 아니다(고르면 0원 문서가 된다).
                 _cl = [(str(r["구분"]), int(r["매출액"])) for _, r in _g.iterrows()
                        if int(r["매출액"]) != 0]
-            if len(_cl) > 1:
-                _cn = [c for c, _ in _cl]
-                _cm = dict(_cl)
+            # ★★기획전 축을 같이 둔다 (2026-09-04). 상품 축만으론 못 가르는 건이 있다 —
+            #   누에라는 `아티스트`(컴백 기념 `CANDIP-29057`)와 `반팔입고나와`
+            #   (`CANDIP-28379`)가 **포토카드·와이드를 둘 다** 팔아 격자가 된다.
+            #   리센느는 상품이 1:1 이라 상품 축으로 갈렸지만 누에라는 안 된다.
+            #   두 축은 AND 로 걸려서 격자의 한 칸만 집어낼 수 있다.
+            _pl = sm.snapism_campaigns(titles, S, E, RATES)
+            _cn = [c for c, _ in _cl]
+            _cm = dict(_cl)
+            _pn = [c for c, _ in _pl]
+            _pm = dict(_pl)
+            if len(_cn) > 1 or len(_pn) > 1:
                 with st.expander(
-                        f"{sm.BRAND_LABEL.get(b, b)} — 판매 항목으로 좁히기"
-                        f"  ({len(_cn)}종)", expanded=False):
-                    st.caption("비워 두면 **전체**예요. 티켓이 상품별로 나뉘어 있으면 "
-                               "그 상품만 고르세요.")
-                    _sc_ = st.multiselect(
-                        "판매 항목", _cn, default=[], key=f"pk_cat_{b}",
-                        format_func=lambda x: f"{x}  ({_cm.get(x, 0):,}원)",
-                        disabled=not CAN_EDIT)
+                        f"{sm.BRAND_LABEL.get(b, b)} — 좁히기"
+                        f"  (기획전 {len(_pn)}종 · 판매 항목 {len(_cn)}종)",
+                        expanded=False):
+                    st.caption("비워 두면 **전체**예요. 티켓이 기획전이나 상품별로 "
+                               "나뉘어 있으면 해당하는 것만 고르세요. "
+                               "**둘 다 고르면 겹치는 것만** 잡아요.")
+                    _q1, _q2 = st.columns(2)
+                    with _q1:
+                        _sp_ = st.multiselect(
+                            "기획전", _pn, default=[], key=f"pk_camp_{b}",
+                            format_func=lambda x: f"{x}  ({_pm.get(x, 0):,}원)",
+                            disabled=not CAN_EDIT or len(_pn) < 2)
+                    with _q2:
+                        _sc_ = st.multiselect(
+                            "판매 항목", _cn, default=[], key=f"pk_cat_{b}",
+                            format_func=lambda x: f"{x}  ({_cm.get(x, 0):,}원)",
+                            disabled=not CAN_EDIT or len(_cn) < 2)
+                    if _sp_:
+                        camps_by_brand[b] = tuple(_sp_)
                     if _sc_:
                         cats_by_brand[b] = tuple(_sc_)
-                        _tot = sum(_cm.get(x, 0) for x in _sc_)
-                        st.caption(f"　└ 고른 항목 {len(_sc_)}종 · **{_fmt(_tot)}원** "
+                    if _sp_ or _sc_:
+                        # ★미리보기 금액은 **두 축을 같이 건 실제 값**으로 낸다 —
+                        #   각 축의 눈금을 더하면 겹치는 칸을 두 번 세게 된다.
+                        _pv = int(_detail_cached(
+                            b, tuple(titles), S, E, fx.version(), sc.data_version(),
+                            None, cats_by_brand.get(b), camps_by_brand.get(b)
+                        )["매출액"].sum())
+                        st.caption(f"　└ 좁힌 뒤 **{_fmt(_pv)}원** "
                                    f"(전체 {_fmt(sum(_cm.values()))}원)")
             continue
         ax = _axes_cached(tuple(titles), S, E, sc.data_version())
@@ -672,7 +699,9 @@ def make_panel():
     #   그대로 첨부돼 대외로 나간다 — 바로 위 멤버 축과 같은 병이다.
     def _csig(b):
         cc = cats_by_brand.get(b)
-        return "" if cc is None else ",".join(cc)
+        pp = camps_by_brand.get(b)
+        return (("" if cc is None else ",".join(cc)) + "|"
+                + ("" if pp is None else ",".join(pp)))
 
     _sig = "‖".join(f"{b}:{','.join(tks)}>{','.join(titles)}>{_rsig(b, tks)}"
                     f">{_fsig(b)}>{_csig(b)}"
@@ -878,7 +907,7 @@ def make_panel():
             continue
         _fk = frames_by_brand.get(b)      # 이미 해시 가능한 (타이틀, 프레임…) 튜플
         d = _detail_cached(b, tuple(titles), S, E, fx.version(), sc.data_version(),
-                           _fk, cats_by_brand.get(b))
+                           _fk, cats_by_brand.get(b), camps_by_brand.get(b))
         if d.empty:                 # 그 기간 매출 행이 없으면 문서에도 안 들어간다
             continue
         shown.append(b)
@@ -1098,7 +1127,8 @@ def make_panel():
             ctx = sc.build_context({b: t for b, (t, _) in picks.items() if t},
                                    S, E, ipn, RATES, EFF or E,
                                    date.today().isoformat(), SRC,
-                                   frames=frames_by_brand, cats=cats_by_brand)
+                                   frames=frames_by_brand, cats=cats_by_brand,
+                                   camps=camps_by_brand)
             # ★★먼저 만들어 보고, 성공했을 때만 발행 기록을 남긴다 (2026-08-05).
             #   전엔 record_issue 가 앞에 있어서, 한 부도 못 만들어도 버전이 올라갔다.
             #   실제로 대한축구협회가 v1~v4 까지 쌓이는 동안 PDF 는 0부였다.

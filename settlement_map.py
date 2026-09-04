@@ -138,6 +138,41 @@ def _rate_case(rates: dict, col: str = '"결제 단위"') -> str:
     return f"CASE trim({col}) {arms} ELSE 1 END"
 
 
+def snapism_campaigns(titles, start: str, end: str, rates: dict) -> list[tuple]:
+    """스내피즘 그 타이틀의 **기획전별 매출**. `[(기획전, 원화), …]` 큰 순.
+
+    화면의 '기획전으로 좁히기' 후보를 그리는 데만 쓴다.
+    ★★왜 필요한가 (2026-09-04) — 두 계약이 **같은 상품을 둘 다 파는** 경우가 있어
+      상품 축만으론 못 가른다. 누에라 2026-08 은 기획전 × 상품이 격자다:
+        아티스트 포토카드 1,059,599 · 와이드 327,033   ← `CANDIP-29057`(컴백 기념)
+        반팔입고나와 포토카드 663,357 · 와이드 646,033  ← `CANDIP-28379`(반팔 입고 나와)
+    ★값은 `_sn_gubun(camps=…)` 이 거르는 식과 **같게** 만든다(빈칸→'기타').
+      다르면 화면에서 고른 항목이 문서에서 안 걸린다.
+    ★여기 금액은 **고르는 것을 돕는 눈금**이다 — 문서 금액은 country_detail 이
+      국가별로 절사해 내므로 1원 단위로는 다를 수 있다.
+    """
+    if not titles:
+        return []
+    rate = _rate_case(rates)
+    tl = ",".join("'" + str(t).replace("'", "''") + "'" for t in titles)
+    con = duck()
+    try:
+        d = con.execute(f"""
+            SELECT COALESCE(NULLIF(trim(CAST("카테고리" AS VARCHAR)), ''), '기타') AS 기획전,
+                   CAST(ROUND(SUM((CAST("최종 결제 금액" AS BIGINT)
+                                 + CAST("쿠폰 할인 금액" AS BIGINT)) * {rate})) AS BIGINT) AS 원화
+            FROM read_parquet('{SN_MASTER.as_posix()}')
+            WHERE CAST("날짜" AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+              AND "프레임 이름" IN ({tl})
+              AND {SNAPISM_SETTLE_SQL}
+              AND NOT COALESCE("취소 여부", FALSE)
+            GROUP BY 1 HAVING 원화 <> 0 ORDER BY 원화 DESC
+        """).df()
+    finally:
+        con.close()
+    return [(str(r["기획전"]), int(r["원화"])) for _, r in d.iterrows()]
+
+
 # ── 타이틀별 매출 ──────────────────────────────────────────────────────────
 def title_revenue(brand: str, start: str, end: str, rates: dict) -> pd.DataFrame:
     """정산 대상 타이틀별 매출. 반환 컬럼: 타이틀 · IP구분 · 매출액 · 건수 · 국가수
